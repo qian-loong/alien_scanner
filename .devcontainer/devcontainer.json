@@ -1,0 +1,20 @@
+{
+  "name": "alien-scanner ROS2 Dev Container",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "ros2",
+  "workspaceFolder": "/workspaces/alien-scanner",
+  "customizations": {
+    "jetbrains": {
+      "backend": "CLion"
+    }
+  },
+  "remoteUser": "root",
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "forwardPorts": [64342],
+  "portsAttributes": {
+    "64342": {
+      "label": "CLion MCP Server",
+      "onAutoForward": "notify"
+    }
+  }
+}
