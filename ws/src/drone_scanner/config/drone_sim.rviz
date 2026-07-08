@@ -6,7 +6,7 @@ Panels:
 Visualization Manager:
   Class: ""
   Displays:
-    - Alpha: 1
+    - Alpha: 0.35
       Autocompute Intensity Bounds: true
       Axis: Z
       Channel Name: intensity
@@ -62,7 +62,7 @@ Visualization Manager:
           Frame: Local
           Offset: 1
           Scale: 1
-          Value: true
+          Value: false
         Position:
           Alpha: 0.5
           Color: 204; 51; 204
@@ -70,7 +70,7 @@ Visualization Manager:
           Frame: Local
           Offset: 1
           Scale: 1
-          Value: true
+          Value: false
       Enabled: true
       Keep: 20
       Name: DroneOdom
@@ -121,33 +121,6 @@ Visualization Manager:
         Reliability Policy: Best Effort
         Value: /drone_0/points
       Use Fixed Frame: true
-      Use rainbow: true
-      Value: true
-    - Alpha: 0.85
-      Autocompute Intensity Bounds: true
-      Axis: Z
-      Channel Name: intensity
-      Class: rviz_default_plugins/PointCloud2
-      Color: 255; 170; 0
-      Color Transformer: FlatColor
-      Decay Time: 0
-      Enabled: true
-      Invert Rainbow: false
-      Max Color: 255; 255; 255
-      Min Color: 0; 0; 0
-      Name: CloudMap
-      Position Transformer: XYZ
-      Selectable: true
-      Size (Pixels): 2
-      Size (m): 0.06
-      Style: Points
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /drone_0/cloud_map
-      Use Fixed Frame: true
       Use rainbow: false
       Value: true
   Enabled: true
@@ -164,18 +137,18 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 60
+      Distance: 35
       Enable Stereo Rendering:
         Value: false
       Focal Point:
-        X: 8
+        X: 5
         Y: 0
         Z: 1.5
       Name: Current View
-      Pitch: 0.6
+      Pitch: 0.45
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
       Yaw: 1.57
 Window Geometry:
   Height: 800
-  Width: 1200
+  Width: 960

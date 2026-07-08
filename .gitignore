@@ -3,6 +3,10 @@
 /ws/install/
 /ws/log/
 
+# tf2_tools view_frames 生成物
+/ws/frames_*.gv
+/ws/frames_*.pdf
+
 # python
 __pycache__/
 *.pyc

@@ -33,9 +33,20 @@
 | 洞穴数据来源 | **Simplex/Perlin noise 算法生成** | 零外部文件依赖；Phase 2 fake LiDAR 可直接复用同一体积函数做射线采样 |
 | ROS 发行版 | **Jazzy**（容器内） | 已有 `ros2-jazzy-devcontainer` 与学习 workspace |
 | 可视化 | **RViz2**（VcXsrv 已测通） | 备选：Foxglove Studio（Windows 原生） |
-| SLAM | Phase 2 先用 **slam_toolbox**；后期可换 FAST-LIO2 | 上手快，与现有 Jazzy 包兼容 |
+| SLAM / 建图 | **3D 点云 / OctoMap**（Phase 2 累积扫描；Phase 3 多机融合） | 洞穴高度变化大，**不用 2D 水平 LaserScan + slam_toolbox** 作为主路径 |
+| 模拟 LiDAR 几何 | **垂直 360° 环**（见 [`phase-02-drone-scanner.md`](phases/phase-02-drone-scanner.md)） | 需感知上下与侧向，避免地面骤降时纯水平 2D 漏检 |
 
 > **工程约定（分层 / 接口 / 测试边界）见仓库根 [`AGENTS.md`](../AGENTS.md)，为单一事实来源。** 本文档只描述各阶段如何套用这些约定，不重复其内容。
+
+### 2.1 坐标系约定
+
+| 帧 | 标准 | 本项目 |
+|----|------|--------|
+| **`map` / `odom`** | 右手系、**z 朝上**（同 [REP-105](https://www.ros.org/reps/rep-0105.html) 惯例） | 洞穴与点云在 `map`；`map→odom` static 零变换 |
+| **`base_link` / `lidar_link`** | [REP-103](https://www.ros.org/reps/rep-0103.html)：x 前、y 左、z 上 | 默认 `yaw=0` 时机头 **+x ∥ map +X** |
+| **`ICaveField` 坐标** | 无 ROS 帧名 | 数值与 **`map` 同系** |
+
+扫描几何、TF、话题细节见 [`docs/phases/phase-02-drone-scanner.md`](phases/phase-02-drone-scanner.md) §坐标系。
 
 ---
 
@@ -125,309 +136,63 @@ ws/src/
 
 ## 6. 分阶段实施计划
 
-### Phase 1：洞穴点云生成器（C++ 主体）— **已完成**
+> **分步细节**（参数表、launch、逐步验收、Git commit）已拆至 [`docs/phases/`](phases/)；本节仅保留各 Phase **目标 / 产出摘要 / 跨 Phase 契约**。
 
-**语言约定：** 主体使用 **C++（rclcpp + ament_cmake）**；launch 使用 Python（`cave_world_launch.py`）集中声明地图参数；运行期节点是纯 C++。
+### Phase 1：洞穴点云生成器 — **已完成**
 
-**目标：** 生成并可视化静态地下洞穴点云，作为后续 LiDAR 采样的「真实环境」体积函数。
+**目标：** 生成并可视化静态洞穴点云；暴露 `ICaveField` 供 Phase 2 raycast。
 
-**产出：**
+**产出摘要：**
 
-- RViz2 中看到网状分叉洞穴（默认）或经典 Y 字隧道（回退模式）的 3D 点云
-- 话题 `/cave/points`（`sensor_msgs/PointCloud2`），`frame_id = map`，`TRANSIENT_LOCAL`（latched）发布
-- `ICaveField` 接口 + `isSolid` / `raycast` / `sampleSurface`，供 Phase 2 `fake_lidar` 同进程链接复用
+- 包 `cave_world`：`TreeCaveField`（默认）/ `ProceduralCaveField`（Y 回退）
+- 话题 `/cave/points`（`PointCloud2`，`frame_id=map`，`TRANSIENT_LOCAL`）
+- 进洞方向 **`map +X`**（默认轨迹机头沿 map +X，`yaw=0`）；基础地图 `seed=42`, `tree.loop_bulge=12`, `tree.loop_direct_length=16`
+- gtest 11 项通过；RViz2 目检通过
 
-**状态：** ✅ 已实现并通过 RViz2 目检；单元测试 11 项（`TestProceduralCaveField` 6 + `TestTreeCaveField` 5）通过。
-
----
-
-#### 1.1 包结构（实际）
-
-```
-ws/src/cave_world/
-├── CMakeLists.txt              # cave_geometry 静态库 + cave_publisher 可执行
-├── package.xml
-├── include/cave_world/
-│   ├── ICaveField.hpp          # 抽象洞穴场（ROS-free）
-│   ├── ProceduralCaveField.hpp # 经典对称 Y 字（cave_mode:=y）
-│   ├── TreeCaveField.hpp       # 草图网状拓扑（cave_mode:=tree，默认）
-│   └── CavePublisherNode.hpp
-├── src/
-│   ├── ProceduralCaveField.cpp # 中轴线 / 半径剖面 / 外表面过滤 / raycast
-│   ├── TreeCaveField.cpp       # 7 条臂 + Bezier 外环 + 体积并集
-│   ├── CavePublisherNode.cpp   # 薄节点：参数 → ICaveField → PointCloud2
-│   └── CavePublisherMain.cpp
-├── launch/
-│   └── cave_world_launch.py    # 启动 cave_publisher + rviz2，声明全部地图参数
-├── config/
-│   └── cave_world.rviz         # Fixed Frame=map，订阅 /cave/points，Z 轴着色
-└── test/
-    ├── TestProceduralCaveField.cpp
-    └── TestTreeCaveField.cpp
-```
-
-**分层（遵循 `AGENTS.md`）：**
-
-- 算法库 `cave_geometry`（`ProceduralCaveField` + `TreeCaveField`）**不含 rclcpp**。
-- 节点 `cave_publisher` 持有 `std::unique_ptr<ICaveField>`，启动时 `sampleSurface()` 一次并缓存，定时重发。
-- Phase 2 `fake_lidar` 将**链接 `cave_geometry` 并注入 `std::shared_ptr<ICaveField>`**，调用 `raycast()`。
-
----
-
-#### 1.2 几何模式
-
-| `cave_mode` | 实现类 | 说明 |
-|-------------|--------|------|
-| `tree`（**默认**） | `TreeCaveField` | 项目基础地图：1 入口、3 出口、1 外环 |
-| `y` | `ProceduralCaveField` | 经典对称 Y 字，保留作回退/对照 |
-
-**基础地图拓扑（`TreeCaveField`，已确认参数）：**
-
-```text
-入口 ──approach──► A ─┬─ 外环（Bezier 弧，相对 A→B 直连向左鼓出）──┐
-                      ├─ 直连 A→B ───────────────────────────────► B ──► 出口1
-                      └─ 右廊 A→C ──┬─► 出口2
-                                    └─► 出口3
-```
-
-合并算法（两套实现共用思路）：
-
-- `isSolid`：各臂折线管体**体积并集**（任一条臂内即空腔）
-- `sampleSurface`：各臂独立环采样 + **外表面过滤**（沿外法向微移后仍非 solid 则丢弃内部假墙）
-
----
-
-#### 1.3 `ICaveField` 接口
-
-```cpp
-// include/cave_world/ICaveField.hpp
-namespace CaveWorld {
-struct Point3 { float x, y, z; };
-
-class ICaveField {
-public:
-  virtual ~ICaveField() = default;
-  virtual bool isSolid(float x, float y, float z) const = 0;
-  virtual bool raycast(const Point3& origin, const Point3& dir,
-                       float max_range, float& out_dist) const = 0;
-  virtual std::vector<Point3> sampleSurface() const = 0;
-};
-}  // namespace CaveWorld
-```
-
----
-
-#### 1.4 地图参数指定方式
-
-**推荐：通过 launch 文件传参**
+**快速启动：**
 
 ```bash
-cd /workspaces/alien-scanner/ws && source install/setup.bash
-
-# 基础地图（默认即此配置，无需额外参数）
-ros2 launch cave_world cave_world_launch.py
-
-# 显式写出基础地图三要素（与默认等价）
-ros2 launch cave_world cave_world_launch.py \
-  seed:=42 tree.loop_bulge:=12 tree.loop_direct_length:=16
-
-# 微调示例
-ros2 launch cave_world cave_world_launch.py \
-  seed:=42 tree.loop_bulge:=14 density:=500
-
-# 回退经典 Y 字
-ros2 launch cave_world cave_world_launch.py cave_mode:=y seed:=7 length:=40
-```
-
-**语法规则：**
-
-| 方式 | 写法 | 说明 |
-|------|------|------|
-| ✅ Launch 覆盖 | `ros2 launch ... param:=value` | **首选**；`tree.*` 带点号的参数名原样书写 |
-| ✅ 多参数 | 空格分隔多个 `name:=value` | 布尔：`branch:=false`；整数：`seed:=42` |
-| ❌ 避免 | `ros2 launch ... --ros-args -p` | 对 launch 文件**无效**，参数不会传到节点 |
-| 备选 | `ros2 run cave_world cave_publisher --ros-args -p ...` | 仅单独跑节点时用；launch 未暴露的 `frame_id` / `topic` / `publish_rate` 只能走此路径 |
-
-**参数生效范围：**
-
-- `cave_mode:=tree` 时：`tree.*` 与下方「通用参数」生效；`length` / `branch_*` / `chamber_*`（Y 专用）被忽略。
-- `cave_mode:=y` 时：Y 专用参数 + 通用参数生效；`tree.*` 被忽略。
-- 修改几何参数后需**重启 launch**（点云在节点启动时生成并缓存）。
-
----
-
-#### 1.5 参数表
-
-**基础地图默认值（`cave_mode:=tree`）— 后续 Phase 2/3 以此为基准：**
-
-| 参数 | 默认 | 说明 |
-|------|------|------|
-| `seed` | `42` | 形状确定性种子（`asymmetry` 扰动） |
-| `tree.loop_direct_length` | `16.0` | A→B 直连长度 (m) |
-| `tree.loop_bulge` | `12.0` | 外环相对 A→B 中点左侧鼓出 (m) |
-
-**通用参数（两种模式共用）：**
-
-| 参数 | 默认 | 说明 |
-|------|------|------|
-| `cave_mode` | `tree` | `tree` \| `y` |
-| `seed` | `42` | 确定性种子 |
-| `base_radius` | `2.5` | 管体基础半径 (m) |
-| `n_segments` | `200` | 中轴线分段数（tree 接入段；Y 每条臂） |
-| `density` | `400` | 表面采样密度（越大点越多） |
-| `noise_scale` | `0.4` | 洞壁噪声强度 |
-
-**`tree.*` 参数（仅 `cave_mode:=tree`）：**
-
-| 参数 | 默认 | 说明 |
-|------|------|------|
-| `tree.approach_length` | `12.0` | 入口 → 分叉点 A (m) |
-| `tree.loop_yaw` | `0.50` | A→B 方向相对入口切线偏角 (rad) |
-| `tree.loop_direct_length` | `16.0` | A→B 直连长度 (m) |
-| `tree.loop_bulge` | `12.0` | 外环左侧鼓出 (m) |
-| `tree.exit1_length` | `14.0` | B → 出口1 (m) |
-| `tree.right_yaw` | `-0.12` | A→C 右廊偏角 (rad) |
-| `tree.right_corridor_length` | `10.0` | A→C 长度 (m) |
-| `tree.exit_yaw_spread` | `0.35` | 出口2/3 展开半角 (rad) |
-| `tree.exit_arm_length` | `14.0` | 出口2/3 长度 (m) |
-| `tree.vertical_step` | `-0.10` | 各臂 pitch，负=下沉 (rad) |
-| `tree.asymmetry` | `0.22` | seed 驱动的角度/长度扰动 [0,1] |
-| `tree.chamber_on_approach` | `false` | 接入段溶洞（默认关，避免入口膨大） |
-| `tree.chamber_at` | `0.55` | 溶洞轴向位置（仅上项为 true 时） |
-| `tree.chamber_scale` | `2.2` | 溶洞半径放大倍数 |
-
-**Y 模式参数（仅 `cave_mode:=y`）：**
-
-| 参数 | 默认 | 说明 |
-|------|------|------|
-| `length` | `40.0` | 入口 → junction 主干长度 (m) |
-| `branch_length` | `20.0` | 每条岔臂长度 (m) |
-| `branch` | `true` | 是否生成 Y 分叉 |
-| `branch_angle` | `0.55` | 两岔臂半角 (rad) |
-| `chamber_at` | `0.5` | 溶洞在主干上的比例 [0,1] |
-| `chamber_scale` | `3.0` | 溶洞放大倍数 |
-
-**发布相关（节点 `declare_parameter`，launch 未暴露，改默认值或 `ros2 run --ros-args -p`）：**
-
-| 参数 | 默认 | 说明 |
-|------|------|------|
-| `frame_id` | `map` | 点云坐标系 |
-| `topic` | `/cave/points` | 发布话题 |
-| `publish_rate` | `1.0` | 重发频率 (Hz)；几何不变，仅刷新 stamp |
-
----
-
-#### 1.6 发布话题与 QoS
-
-| 项目 | 值 |
-|------|-----|
-| **话题** | `/cave/points` |
-| **消息类型** | `sensor_msgs/msg/PointCloud2` |
-| **发布节点** | `cave_publisher`（`cave_world` 包） |
-| **frame_id** | `map` |
-| **字段** | `x`, `y`, `z`（float32，`is_dense=true`） |
-| **QoS** | 深度 1 + **`TRANSIENT_LOCAL`**（latched）；晚订阅的 RViz2 也能立即收到 |
-| **生成时机** | 节点启动时 `sampleSurface()` 一次；定时器按 `publish_rate` 重发同一缓存 |
-| **典型点数** | 与 `density`、臂长度、拓扑相关，约 10⁵ 量级（视参数而定） |
-
-**验证命令：**
-
-```bash
-ros2 topic list | grep cave
-ros2 topic info /cave/points -v
-ros2 topic hz /cave/points
-ros2 topic echo /cave/points --once | head -20
-```
-
-**RViz2：** launch 自动加载 `config/cave_world.rviz`；Fixed Frame 须为 `map`，PointCloud2 显示订阅 `/cave/points`。
-
----
-
-#### 1.7 构建、测试与验收
-
-```bash
-cd /workspaces/alien-scanner/ws
-colcon build --symlink-install --packages-select cave_world
-source install/setup.bash
-
-# 单元测试（算法库，无 ROS）
-colcon test --packages-select cave_world --event-handlers console_direct+
-colcon test-result --verbose
-
-# 可视化验收
 ros2 launch cave_world cave_world_launch.py
 ```
 
-**通过标准（已满足）：**
-
-- RViz2 可见网状分叉洞穴，可旋转/缩放
-- `/cave/points` 持续发布，`frame_id=map`，新开 RViz 能立即显示
-- 修改 `density` / `tree.loop_bulge` 等参数后重启，点云随之变化
-- `seed` 固定时形状可复现（单测覆盖）
-
-**任务清单：**
-
-- [x] 创建 `cave_world` C++ 包（`ament_cmake`）
-- [x] `ICaveField.hpp` 抽象接口
-- [x] `ProceduralCaveField` — 经典 Y + `isSolid` / `raycast` / `sampleSurface`
-- [x] `TreeCaveField` — 草图拓扑 + 外环 + 外表面过滤
-- [x] `CavePublisherNode` — 参数、`TRANSIENT_LOCAL`、缓存点云、定时发布
-- [x] `cave_world_launch.py` + `cave_world.rviz`
-- [x] gtest：`TestProceduralCaveField`、`TestTreeCaveField`
-- [x] 基础地图默认值：`seed=42`, `tree.loop_bulge=12`, `tree.loop_direct_length=16`
-- [ ] （可选）`scripts/gen_cave_ply.py` 离线导出 `.ply`
-- [ ] （可选）`launch_testing` 集成测试（话题存在 / TF 合法）
-
-**Phase 2 衔接：** `fake_lidar` 链接 `cave_geometry`，构造注入与 `cave_publisher` 相同配置的 `ICaveField` 实例，按位姿调用 `raycast()`；静态 `/cave/points` 仍可用于 RViz 对照真值。
+**详细文档（参数表 / launch 拆分 / 拓扑 / 验收）：** [`docs/phases/phase-01-cave-world.md`](phases/phase-01-cave-world.md)
 
 ---
 
-### Phase 2：单 drone 扫描闭环
+### Phase 2：单 drone 三维扫描闭环 — **进行中**
 
-**目标：** 一架虚拟无人机沿洞穴飞行，fake LiDAR 从 `cave_world` 体积采样，SLAM 实时建图。
+**分支：** `phase/2-drone-scanner`
 
-**产出：**
+**目标：** fake LiDAR 对 `ICaveField` 做 **YZ 垂直 360° 环** raycast；单机 3D 点云累积（非 2D SLAM）。
 
-- RViz2 中 drone 轨迹 + **逐步构建**的局部地图（与 Phase 1 全量静态点云区分开）
-- 完整 TF 树：`map → odom → base_link → lidar_link`
+**进度摘要：**
 
-**任务清单（C++ 主体，接口标注见根 `AGENTS.md`）：**
+| 步 | 内容 | 状态 |
+|----|------|------|
+| 2-1 | `LineTrajectory` + gtest | ✅ |
+| 2-2 | `FakeLidar` + gtest | ✅ |
+| 2-3 | `fake_odom` + TF + launch 复用 cave | ✅ |
+| 2-4 | `fake_lidar` 节点 → `/drone_0/points` | ✅ |
+| 2-5 | `scan_accumulator` + 双 RViz 预览 | ✅ |
+| 2-6 | 单机一键闭环（=`fake_lidar_launch.py`） | ✅ |
 
-- [ ] 创建 `drone_scanner` C++ 包（`ament_cmake`）
-- [ ] `fake_lidar`（具体类，**不自身抽象**）：**构造注入 `std::shared_ptr<CaveWorld::ICaveField>`**，按 drone 位姿调用 `raycast()` 采样 → 发 `PointCloud2`
-  - [ ] 单测：注入解析可算的假 `ICaveField`（单位球/平面），断言扫描点/range
-- [ ] `ITrajectory`（**接口**）+ 实现：`LineTrajectory` / `WaypointTrajectory` / `OrbitTrajectory`；`pose(t)` 返回位姿
-  - [ ] 单测：直接测各实现（`pose(0)=起点`、`pose(1)=终点`、速度不超限）
-- [ ] `fake_odom` 节点：持有 `ITrajectory`，采样位姿 + 高斯噪声 → 发 `nav_msgs/Odometry` + TF(`odom→base_link`)
-- [ ] 对接 **slam_toolbox**（外部节点，不做 C++ 接口；或简化版：点云累积 + ICP 占位）
-- [ ] `launch/single_drone.launch.xml`：cave_world + fake 节点 + slam + rviz
-- [ ] 单机 namespace 约定：`/drone_0/...`
+**跨 Phase 契约（摘要）：**
 
-**建议依赖：**
+- 进洞 **map +X**（机头 `yaw=0`）；默认轨迹 `(0,0,1.5)→(11,0,1.5)`
+- 扫描环在 **YZ 平面**（⊥ 前进方向）；不用 xy 水平 2D 作主路径
+- 关键话题：`/drone_0/odom`、`/drone_0/points`、`/drone_0/cloud_map`
+- 累积默认 **50 万点上限**（超出丢最早点）；**轨迹结束后停扫**，避免停飞空转占满上限
+
+**当前预览（Phase 2 single_drone 入口 = `fake_lidar_launch.py`；双 RViz，仿真窗默认叠加洞穴真值）：**
 
 ```bash
-sudo apt install -y \
-  ros-jazzy-slam-toolbox \
-  ros-jazzy-tf2-ros \
-  ros-jazzy-tf2-geometry-msgs \
-  ros-jazzy-nav-msgs
-pip install transforms3d
+ros2 launch drone_scanner fake_lidar_launch.py
+
+# 纯探索视角（关闭真值）
+ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 ```
 
-**关键话题（示例）：**
-
-| 话题 | 类型 | 说明 |
-|------|------|------|
-| `/drone_0/scan` | `sensor_msgs/PointCloud2` | 模拟 LiDAR |
-| `/drone_0/odom` | `nav_msgs/Odometry` | 里程计 |
-| `/drone_0/map` | `nav_msgs/OccupancyGrid` 或点云 map | SLAM 输出 |
-
-**验收：**
-
-- 播放 launch 后，地图随 drone 移动而扩展
-- `ros2 run tf2_tools view_frames` 生成合理 TF 树
-
-**预计工作量：** 2～3 天
+**详细文档（分步实现 / 坐标约定 / Git commit / 验收）：** [`docs/phases/phase-02-drone-scanner.md`](phases/phase-02-drone-scanner.md)
 
 ---
 
@@ -515,23 +280,23 @@ sudo apt install -y ros-jazzy-visualization-msgs
 flowchart TD
     VOL(["Cave 体积函数<br/>Simplex noise + 隧道骨架"])
     CW["cave_world<br/><small>发布静态参考点云（调试用）</small>"]
-    LIDAR["fake_lidar × N<br/><small>按位姿采样 → PointCloud2</small>"]
+    LIDAR["fake_lidar × N<br/><small>垂直环 3D → PointCloud2</small>"]
     ODOM["fake_odom × N<br/><small>轨迹 + TF</small>"]
-    SLAM["SLAM × N<br/><small>局部 map</small>"]
+    ACCUM["scan 累积 / 局部 3D map"]
     MERGE["map_merge<br/><small>Global OctoMap</small>"]
     MESH["mesh_builder<br/><small>RViz2 / 文件导出</small>"]
 
     VOL --> CW
-    VOL -->|"体积查询接口<br/>（Python module 共享）"| LIDAR
-    LIDAR --> SLAM
-    ODOM --> SLAM
-    SLAM --> MERGE
+    VOL -->|"ICaveField raycast"| LIDAR
+    LIDAR --> ACCUM
+    ODOM --> ACCUM
+    ACCUM --> MERGE
     MERGE --> MESH
 
     classDef src fill:#3b2f1f,stroke:#a67c52,color:#f5e9da;
     classDef node fill:#1f2933,stroke:#5c7080,color:#e8eef2;
     class VOL src;
-    class CW,LIDAR,ODOM,SLAM,MERGE,MESH node;
+    class CW,LIDAR,ODOM,ACCUM,MERGE,MESH node;
 ```
 
 ---
@@ -556,13 +321,13 @@ flowchart TB
         ODOM["fake_odom 节点"]
         T_ODOM(["/drone_0/odom<br/>nav_msgs/Odometry"])
         LIDAR["fake_lidar 节点"]
-        T_SCAN(["/drone_0/scan<br/>sensor_msgs/PointCloud2"])
-        SLAM["slam_toolbox 节点"]
-        T_MAP(["/drone_0/map<br/>OccupancyGrid 或点云"])
+        T_SCAN(["/drone_0/points<br/>sensor_msgs/PointCloud2<br/>3D 垂直环"])
+        ACCUM["scan 累积节点"]
+        T_MAP(["/drone_0/cloud_map<br/>PointCloud2"])
 
         ODOM --> T_ODOM
         T_ODOM -.读取位姿.-> LIDAR
-        LIDAR --> T_SCAN --> SLAM --> T_MAP
+        LIDAR --> T_SCAN --> ACCUM --> T_MAP
     end
 
     subgraph TFNET["TF 广播与订阅"]
@@ -575,15 +340,15 @@ flowchart TB
     T_CAVE --> RVIZ
     T_MAP --> RVIZ
     ODOM -->|odom to base_link| T_TF
-    SLAM -->|map to odom| T_TF
+    ACCUM -->|map to odom 可选| T_TF
     T_TF --> RVIZ
-    T_TF --> SLAM
+    T_TF --> ACCUM
 
-    CW -.洞穴几何模块直调.-> LIDAR
+    CW -.ICaveField 直调.-> LIDAR
 
     classDef node fill:#1f2933,stroke:#5c7080,color:#e8eef2;
     classDef topic fill:#22303c,stroke:#4a90d9,color:#dbeafe;
-    class CW,ODOM,LIDAR,SLAM,RVIZ node;
+    class CW,ODOM,LIDAR,ACCUM,RVIZ node;
     class T_CAVE,T_ODOM,T_SCAN,T_MAP,T_TF topic;
 ```
 
@@ -659,12 +424,12 @@ flowchart TB
 | 话题 | 消息类型 | 发布者 | 订阅者 |
 |------|----------|--------|--------|
 | `/cave/points` | `sensor_msgs/PointCloud2` | `cave_world` | `rviz2` |
-| `/drone_i/odom` | `nav_msgs/Odometry` | `fake_odom` | `fake_lidar`（读位姿） |
-| `/drone_i/scan` | `sensor_msgs/PointCloud2` | `fake_lidar` | `slam_toolbox` |
-| `/drone_i/map` | `OccupancyGrid` / 点云 | `slam_toolbox` | `map_merge` |
+| `/drone_0/points` | `sensor_msgs/PointCloud2` | `fake_lidar` | `scan 累积`、RViz |
+| `/drone_0/cloud_map` | `sensor_msgs/PointCloud2` | scan 累积 | RViz |
+| `/drone_0/odom` | `nav_msgs/Odometry` | `fake_odom` | `fake_lidar`（读位姿）、累积 |
 | `/global_map` | `octomap_msgs/Octomap` | `map_merge` | `mesh_builder`, `rviz2` |
 | `/cave_mesh` | `visualization_msgs/Marker` | `mesh_builder` | `rviz2` |
-| `/tf`, `/tf_static` | `tf2_msgs/TFMessage` | `fake_odom`(odom→base_link)、`slam_toolbox`(map→odom) | 全体 |
+| `/tf`, `/tf_static` | `tf2_msgs/TFMessage` | `fake_odom`（odom→base_link）、累积/融合（map→odom） | 全体 |
 
 ---
 
@@ -686,7 +451,7 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 |------|------|
 | 命名卷导致 Windows 上看不到 build 产物 | 正常；在容器内 build，源码在 bind mount 的 `ws/src` |
 | 点云带宽大、多机卡顿 | 降低发布频率；OctoMap 压缩；只传 keyframe |
-| slam_toolbox 偏 2D | Phase 2 可先用 2D 投影验证流程，再换 3D 方案 |
+| 2D 水平扫描不适于 3D 洞 | **垂直环 3D 扫描** + Phase 3 OctoMap；不以 slam_toolbox 2D 为主路径 |
 | Simplex 洞穴不够「真实」 | 调参增加分支/溶洞；或后期替换为 PLY 模型 |
 | GUI 黑屏 | 确认 VcXsrv「Disable access control」；检查 `DISPLAY` |
 
@@ -696,18 +461,28 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 
 ```
 [x] 0. 容器与环境（alien-scanner-dev + VcXsrv）
-[x] 1. Phase 1 — cave_world 包 + RViz2 看到洞穴（基础地图 seed=42）
-[ ] 2. Phase 2 — 单机 fake LiDAR + SLAM 闭环
-[ ] 3. Phase 3 — 3 机 swarm + 全局 map
+[x] 1. Phase 1 — cave_world 包 + RViz2 看到洞穴
+[~] 2. Phase 2 — 3D 垂直环 fake LiDAR + fake_odom（见 docs/phases/phase-02-drone-scanner.md）
+[ ] 3. Phase 3 — 3 机 swarm + 全局 OctoMap
 [ ] 4. Phase 4 — Mesh 与演示 polish
 [ ] 5. （可选）ros2 bag 录制 + README 演示 GIF
 ```
 
-**当前进度：** Phase 1 **已完成**；Phase 1 详细用法见上文 §6 Phase 1（参数、话题、launch 命令）。
+**当前进度：** Phase 1 已完成；Phase 2 进行中（**3D 垂直环扫描**，见 [`docs/phases/phase-02-drone-scanner.md`](phases/phase-02-drone-scanner.md)）。
 
 ---
 
-## 11. 参考与学习资源
+## 11. 分阶段详细文档
+
+| Phase | 文档 | 说明 |
+|-------|------|------|
+| 1 | [`docs/phases/phase-01-cave-world.md`](phases/phase-01-cave-world.md) | 参数表、launch、拓扑、测试与验收 |
+| 2 | [`docs/phases/phase-02-drone-scanner.md`](phases/phase-02-drone-scanner.md) | 分步实现、坐标约定、Git、数据流 |
+| 3+ | （待 Phase 3 启动时创建） | 多机 OctoMap、探索策略 |
+
+---
+
+## 12. 参考与学习资源
 
 - ROS 2 Jazzy 文档：https://docs.ros.org/en/jazzy/
 - slam_toolbox：https://github.com/SteveMacenski/slam_toolbox
@@ -715,10 +490,10 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 
 ---
 
-## 12. 文档维护
+## 13. 文档维护
 
 | 字段 | 值 |
 |------|-----|
 | 创建日期 | 2026-07-06 |
-| 最后更新 | 2026-07-06 |
-| 状态 | Phase 1 已完成；Phase 2 待实施 |
+| 最后更新 | 2026-07-08 |
+| 状态 | Phase 1 已完成；Phase 2 进行中；分步细节见 `docs/phases/` |

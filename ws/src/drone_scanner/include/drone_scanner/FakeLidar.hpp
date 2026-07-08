@@ -1,0 +1,43 @@
+#ifndef DRONE_SCANNER_FAKELIDAR_HPP
+#define DRONE_SCANNER_FAKELIDAR_HPP
+
+#include "cave_world/ICaveField.hpp"
+#include "drone_scanner/Pose3D.hpp"
+
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+namespace DroneScanner {
+
+    struct FakeLidarConfig {
+        int           num_beams {360};
+        float         max_range {30.0F};
+        float         range_noise_std {0.0F};
+        std::uint32_t noise_seed {0U}; ///< 非零且 range_noise_std>0 时用于确定性噪声
+    };
+
+    /// lidar_link 系下的命中点（REP-103：x 前、y 左、z 上）。
+    struct LidarPoint {
+        float x {};
+        float y {};
+        float z {};
+    };
+
+    /// 注入 ICaveField，在 YZ 垂直 360° 环上 raycast（环平面 ⊥ 前进 +x）。
+    class FakeLidar
+    {
+    public:
+        FakeLidar(std::shared_ptr<CaveWorld::ICaveField> field, FakeLidarConfig config);
+
+        /// @param lidar_pose_in_map LiDAR 原点在 map 下的位姿（当前仅 yaw 参与 beam 旋转）。
+        std::vector<LidarPoint> scan(const Pose3D & lidar_pose_in_map) const;
+
+    private:
+        std::shared_ptr<CaveWorld::ICaveField> field_;
+        FakeLidarConfig                        config_;
+    };
+
+}// namespace DroneScanner
+
+#endif// DRONE_SCANNER_FAKELIDAR_HPP

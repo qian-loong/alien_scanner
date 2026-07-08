@@ -1,7 +1,7 @@
 # AGENTS.md — 本仓库 AI 协作与工程约定
 
 > 面向在本仓库执行任务的 AI 与开发者。**动手写 C++ / 建包 / 写测试前，先读本文件。**
-> 项目背景与分阶段计划见 `docs/xenomorph-scanner-plan.md`。
+> 项目背景与分阶段计划见 `docs/xenomorph-scanner-plan.md`；**各 Phase 分步细节**见 `docs/phases/`（如 [`phase-01-cave-world.md`](docs/phases/phase-01-cave-world.md)、[`phase-02-drone-scanner.md`](docs/phases/phase-02-drone-scanner.md)）。
 
 ---
 
@@ -12,6 +12,13 @@
 - colcon 工作区：`/workspaces/alien-scanner/ws`，源码包在 `ws/src/`。
 - 构建：`cd /workspaces/alien-scanner/ws && colcon build --symlink-install && source install/setup.bash`
 - GUI（RViz2）经 VcXsrv 转发，`DISPLAY=host.docker.internal:0.0`。
+
+### 0.1 CMake 与 CLion（建包 / 改 C++ 前）
+
+| 场景 | 文档 |
+|------|------|
+| 新建或修改 `ament_cmake` 包（C++ 标准、库 export、链接） | [`docs/ament-cmake-conventions.md`](docs/ament-cmake-conventions.md) |
+| CLion 索引、`colcon_build_*`、CMake 缓存选项 | [`docs/clion-cpp-cmake.md`](docs/clion-cpp-cmake.md) |
 
 ---
 
@@ -81,10 +88,10 @@
 
 | 组件 | 接口？ | 形式 | 说明 |
 |------|--------|------|------|
-| 洞穴几何（P1） | ✅ | C++ `ICaveField` + `ProceduralCaveField` | 数据源会变；P2 射线采样复用 |
-| fake_lidar（P2） | ⬜ 自身不抽象 | 具体类，注入 `ICaveField` | 靠注入依赖接口 |
+| 洞穴几何（P1） | ✅ | C++ `ICaveField` + `ProceduralCaveField` / `TreeCaveField` | 数据源会变；P2 射线采样复用 |
 | 飞行轨迹（P2） | ✅ | C++ `ITrajectory` | 会试多种路径 |
-| SLAM | ❌ | 用 `slam_toolbox` 外部节点 | ROS 组合，非 C++ 接口 |
+| fake_lidar（P2） | ⬜ 自身不抽象 | 具体类，注入 `ICaveField` | **YZ 垂直 360° 环**；进洞 **map +X**；见 plan §6 Phase 2 §2.0 |
+| SLAM / 建图 | ❌ | 不用 2D slam_toolbox 作主路径 | Phase 2 **3D 扫描累积**；Phase 3 **OctoMap 融合** |
 | 探索策略（P3） | ✅ | C++ `IExplorationStrategy` | 典型策略切换点 |
 | 地图融合（P3） | 🔸 | `IMapMerger`，先具体留边界 | 有第二实现可能 |
 | 网格重建（P4） | 🔸 | `IMeshReconstructor`，先具体留边界 | 多重建法时再抽 |
@@ -121,6 +128,20 @@
 
 ## 5. 提交与协作
 
-- 仅在用户明确要求时创建 git 提交；不擅自提交。
+### 5.0 铁律：无明确指令不得提交
+
+- **仅在用户明确要求时**才执行 `git add` / `git commit` / `git push`；完成实现、测试通过、或改动已就绪，**均不构成**提交许可。
+- 用户若说「先做 A 再提交文档」「文档提交一次后实施 B」，**只对字面提到的对象提交**（例：只提交文档，**不得**顺带提交刚完成的代码）。
+- Phase 内分步 commit（§5.1）是**用户发起提交时**应遵循的 message/粒度约定，**不是** AI 在每步完成后自动 commit 的授权。
+- 改动完成后：汇报 diff 与验证结果，**询问或等待**用户是否提交；用户未说「提交 / commit」前，保持工作区改动未 commit 即可。
 - 不修改 `git config`；不使用交互式 git 命令。
 - 保持改动聚焦；文档类改动优先用定向编辑，避免整文件重写。
+
+### 5.1 Git：按 Phase 提交
+
+- **`main` 上每个 Phase 最终仅 1 个合并提交**（Phase 验收通过后对阶段分支做 squash merge）。
+- **阶段开发在独立分支**上进行，命名：`phase/N-简短描述`（例：`phase/2-drone-scanner`）。
+- **用户明确要求提交时**，Phase 内每完成计划中的一步，创建 1 个 commit；message 格式：`phaseN(stepK): 简短说明`（例：`phase2(step1): add LineTrajectory`）。
+- Phase 验收完成前**不在 `main` 上堆多个阶段内 commit**；步骤历史保留在阶段分支，便于逐步 diff / revert。
+- 需要回到某步时，在阶段分支上用 commit hash 或可选 tag（例：`phase2-step1`），**不要**依赖长期 `commit --amend` 链代替步骤记录。
+- 推送：阶段分支可推送备份；**合并进 `main` 在用户确认 Phase 验收后进行**。

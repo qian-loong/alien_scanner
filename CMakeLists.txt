@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 project(alien_scanner LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # colcon 工作空间在仓库 ws/ 子目录（Dev Container 内为 /workspaces/alien-scanner/ws）
 set(ROS2_WS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ws" CACHE PATH "ROS 2 colcon workspace root")

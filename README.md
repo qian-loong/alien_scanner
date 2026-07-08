@@ -19,8 +19,11 @@ source install/setup.bash
 
 ## 文档
 
-- 工程约定（分层 / 接口 / 测试边界）：见 `AGENTS.md`
-- 分阶段实施计划：见 `docs/xenomorph-scanner-plan.md`
+- 工程约定（分层 / 接口 / 测试边界）：[`AGENTS.md`](AGENTS.md)
+- 总体规划（目标 / 架构 / 跨 Phase 契约）：[`docs/xenomorph-scanner-plan.md`](docs/xenomorph-scanner-plan.md)
+- **分步实施细节：**
+  - Phase 1：[`docs/phases/phase-01-cave-world.md`](docs/phases/phase-01-cave-world.md)
+  - Phase 2：[`docs/phases/phase-02-drone-scanner.md`](docs/phases/phase-02-drone-scanner.md)
 
 ## Phase 1 快速启动（cave_world）
 
@@ -32,4 +35,11 @@ ros2 launch cave_world cave_world_launch.py
 - **基础地图**（默认）：`cave_mode:=tree`，`seed:=42`，`tree.loop_bulge:=12`，`tree.loop_direct_length:=16`
 - **发布话题**：`/cave/points`（`sensor_msgs/PointCloud2`，`frame_id=map`，`TRANSIENT_LOCAL`）
 - **参数写法**：`ros2 launch cave_world cave_world_launch.py 参数名:=值`（勿用 `--ros-args -p`）
-- 完整参数表、拓扑说明、验收命令：见 `docs/xenomorph-scanner-plan.md` §6 Phase 1
+- 完整参数表、拓扑说明、验收命令：见 [`docs/phases/phase-01-cave-world.md`](docs/phases/phase-01-cave-world.md)
+
+## Phase 2 方向（进行中）
+
+- **感知：** 3D **垂直 360° 环**（非 2D 水平扫描）；机头沿 **map +X**，环在 **YZ 平面**
+- **当前：** `phase/2-drone-scanner` 分支 — step1 轨迹、step3 fake_odom 已完成
+- 启动预览：`ros2 launch drone_scanner fake_odom_launch.py`
+- 详见 [`docs/phases/phase-02-drone-scanner.md`](docs/phases/phase-02-drone-scanner.md)
