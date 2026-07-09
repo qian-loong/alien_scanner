@@ -24,6 +24,7 @@ source install/setup.bash
 - **分步实施细节：**
   - Phase 1：[`docs/phases/phase-01-cave-world.md`](docs/phases/phase-01-cave-world.md)
   - Phase 2：[`docs/phases/phase-02-drone-scanner.md`](docs/phases/phase-02-drone-scanner.md)
+  - Phase 3：[`docs/phases/phase-03-swarm.md`](docs/phases/phase-03-swarm.md)
 
 ## Phase 1 快速启动（cave_world）
 
@@ -47,6 +48,11 @@ ros2 launch drone_scanner fake_lidar_launch.py
 ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 ```
 
-- **感知：** 3D **垂直 360° 环**（非 2D 水平扫描）；机头沿 **map +X**，环在 **YZ 平面**
+- **感知：** 3D **垂直 360° 环**（非 2D 水平扫描）；机头沿 **map +X**，环在 **YZ 平面**（`ring_pitch=0`）
 - **关键话题：** `/drone_0/odom`、`/drone_0/points`、`/drone_0/cloud_map`
 - 完整分步、坐标约定、验收：见 [`docs/phases/phase-02-drone-scanner.md`](docs/phases/phase-02-drone-scanner.md)
+
+## Phase 3（规划就绪，未开始实现）
+
+- **未知探索**（规划不读洞穴真值）；**俯仰垂直环**；**OctoMap**；多机任务调度；`/global_map`
+- 分步与验收：[`docs/phases/phase-03-swarm.md`](docs/phases/phase-03-swarm.md)

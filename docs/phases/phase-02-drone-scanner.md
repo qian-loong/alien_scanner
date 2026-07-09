@@ -3,6 +3,7 @@
 > **状态：** ✅ 已完成（`main`）  
 > **上级摘要：** [`docs/xenomorph-scanner-plan.md`](../xenomorph-scanner-plan.md) §6 Phase 2  
 > **依赖 Phase 1：** [`phase-01-cave-world.md`](phase-01-cave-world.md)  
+> **下一阶段：** [`phase-03-swarm.md`](phase-03-swarm.md)  
 > **工程约定：** [`AGENTS.md`](../../AGENTS.md)（含 §5.1 Git 分步提交）
 
 ---
