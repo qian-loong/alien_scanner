@@ -96,6 +96,26 @@ def generate_launch_description():
     ring_pitch_rad = DeclareLaunchArgument(
         'ring_pitch_rad', default_value='0.35',
         description='扫描环绕机体 +Y 前倾角 (rad)；0=纯 YZ；默认约 20° 消除正前盲区')
+    altitude_adapt_enable = DeclareLaunchArgument(
+        'altitude_adapt.enable', default_value='true',
+        description='根据环扫顶/底自适应飞行高度（不读洞穴真值）')
+    altitude_target_fraction = DeclareLaunchArgument(
+        'altitude_adapt.target_fraction', default_value='0.5')
+    altitude_min_clearance = DeclareLaunchArgument(
+        'altitude_adapt.min_clearance', default_value='0.35')
+    altitude_max_vertical_speed = DeclareLaunchArgument(
+        'altitude_adapt.max_vertical_speed', default_value='0.6',
+        description='高度跟随 |vz| 上限 (m/s)')
+    altitude_band_ema_alpha = DeclareLaunchArgument(
+        'altitude_adapt.band_ema_alpha', default_value='0.25',
+        description='顶/底估计 EMA 系数，越小越平滑')
+    altitude_min_band_height = DeclareLaunchArgument(
+        'altitude_adapt.min_band_height', default_value='0.8')
+    altitude_vertical_dot_min = DeclareLaunchArgument(
+        'altitude_adapt.vertical_dot_min', default_value='0.65')
+    altitude_points_stale_sec = DeclareLaunchArgument(
+        'altitude_adapt.points_stale_sec', default_value='0.5',
+        description='扫描帧超过该时长(s)则丢弃，不更新顶底')
 
     show_cave = DeclareLaunchArgument(
         'show_cave', default_value='true',
@@ -153,6 +173,14 @@ def generate_launch_description():
         range_noise_std,
         noise_seed,
         ring_pitch_rad,
+        altitude_adapt_enable,
+        altitude_target_fraction,
+        altitude_min_clearance,
+        altitude_max_vertical_speed,
+        altitude_band_ema_alpha,
+        altitude_min_band_height,
+        altitude_vertical_dot_min,
+        altitude_points_stale_sec,
         show_cave,
         show_rviz_sim,
         show_rviz_map,
@@ -196,6 +224,15 @@ def generate_launch_description():
                 'publish_rate': _f('publish_rate'),
                 'odom_frame': 'odom',
                 'base_frame': 'base_link',
+                'altitude_adapt.enable': _b('altitude_adapt.enable'),
+                'altitude_adapt.target_fraction': _f('altitude_adapt.target_fraction'),
+                'altitude_adapt.min_clearance': _f('altitude_adapt.min_clearance'),
+                'altitude_adapt.max_vertical_speed': _f('altitude_adapt.max_vertical_speed'),
+                'altitude_adapt.band_ema_alpha': _f('altitude_adapt.band_ema_alpha'),
+                'altitude_adapt.min_band_height': _f('altitude_adapt.min_band_height'),
+                'altitude_adapt.vertical_dot_min': _f('altitude_adapt.vertical_dot_min'),
+                'altitude_adapt.ring_pitch_rad': _f('ring_pitch_rad'),
+                'altitude_adapt.points_stale_sec': _f('altitude_adapt.points_stale_sec'),
             }],
         ),
         Node(

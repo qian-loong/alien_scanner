@@ -206,7 +206,7 @@ ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 | 步 | 内容 | 状态 |
 |----|------|------|
 | 3-1 | 环面俯仰倾斜 `ring_pitch`（方案 A，不增 beam） | ✅ |
-| 3-2 | 高度自适应 | ⬜ |
+| 3-2 | 高度自适应 | ✅ |
 | 3-3 | OctoMap 观测地图（含未命中 beam free 雕刻） | ⬜ |
 | 3-4 | `IExplorationStrategy`（单机选目标） | ⬜ |
 | 3-5 | 单机探索闭环 + 最小避障 | ⬜ |

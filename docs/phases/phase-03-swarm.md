@@ -88,7 +88,7 @@ ICaveField（真值）──仅造数──► FakeLidar（俯仰环）
 | 步 | 内容 | 状态 | 建议 commit |
 |----|------|------|-------------|
 | 3-1 | 环面俯仰倾斜 `ring_pitch`（方案 A） | ✅ | `phase3(step1): pitched vertical ring` |
-| 3-2 | 高度自适应 | ⬜ | `phase3(step2): altitude adaptation` |
+| 3-2 | 高度自适应 | ✅ | `phase3(step2): altitude adaptation` |
 | 3-3 | OctoMap 观测地图（含未命中 beam free 雕刻） | ⬜ | `phase3(step3): octomap observation` |
 | 3-4 | `IExplorationStrategy`（单机选目标） | ⬜ | `phase3(step4): exploration strategy` |
 | 3-5 | 单机探索闭环 + **最小避障** | ⬜ | `phase3(step5): single-drone explore loop` |
@@ -123,14 +123,94 @@ ICaveField（真值）──仅造数──► FakeLidar（俯仰环）
 
 ### 设计
 
-- 用当前环扫估计局部洞顶 / 洞底距离（或等价高度带）
+- 用当前环扫估计**最近上方 / 最近下方障碍**，形成可飞高度带（相对旧式裸 min/max 更稳，仍属通用启发式）
 - 将飞行高度保持在安全中带；**不读**真值中轴
-- 逻辑放在 `drone_scanner` 运动侧（与 fake_odom / 短目标执行配合）
+- 逻辑放在 `drone_scanner`：`AltitudeAdapter`（ROS-free）+ `fake_odom` 订阅同 namespace `points` 覆盖轨迹 `z`
+- 两层平滑（见下）：**EMA** 平滑「看见的顶/底」；**按时间限速** 平滑「飞机实际跟高度」
+- **接线约束：** hits 必须用**扫描时**机体 z 解释；EMA **仅在新扫描帧**更新；过期帧丢弃（`points_stale_sec`）
+- **几何校验：** `vertical_dot_min < cos(ring_pitch)`，否则禁用高度自适应并打 ERROR
+- **成对样本：** 上、下近垂向 hit 都要有，否则本帧 invalid（hold 上一高度）
+
+### 当前范围 vs 未来特性
+
+| | 内容 |
+|--|------|
+| **Phase 3-2 当前验收** | 管状 / 截面缓变洞穴：高度跟随平滑、几何校验、扫描时 z 绑定、EMA 仅新帧、成对样本 |
+| **明确不作为本步验收** | 钟乳石 / 石笋林、竖井、大侧厅、稀疏凸起「透过空隙看到真顶」等复杂局部几何的完备避障 |
+
+**未来特性（非本步交付）：**
+
+- 钟乳石 / 石笋等尖状凸起的专用净空与通过策略（含更强鲁棒统计、局部障碍图）
+- 竖井 / 岔口侧壁离群 hit 的场景化过滤与置信度
+- 将 `AltitudeBand` + `valid` 作为正式接口交给探索 / 避障，并约定与 `goal.z` 的仲裁
+- 机体 roll/pitch 非零时的完整姿态投影（当前假设无倾斜）
+
+当前「最近上/下障碍」可作为上述场景的**弱基线**（例如稀疏石林时比裸 `max` 估真顶更不易穿尖），但**不宣称**已覆盖钟乳石完备安全；复杂场景留待后续特性迭代。
+
+### 平滑机制 1：EMA（指数滑动平均）
+
+**EMA = Exponential Moving Average。** 把本帧测量与上一帧平滑值按比例混合，减轻单帧扫描噪声 / 截面突变带来的顶底跳变。
+
+```text
+平滑值 = α × 本帧测量 + (1 − α) × 上一帧平滑值
+```
+
+| 项 | 说明 |
+|----|------|
+| 作用对象 | 估计出的 `floor_z` / `ceiling_z`（不是机体 `z` 本身） |
+| 参数 | `altitude_adapt.band_ema_alpha`（代码：`band_ema_alpha`） |
+| 默认 | `0.25` |
+| α 越大 | 越跟新测量，反应快，更容易抖 |
+| α 越小 | 越信历史，更稳，跟截面变化更慢 |
+
+例：洞底估计从 `0` 突然跳到 `-1`，α=0.25 时下一帧平滑底约为 `-0.25`，不会一步跳满。
+
+### 平滑机制 2：按时间限速
+
+即使目标高度（顶底中带）已算出，机体 `z` 也不允许一帧贴过去，而是限制竖直速度：
+
+```text
+max_dz = max_vertical_speed × dt
+新高度 = 当前高度 + clamp(目标 − 当前, −max_dz, +max_dz)
+```
+
+| 项 | 说明 |
+|----|------|
+| 作用对象 | 机体飞行高度 `z`（`fake_odom` 发布的位姿） |
+| 参数 | `altitude_adapt.max_vertical_speed` |
+| 默认 | `0.6` m/s |
+| `dt` | 两次 `fake_odom` 定时器回调的时间差（与发布频率解耦） |
+| 为何需要 | 若每帧直接跳到目标，噪声与截面突变会让飞机上下阶跃；旧式固定 `max_step` 还会和 Hz 绑死（例如每 tick 0.15 m @ 20 Hz ≈ 3 m/s） |
+
+### 两者分工
+
+| 机制 | 管什么 |
+|------|--------|
+| **EMA** | 「看见的顶/底」别一帧跳变 |
+| **按时间限速** | 「飞机实际跟高度」别跟得太猛 |
+
+调参：更稳 → 减小 `band_ema_alpha` / `max_vertical_speed`；跟得更快 → 调大。
+
+### 相关参数（launch / 节点）
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `altitude_adapt.enable` | `true` | 是否启用高度自适应 |
+| `altitude_adapt.target_fraction` | `0.5` | 0=贴底，1=贴顶；默认走廊中带 |
+| `altitude_adapt.min_clearance` | `0.35` | 相对顶/底至少保留的净空 (m) |
+| `altitude_adapt.band_ema_alpha` | `0.25` | 顶/底 EMA 系数（仅新扫描帧更新） |
+| `altitude_adapt.max_vertical_speed` | `0.6` | 竖直 \|vz\| 上限 (m/s) |
+| `altitude_adapt.min_band_height` | `0.8` | 顶底间距过小则本帧无效 |
+| `altitude_adapt.vertical_dot_min` | `0.65` | 筛近垂向 beam |
+| `altitude_adapt.ring_pitch_rad` | 与 `ring_pitch_rad` 同步 | 几何兼容校验 |
+| `altitude_adapt.points_stale_sec` | `0.5` | 扫描帧过期丢弃阈值 (s) |
 
 ### 验收
 
-- 截面起伏时 `z` 跟随变化（RViz 目检）
+- 截面起伏时 `z` 跟随变化，无大幅阶跃抖动（RViz 目检；以管状 / 缓变洞为主）
 - 可在 Phase 2 一键 launch 上先单机验证，不依赖 OctoMap
+- gtest：`TestAltitudeAdapter`（含 EMA / 限速 / 几何校验 / 扫描原点 z）
+- **不要求**本步通过钟乳石等复杂凸起场景的完备目检（见「未来特性」）
 
 ---
 
@@ -299,7 +379,7 @@ ros2 launch swarm_controller swarm.launch.xml num_drones:=3
 
 ```text
 [x] 3-1  环面俯仰倾斜 ring_pitch（方案 A）
-[ ] 3-2  高度自适应
+[x] 3-2  高度自适应
 [ ] 3-3  OctoMap 观测地图
 [ ] 3-4  IExplorationStrategy
 [ ] 3-5  单机闭环 + 最小避障          ← M1

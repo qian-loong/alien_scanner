@@ -27,6 +27,7 @@ target_include_directories(drone_trajectory PUBLIC
 
 add_library(drone_lidar STATIC
         src/FakeLidar.cpp
+        src/AltitudeAdapter.cpp
 )
 target_include_directories(drone_lidar PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -60,6 +61,7 @@ install(
 install(
         FILES
         include/drone_scanner/FakeLidar.hpp
+        include/drone_scanner/AltitudeAdapter.hpp
         DESTINATION include/drone_scanner
 )
 install(
@@ -89,8 +91,8 @@ target_include_directories(fake_odom PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(fake_odom drone_trajectory)
-ament_target_dependencies(fake_odom rclcpp nav_msgs geometry_msgs tf2_ros)
+target_link_libraries(fake_odom drone_trajectory drone_lidar)
+ament_target_dependencies(fake_odom rclcpp nav_msgs geometry_msgs sensor_msgs tf2_ros)
 
 install(
         TARGETS fake_odom
@@ -149,6 +151,14 @@ if(BUILD_TESTING)
         target_link_libraries(TestFakeLidar drone_lidar)
         ament_target_dependencies(TestFakeLidar cave_world)
         target_include_directories(TestFakeLidar PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
+    ament_add_gtest(TestAltitudeAdapter test/TestAltitudeAdapter.cpp)
+    if(TARGET TestAltitudeAdapter)
+        target_link_libraries(TestAltitudeAdapter drone_lidar)
+        target_include_directories(TestAltitudeAdapter PUBLIC
                 $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         )
     endif()
