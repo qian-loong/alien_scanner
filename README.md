@@ -37,9 +37,16 @@ ros2 launch cave_world cave_world_launch.py
 - **参数写法**：`ros2 launch cave_world cave_world_launch.py 参数名:=值`（勿用 `--ros-args -p`）
 - 完整参数表、拓扑说明、验收命令：见 [`docs/phases/phase-01-cave-world.md`](docs/phases/phase-01-cave-world.md)
 
-## Phase 2 方向（进行中）
+## Phase 2 快速启动（drone_scanner，已完成）
+
+```bash
+cd /workspaces/alien-scanner/ws && source install/setup.bash
+ros2 launch drone_scanner fake_lidar_launch.py
+
+# 纯探索视角（关闭洞穴真值）
+ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
+```
 
 - **感知：** 3D **垂直 360° 环**（非 2D 水平扫描）；机头沿 **map +X**，环在 **YZ 平面**
-- **当前：** `phase/2-drone-scanner` 分支 — step1 轨迹、step3 fake_odom 已完成
-- 启动预览：`ros2 launch drone_scanner fake_odom_launch.py`
-- 详见 [`docs/phases/phase-02-drone-scanner.md`](docs/phases/phase-02-drone-scanner.md)
+- **关键话题：** `/drone_0/odom`、`/drone_0/points`、`/drone_0/cloud_map`
+- 完整分步、坐标约定、验收：见 [`docs/phases/phase-02-drone-scanner.md`](docs/phases/phase-02-drone-scanner.md)

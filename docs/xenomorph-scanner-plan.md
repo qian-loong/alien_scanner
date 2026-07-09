@@ -159,9 +159,7 @@ ros2 launch cave_world cave_world_launch.py
 
 ---
 
-### Phase 2：单 drone 三维扫描闭环 — **进行中**
-
-**分支：** `phase/2-drone-scanner`
+### Phase 2：单 drone 三维扫描闭环 — **已完成**
 
 **目标：** fake LiDAR 对 `ICaveField` 做 **YZ 垂直 360° 环** raycast；单机 3D 点云累积（非 2D SLAM）。
 
@@ -462,13 +460,13 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 ```
 [x] 0. 容器与环境（alien-scanner-dev + VcXsrv）
 [x] 1. Phase 1 — cave_world 包 + RViz2 看到洞穴
-[~] 2. Phase 2 — 3D 垂直环 fake LiDAR + fake_odom（见 docs/phases/phase-02-drone-scanner.md）
+[x] 2. Phase 2 — 3D 垂直环 fake LiDAR + fake_odom（见 docs/phases/phase-02-drone-scanner.md）
 [ ] 3. Phase 3 — 3 机 swarm + 全局 OctoMap
 [ ] 4. Phase 4 — Mesh 与演示 polish
 [ ] 5. （可选）ros2 bag 录制 + README 演示 GIF
 ```
 
-**当前进度：** Phase 1 已完成；Phase 2 进行中（**3D 垂直环扫描**，见 [`docs/phases/phase-02-drone-scanner.md`](phases/phase-02-drone-scanner.md)）。
+**当前进度：** Phase 1、Phase 2 已完成；下一步 Phase 3（见 [`docs/phases/phase-02-drone-scanner.md`](phases/phase-02-drone-scanner.md)）。
 
 ---
 
@@ -495,5 +493,5 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 | 字段 | 值 |
 |------|-----|
 | 创建日期 | 2026-07-06 |
-| 最后更新 | 2026-07-08 |
-| 状态 | Phase 1 已完成；Phase 2 进行中；分步细节见 `docs/phases/` |
+| 最后更新 | 2026-07-09 |
+| 状态 | Phase 1、Phase 2 已完成；分步细节见 `docs/phases/` |

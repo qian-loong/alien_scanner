@@ -1,6 +1,6 @@
 # Phase 2：单 drone 三维扫描闭环（drone_scanner）
 
-> **状态：** 🟡 进行中（分支 `phase/2-drone-scanner`）  
+> **状态：** ✅ 已完成（`main`）  
 > **上级摘要：** [`docs/xenomorph-scanner-plan.md`](../xenomorph-scanner-plan.md) §6 Phase 2  
 > **依赖 Phase 1：** [`phase-01-cave-world.md`](phase-01-cave-world.md)  
 > **工程约定：** [`AGENTS.md`](../../AGENTS.md)（含 §5.1 Git 分步提交）
@@ -447,13 +447,14 @@ sudo apt install -y \
 
 遵循 [`AGENTS.md`](../../AGENTS.md) §5.1：
 
-- 开发分支：**`phase/2-drone-scanner`**
+- 开发分支：**`phase/2-drone-scanner`**（步骤历史保留于此）
 - 每完成一步一个 commit：`phase2(stepK): 简短说明`
-- Phase 验收通过后 **squash merge 到 `main`**（`main` 上每个 Phase 仅 1 个合并提交）
+- Phase 验收通过后已 **squash merge 到 `main`**：`245b726`（`main` 上本 Phase 仅 1 个功能合并提交）
 
-**已有 commit（分支上，节选）：**
+**阶段分支 commit（节选，供逐步 diff）：**
 
 ```
+7f00477 phase2(step5-6): scan accumulator, dual rviz, single_drone entry
 341ca7f phase2(test): fake_odom and fake_lidar launch_testing
 69481a2 phase2(step4): fake_lidar node and launch
 4655e61 phase2(step2): FakeLidar YZ vertical ring raycast
