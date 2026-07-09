@@ -93,6 +93,9 @@ def generate_launch_description():
     max_range = DeclareLaunchArgument('max_range', default_value='30.0')
     range_noise_std = DeclareLaunchArgument('range_noise_std', default_value='0.0')
     noise_seed = DeclareLaunchArgument('noise_seed', default_value='0')
+    ring_pitch_rad = DeclareLaunchArgument(
+        'ring_pitch_rad', default_value='0.35',
+        description='扫描环绕机体 +Y 前倾角 (rad)；0=纯 YZ；默认约 20° 消除正前盲区')
 
     show_cave = DeclareLaunchArgument(
         'show_cave', default_value='true',
@@ -149,6 +152,7 @@ def generate_launch_description():
         max_range,
         range_noise_std,
         noise_seed,
+        ring_pitch_rad,
         show_cave,
         show_rviz_sim,
         show_rviz_map,
@@ -210,6 +214,7 @@ def generate_launch_description():
                 'max_range': _f('max_range'),
                 'range_noise_std': _f('range_noise_std'),
                 'noise_seed': _i('noise_seed'),
+                'ring_pitch_rad': _f('ring_pitch_rad'),
                 'stop_scan_when_trajectory_done': _b('stop_scan_when_trajectory_done'),
             }],
         ),

@@ -31,9 +31,10 @@ namespace DroneScanner {
 
         RCLCPP_INFO(
                 get_logger(),
-                "fake_lidar: %s -> %s, %.1f Hz, %ld beams, frame '%s'",
+                "fake_lidar: %s -> %s, %.1f Hz, %ld beams, ring_pitch=%.3f rad, frame '%s'",
                 map_frame_.c_str(), lidar_frame_.c_str(), scan_rate_hz_,
-                static_cast<long>(get_parameter("num_beams").as_int()), lidar_frame_.c_str());
+                static_cast<long>(get_parameter("num_beams").as_int()),
+                get_parameter("ring_pitch_rad").as_double(), lidar_frame_.c_str());
     }
 
     void FakeLidarNode::declareParameters()
@@ -47,6 +48,7 @@ namespace DroneScanner {
         declare_parameter("max_range", 30.0);
         declare_parameter("range_noise_std", 0.0);
         declare_parameter("noise_seed", 0);
+        declare_parameter("ring_pitch_rad", 0.0);
         declare_parameter("stop_scan_when_trajectory_done", true);
     }
 
@@ -62,6 +64,7 @@ namespace DroneScanner {
         config.max_range        = static_cast<float>(get_parameter("max_range").as_double());
         config.range_noise_std  = static_cast<float>(get_parameter("range_noise_std").as_double());
         config.noise_seed       = static_cast<std::uint32_t>(get_parameter("noise_seed").as_int());
+        config.ring_pitch_rad   = static_cast<float>(get_parameter("ring_pitch_rad").as_double());
         fake_lidar_             = std::make_unique<FakeLidar>(field_, config);
     }
 

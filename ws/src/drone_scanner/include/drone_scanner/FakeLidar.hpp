@@ -15,6 +15,8 @@ namespace DroneScanner {
         float         max_range {30.0F};
         float         range_noise_std {0.0F};
         std::uint32_t noise_seed {0U}; ///< 非零且 range_noise_std>0 时用于确定性噪声
+        /// 扫描平面绕机体 +Y 前倾角 (rad)。0 = 纯 YZ 垂直环；>0 时 beam 带 +X，消除正前盲区。
+        float         ring_pitch_rad {0.0F};
     };
 
     /// lidar_link 系下的命中点（REP-103：x 前、y 左、z 上）。
@@ -24,7 +26,7 @@ namespace DroneScanner {
         float z {};
     };
 
-    /// 注入 ICaveField，在 YZ 垂直 360° 环上 raycast（环平面 ⊥ 前进 +x）。
+    /// 注入 ICaveField，在可俯仰的垂直 360° 环上 raycast（pitch=0 时环平面 ⊥ 前进 +x）。
     class FakeLidar
     {
     public:

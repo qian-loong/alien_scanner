@@ -87,7 +87,7 @@ ICaveField（真值）──仅造数──► FakeLidar（俯仰环）
 
 | 步 | 内容 | 状态 | 建议 commit |
 |----|------|------|-------------|
-| 3-1 | 环面俯仰倾斜 `ring_pitch`（方案 A） | ⬜ | `phase3(step1): pitched vertical ring` |
+| 3-1 | 环面俯仰倾斜 `ring_pitch`（方案 A） | ✅ | `phase3(step1): pitched vertical ring` |
 | 3-2 | 高度自适应 | ⬜ | `phase3(step2): altitude adaptation` |
 | 3-3 | OctoMap 观测地图（含未命中 beam free 雕刻） | ⬜ | `phase3(step3): octomap observation` |
 | 3-4 | `IExplorationStrategy`（单机选目标） | ⬜ | `phase3(step4): exploration strategy` |
@@ -298,7 +298,7 @@ ros2 launch swarm_controller swarm.launch.xml num_drones:=3
 ## 建议实施顺序（Checklist）
 
 ```text
-[ ] 3-1  环面俯仰倾斜 ring_pitch（方案 A）
+[x] 3-1  环面俯仰倾斜 ring_pitch（方案 A）
 [ ] 3-2  高度自适应
 [ ] 3-3  OctoMap 观测地图
 [ ] 3-4  IExplorationStrategy
