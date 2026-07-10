@@ -34,10 +34,14 @@ namespace DroneScanner {
         static sensor_msgs::msg::PointCloud2 makePointCloud(
                 const rclcpp::Time & stamp, const std::string & frame_id,
                 const std::vector<LidarPoint> & hits);
+        static sensor_msgs::msg::PointCloud2 makeReturnsPointCloud(
+                const rclcpp::Time & stamp, const std::string & frame_id,
+                const std::vector<LidarReturn> & returns);
 
         std::shared_ptr<CaveWorld::ICaveField>                       field_;
         std::unique_ptr<FakeLidar>                                   fake_lidar_;
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr          publisher_;
+        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr          returns_publisher_;
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr             odom_subscription_;
         std::shared_ptr<tf2_ros::Buffer>                                     tf_buffer_;
         std::shared_ptr<tf2_ros::TransformListener>                          tf_listener_;

@@ -378,4 +378,43 @@ namespace DroneScanner {
         EXPECT_GT(max_x, 1.5F);
     }
 
+    TEST(FakeLidarTest, ScanReturnsKeepsMissBeams)
+    {
+        class EmptyField : public CaveWorld::ICaveField
+        {
+        public:
+            bool isSolid(float /*x*/, float /*y*/, float /*z*/) const override
+            {
+                return false;
+            }
+
+            bool raycast(
+                    const CaveWorld::Point3 & /*origin*/, const CaveWorld::Point3 & /*dir*/,
+                    float /*max_range*/, float & /*out_dist*/) const override
+            {
+                return false;
+            }
+
+            std::vector<CaveWorld::Point3> sampleSurface() const override
+            {
+                return {};
+            }
+        };
+
+        FakeLidarConfig config = makeTestConfig(8);
+        config.max_range       = 4.0F;
+        const FakeLidar lidar(std::make_shared<EmptyField>(), config);
+
+        const auto hits    = lidar.scan(Pose3D {});
+        const auto returns = lidar.scanReturns(Pose3D {});
+
+        EXPECT_TRUE(hits.empty());
+        ASSERT_EQ(returns.size(), 8U);
+        for(const LidarReturn & ret : returns) {
+            EXPECT_FALSE(ret.hit);
+            EXPECT_NEAR(ret.range, config.max_range, 1e-5F);
+            EXPECT_NEAR(radialDistance(ret.x, ret.y, ret.z), config.max_range, 1e-5F);
+        }
+    }
+
 }// namespace DroneScanner

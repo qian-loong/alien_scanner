@@ -1,5 +1,5 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
@@ -199,12 +199,17 @@ def generate_launch_description():
             name='base_to_lidar',
             arguments=['0', '0', '0', '0', '0', '0', 'base_link', 'lidar_link'],
         ),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(cave_publisher_launch),
-            condition=IfCondition(LaunchConfiguration('show_cave')),
-            launch_arguments={
-                key: LaunchConfiguration(key) for key in _cave_params()
-            }.items(),
+        GroupAction(
+            scoped=True,
+            actions=[
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(cave_publisher_launch),
+                    condition=IfCondition(LaunchConfiguration('show_cave')),
+                    launch_arguments={
+                        key: LaunchConfiguration(key) for key in _cave_params()
+                    }.items(),
+                ),
+            ],
         ),
         Node(
             package='drone_scanner',

@@ -9,7 +9,7 @@ import launch_testing.asserts
 import rclpy
 from rclpy.duration import Duration
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import PointCloud2
+from sensor_msgs.msg import PointCloud2, PointField
 from tf2_ros import Buffer, TransformListener
 
 
@@ -96,10 +96,16 @@ class TestFakeLidarIntegration(unittest.TestCase):
         self.node.destroy_node()
 
     def _collect_points(self, seconds):
+        return self._collect_topic('/drone_0/points', seconds)
+
+    def _collect_scan_returns(self, seconds):
+        return self._collect_topic('/drone_0/scan_returns', seconds)
+
+    def _collect_topic(self, topic, seconds):
         msgs = []
         sub = self.node.create_subscription(
             PointCloud2,
-            '/drone_0/points',
+            topic,
             lambda msg: msgs.append(msg),
             qos_profile_sensor_data,
         )
@@ -159,6 +165,26 @@ class TestFakeLidarIntegration(unittest.TestCase):
         msgs = self._collect_points(2.0)
         self.assertGreaterEqual(len(msgs), 12, f'expected ~20 scans in 2s, got {len(msgs)}')
         self.assertLessEqual(len(msgs), 30)
+
+    def test_scan_returns_full_beam_contract(self, proc_output):
+        msgs = self._collect_scan_returns(4.0)
+        self.assertGreater(len(msgs), 0, 'expected /drone_0/scan_returns messages')
+        cloud = msgs[-1]
+        self.assertEqual(cloud.header.frame_id, 'lidar_link')
+        self.assertEqual(cloud.width * cloud.height, 180)
+        fields = {field.name: field for field in cloud.fields}
+        expected = {
+            'x': PointField.FLOAT32,
+            'y': PointField.FLOAT32,
+            'z': PointField.FLOAT32,
+            'range': PointField.FLOAT32,
+            'hit': PointField.UINT8,
+            'intensity': PointField.FLOAT32,
+        }
+        for name, datatype in expected.items():
+            self.assertIn(name, fields)
+            self.assertEqual(fields[name].datatype, datatype)
+            self.assertEqual(fields[name].count, 1)
 
 
 @launch_testing.post_shutdown_test()

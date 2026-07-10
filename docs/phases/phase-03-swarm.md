@@ -1,6 +1,6 @@
 # Phase 3：多机未知探索与地图融合（swarm_controller）
 
-> **状态：** ⚪ 未开始（建议分支 `phase/3-swarm-controller`）  
+> **状态：** 🟡 进行中（3-1～3-3 已完成；分支 `phase/3-swarm-controller`）  
 > **上级摘要：** [`docs/xenomorph-scanner-plan.md`](../xenomorph-scanner-plan.md) §6 Phase 3  
 > **依赖：** Phase 1 [`phase-01-cave-world.md`](phase-01-cave-world.md)、Phase 2 [`phase-02-drone-scanner.md`](phase-02-drone-scanner.md)  
 > **工程约定：** [`AGENTS.md`](../../AGENTS.md)（含 §5.1 Git 分步提交）
@@ -89,7 +89,7 @@ ICaveField（真值）──仅造数──► FakeLidar（俯仰环）
 |----|------|------|-------------|
 | 3-1 | 环面俯仰倾斜 `ring_pitch`（方案 A） | ✅ | `phase3(step1): pitched vertical ring` |
 | 3-2 | 高度自适应 | ✅ | `phase3(step2): altitude adaptation` |
-| 3-3 | OctoMap 观测地图（含未命中 beam free 雕刻） | ⬜ | `phase3(step3): octomap observation` |
+| 3-3 | OctoMap 观测地图（含未命中 beam free 雕刻） | ✅ | `phase3(step3): octomap observation` |
 | 3-4 | `IExplorationStrategy`（单机选目标） | ⬜ | `phase3(step4): exploration strategy` |
 | 3-5 | 单机探索闭环 + **最小避障** | ⬜ | `phase3(step5): single-drone explore loop` |
 | 3-6 | 多机 launch（`num_drones:=3`） | ⬜ | `phase3(step6): multi-drone launch` |
@@ -216,20 +216,341 @@ max_dz = max_vertical_speed × dt
 
 ## Step 3-3：OctoMap 观测地图
 
-### 设计
+### 目标
 
-- **直接以 OctoMap 为观测后端**（主路径，非后期可选项）
-- 更新规则：
-  - 命中点 → occupied
-  - 原点到命中点（或到 `max_range` 的未命中 beam）→ free
-  - 从未覆盖 → unknown
-- **必须**使用未命中 beam 做 free 雕刻；不可只插入墙点云
-- 算法库 ROS-free 优先（链 octomap C++）；节点负责订阅 `/points`、TF、发布 OctoMap 话题
+建立单机 OctoMap 观测后端：
+
+- hit endpoint → `occupied`
+- hit 前段 → `free`
+- miss ray 到 `max_range` → `free`
+- miss endpoint **不标 occupied**
+- 未被任何 ray 覆盖 → `unknown`
+
+本步只做**单机观测地图**，不做 frontier、多机融合、探索闭环。
+
+### 数据流
+
+```mermaid
+flowchart LR
+    fakeLidar["FakeLidar"]
+    hitPoints["/drone_i/points\nhit-only"]
+    scanReturns["/drone_i/scan_returns\nall beams"]
+    consumers["AltitudeAdapter\nscan_accumulator"]
+    octomapNode["octomap_builder_node"]
+    octomapBuilder["OctoMapBuilder\nROS-free"]
+    octomapTopic["/drone_i/octomap"]
+
+    fakeLidar --> hitPoints
+    fakeLidar --> scanReturns
+    hitPoints --> consumers
+    scanReturns --> octomapNode
+    octomapNode --> octomapBuilder
+    octomapBuilder --> octomapTopic
+```
+
+### 保持旧接口不破坏
+
+`/drone_i/points` 继续只表示 **hit-only 点云**。它仍服务于：
+
+- `AltitudeAdapter`：估计顶 / 底时只应看到真实命中点
+- `scan_accumulator`：只累积真实墙点
+- RViz 现有点云显示
+
+**不得**把 miss endpoint 混入 `/points`，否则会产生 `max_range` 虚假壳层，并污染高度自适应。
+
+`FakeLidar::scan()` 保持现有语义：只返回命中点。新增全 beam API：
+
+```cpp
+std::vector<LidarReturn> scanReturns(const Pose3D& lidar_pose_in_map) const;
+```
+
+### 全 beam 返回结构
+
+在 `drone_scanner` 中新增：
+
+```cpp
+struct LidarReturn {
+    float x;
+    float y;
+    float z;
+    float range;
+    bool hit;
+};
+```
+
+坐标语义：
+
+| 字段 | 含义 |
+|------|------|
+| `x/y/z` | `lidar_link` 系 endpoint |
+| `range` | hit 时为实际距离；miss 时为 `max_range` |
+| `hit` | `true` = 真实障碍命中点；`false` = max_range 虚点，只表示 ray 沿途 free |
+
+`scanReturns()` 每个 beam 必有一条 return：
+
+- raycast 命中 → `hit=true`
+- raycast 未命中 → endpoint = beam direction × `max_range`，`hit=false`
+
+### `FakeLidarNode` 发布两个话题
+
+每帧只做一次全 beam scan：
+
+```text
+returns = fake_lidar.scanReturns(pose)
+```
+
+然后拆成两个输出：
+
+| 话题 | 内容 | 消费者 |
+|------|------|--------|
+| `/drone_i/points` | 仅 `hit=true` 的点 | `AltitudeAdapter`、`scan_accumulator`、RViz |
+| `/drone_i/scan_returns` | 全 beam return | `octomap_builder_node` |
+
+### `/scan_returns` PointCloud2 字段契约
+
+固定字段，避免隐式约定：
+
+| 字段 | 类型 | 含义 |
+|------|------|------|
+| `x` | `FLOAT32` | endpoint x，`lidar_link` 系 |
+| `y` | `FLOAT32` | endpoint y |
+| `z` | `FLOAT32` | endpoint z |
+| `range` | `FLOAT32` | hit distance 或 `max_range` |
+| `hit` | `UINT8` | `1=hit`，`0=miss` |
+| `intensity` | `FLOAT32` | 调试显示用，`hit ? 1.0 : 0.0` |
+
+要求：
+
+- `header.frame_id = lidar_link`
+- `header.stamp` = 该帧扫描使用的 TF 时刻
+- `width == num_beams`
+- beam 顺序稳定
+
+### TF 时间戳一致性
+
+`FakeLidarNode` 扫描时必须保证：
+
+- 用某一时刻 `stamp` 查 `map -> lidar_link`
+- 用同一个 `stamp` 发布 `/points` 和 `/scan_returns`
+
+`octomap_builder_node` 订阅 `/scan_returns` 后：
+
+- 用 `msg.header.stamp` 查 `map <- msg.header.frame_id`
+- 同一帧所有 endpoint 使用同一个 transform
+- origin 使用该 transform 的平移
+- endpoint 从 lidar frame 变换到 map frame
+
+### `swarm_controller` 包结构
+
+```text
+ws/src/swarm_controller/
+├── include/swarm_controller/
+│   ├── OctoMapBuilder.hpp
+│   └── RayReturn.hpp
+├── src/
+│   ├── OctoMapBuilder.cpp
+│   ├── OctoMapBuilderNode.cpp
+│   └── OctoMapBuilderMain.cpp
+├── test/
+│   └── TestOctoMapBuilder.cpp
+├── launch/
+│   └── octomap_builder_launch.py
+├── CMakeLists.txt
+└── package.xml
+```
+
+遵循仓库约定：算法库 ROS-free，节点只做消息转换、TF、参数与发布。
+
+### ROS-free `OctoMapBuilder`
+
+```cpp
+enum class CellState {
+    Unknown,
+    Free,
+    Occupied,
+};
+
+struct RayReturn {
+    Point3f endpoint;
+    float range;
+    bool hit;
+};
+
+class OctoMapBuilder {
+public:
+    explicit OctoMapBuilder(float resolution);
+
+    void insertScan(
+        const Point3f& origin_map,
+        const std::vector<RayReturn>& returns_map);
+
+    CellState query(float x, float y, float z) const;
+
+    std::size_t occupiedCount() const;
+    std::size_t knownCount() const;
+
+    const octomap::OcTree& tree() const;
+};
+```
+
+### OctoMap 插入语义
+
+#### hit ray
+
+```text
+origin -> endpoint 前段：free
+endpoint：occupied
+```
+
+#### miss ray
+
+```text
+origin -> endpoint：free
+endpoint 不 occupied
+```
+
+不能把全 beam endpoint 直接传给 `insertPointCloud()`，因为 miss endpoint 会被当成 occupied。
+
+推荐使用 `computeRayKeys(origin, endpoint, keys)` / key-level update 自控语义：
+
+- ray keys → free
+- hit endpoint → occupied
+- miss endpoint → 不 occupied
+
+### `octomap_builder_node`
+
+订阅：
+
+```text
+/drone_i/scan_returns
+```
+
+QoS：`SensorDataQoS`
+
+处理流程：
+
+```text
+PointCloud2 scan_returns
+    -> 解析 x/y/z/range/hit
+    -> TF: map <- lidar_link @ msg.header.stamp
+    -> endpoint_lidar -> endpoint_map
+    -> origin_map = TF translation
+    -> OctoMapBuilder::insertScan()
+```
+
+发布：
+
+```text
+/drone_i/octomap
+```
+
+类型：`octomap_msgs/msg/Octomap`
+
+插入频率跟随扫描帧；OctoMap 发布频率独立限制，默认 `2.0 Hz`。
+
+### 参数
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `map_frame` | `map` | OctoMap frame |
+| `input_topic` | `scan_returns` | 输入全 beam topic |
+| `output_topic` | `octomap` | 输出 OctoMap |
+| `resolution` | `0.1` | OctoMap 分辨率 |
+| `publish_rate` | `2.0` | OctoMap 发布频率 |
+| `max_range` | `30.0` | 与 lidar 保持一致，用于校验 / 裁剪 |
+
+### Launch
+
+新增：
+
+```text
+swarm_controller/launch/octomap_builder_launch.py
+```
+
+用于单机验证：
+
+- include `drone_scanner` 的 `fake_lidar_launch.py`
+- 启动 `/drone_0/octomap_builder`
+- `GroupAction(scoped=True)` 隔离内层 Phase 2 launch 参数，避免覆盖外层 `show_rviz_map`
+- `show_rviz_map:=true` 启动 `swarm_controller/config/octomap_map.rviz`
+- RViz 使用 `octomap_rviz_plugins/OccupancyGrid` 显示三维 occupied voxels（不是二维 `OccupancyMap` 投影）
+- 同一界面保留洞穴真值 `/cave/points` 与 hit-only `/drone_0/cloud_map`，用于空间对照
+
+ROS 2 Jazzy 当前镜像中的 `liboctomap_rviz_plugins.so` 未声明 `liboctomap.so` 动态依赖；仅对
+OctoMap RViz 进程设置 `LD_PRELOAD=liboctomap.so`，避免 `OcTreeStamped` 符号加载失败，不影响其他节点。
+
+命令示例：
+
+```bash
+ros2 launch swarm_controller octomap_builder_launch.py
+```
+
+### 测试
+
+#### `FakeLidar` gtest
+
+- `scan()` 仍只返回 hit
+- `scanReturns()` 返回数量等于 `num_beams`
+- hit beam：`hit=true`
+- miss beam：`hit=false`，`range=max_range`
+- miss endpoint 不进入 `/points`
+
+#### `FakeLidarNode` 集成测试
+
+- `/points` 只含 hit
+- `/scan_returns` 含全 beam
+- PointCloud2 字段完整：`x/y/z/range/hit/intensity`
+- `width == num_beams`
+
+#### `OctoMapBuilder` gtest
+
+合成场景：
+
+```text
+origin = (0,0,0)
+ray1: hit at (3,0,0)
+ray2: miss to (0,3,0)
+```
+
+断言：
+
+| 点 | 期望 |
+|----|------|
+| `(3,0,0)` | occupied |
+| `(1,0,0)` | free |
+| `(0,1,0)` | free |
+| `(0,3,0)` miss endpoint | not occupied |
+| `(5,5,5)` | unknown |
+
+#### `octomap_builder_node` 测试
+
+- `/drone_0/octomap` 在发布
+- 消息 `header.frame_id == map`
+- OctoMap 可反序列化
 
 ### 验收
 
-- 飞扫后：廊道内 free、壁 occupied、未扫区域 unknown
-- gtest：合成射线插入后查询体素状态
+- `/drone_0/points` hit-only 语义不变
+- `/drone_0/scan_returns` 每帧包含所有 beam
+- OctoMap 中：
+  - 洞壁为 occupied
+  - 飞过廊道为 free
+  - 未扫区域保持 unknown
+- miss endpoint 不形成虚假 occupied 壳层
+- RViz 可显示 `/drone_0/octomap`
+- gtest / launch_testing 通过
+
+### 实现与验证结果（2026-07-10）
+
+- ✅ `FakeLidar::scanReturns()` 保留全部 hit / miss beam；原 `/points` 继续保持 hit-only
+- ✅ 新建 `swarm_controller` 包及 ROS-free `OctoMapBuilder`
+- ✅ `/drone_0/octomap` 按扫描帧时间戳与 `map <- lidar_link` TF 构建并定频发布
+- ✅ 超量程 hit 裁剪后按 miss/free ray 处理，不在 `max_range` 制造虚假 occupied
+- ✅ `PointCloud2` 固定校验 `x/y/z/range/intensity: FLOAT32`、`hit: UINT8`、`count=1`
+- ✅ 三维 RViz 目检通过：低处到高处按 Z 轴着色显示地面、侧壁与洞顶 occupied voxels
+- ✅ `TestFakeLidar`、`test_fake_lidar_integration.py`、`TestOctoMapBuilder`、
+  `test_octomap_builder_integration.py` 通过
+- ✅ GPT 5.5 high 评审及复核完成，所报高/中/低风险问题均已修复
 
 ### 依赖
 
@@ -238,6 +559,33 @@ sudo apt install -y \
   ros-jazzy-octomap \
   ros-jazzy-octomap-msgs \
   ros-jazzy-octomap-rviz-plugins
+```
+
+### 明确不做
+
+- 多机 `/global_map`
+- frontier / `IExplorationStrategy`
+- 探索闭环
+- 最小避障
+- 钟乳石 / 石笋专用逻辑
+- Mesh / terrain display
+
+### 实施顺序
+
+```text
+1. FakeLidar 新增 LidarReturn + scanReturns()
+2. FakeLidarNode 保留 /points，新增 /scan_returns
+3. 补 FakeLidar / FakeLidarNode 测试
+4. 新建 swarm_controller 包骨架
+5. 实现 OctoMapBuilder 算法库
+6. 补 OctoMapBuilder gtest
+7. 实现 octomap_builder_node
+8. 增加单机 launch
+9. 容器内 build/test
+10. GPT 5.5 代码评审
+11. 修评审问题
+12. 目检
+13. 提交 phase3(step3)
 ```
 
 ---
@@ -380,7 +728,7 @@ ros2 launch swarm_controller swarm.launch.xml num_drones:=3
 ```text
 [x] 3-1  环面俯仰倾斜 ring_pitch（方案 A）
 [x] 3-2  高度自适应
-[ ] 3-3  OctoMap 观测地图
+[x] 3-3  OctoMap 观测地图
 [ ] 3-4  IExplorationStrategy
 [ ] 3-5  单机闭环 + 最小避障          ← M1
 [ ] 3-6  多机 launch

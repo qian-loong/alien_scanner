@@ -56,6 +56,20 @@ namespace DroneScanner {
         std::vector<LidarPoint> hits;
         hits.reserve(static_cast<std::size_t>(config_.num_beams));
 
+        for(const LidarReturn & ret : scanReturns(lidar_pose_in_map)) {
+            if(ret.hit) {
+                hits.push_back(LidarPoint {ret.x, ret.y, ret.z});
+            }
+        }
+
+        return hits;
+    }
+
+    std::vector<LidarReturn> FakeLidar::scanReturns(const Pose3D & lidar_pose_in_map) const
+    {
+        std::vector<LidarReturn> returns;
+        returns.reserve(static_cast<std::size_t>(config_.num_beams));
+
         const CaveWorld::Point3 origin {lidar_pose_in_map.x, lidar_pose_in_map.y, lidar_pose_in_map.z};
         const float             ring_pitch = config_.ring_pitch_rad;
 
@@ -72,23 +86,22 @@ namespace DroneScanner {
             const CaveWorld::Point3 dir_map = lidarBeamToMap(lx, ly, lz, lidar_pose_in_map.yaw);
 
             float hit_dist = 0.0F;
-            if(!field_->raycast(origin, dir_map, config_.max_range, hit_dist)) {
-                continue;
-            }
-
-            if(config_.range_noise_std > 0.0F && config_.noise_seed != 0U) {
+            bool  hit      = field_->raycast(origin, dir_map, config_.max_range, hit_dist);
+            if(hit && config_.range_noise_std > 0.0F && config_.noise_seed != 0U) {
                 hit_dist += gaussianNoise(config_.noise_seed, beam_index, config_.range_noise_std);
             }
-            hit_dist = std::clamp(hit_dist, 0.0F, config_.max_range);
+            const float endpoint_range = hit ? std::clamp(hit_dist, 0.0F, config_.max_range) : config_.max_range;
 
-            hits.push_back(LidarPoint {
-                    hit_dist * lx,
-                    hit_dist * ly,
-                    hit_dist * lz,
+            returns.push_back(LidarReturn {
+                    endpoint_range * lx,
+                    endpoint_range * ly,
+                    endpoint_range * lz,
+                    endpoint_range,
+                    hit,
             });
         }
 
-        return hits;
+        return returns;
     }
 
 }// namespace DroneScanner

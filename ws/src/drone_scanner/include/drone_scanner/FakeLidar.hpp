@@ -26,6 +26,15 @@ namespace DroneScanner {
         float z {};
     };
 
+    /// 每束 beam 的 endpoint。hit=false 时 endpoint 是 max_range 虚点，仅表示沿途 free。
+    struct LidarReturn {
+        float x {};
+        float y {};
+        float z {};
+        float range {};
+        bool  hit {false};
+    };
+
     /// 注入 ICaveField，在可俯仰的垂直 360° 环上 raycast（pitch=0 时环平面 ⊥ 前进 +x）。
     class FakeLidar
     {
@@ -34,6 +43,7 @@ namespace DroneScanner {
 
         /// @param lidar_pose_in_map LiDAR 原点在 map 下的位姿（当前仅 yaw 参与 beam 旋转）。
         std::vector<LidarPoint> scan(const Pose3D & lidar_pose_in_map) const;
+        std::vector<LidarReturn> scanReturns(const Pose3D & lidar_pose_in_map) const;
 
     private:
         std::shared_ptr<CaveWorld::ICaveField> field_;
