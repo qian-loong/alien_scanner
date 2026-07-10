@@ -36,6 +36,8 @@ namespace SwarmController {
 
         const octomap::point3d origin = toPoint3d(origin_map);
         octomap::KeyRay       ray_keys;
+        octomap::KeySet       free_keys;
+        octomap::KeySet       occupied_keys;
         for(const RayReturn & ret : returns_map) {
             if(!isFinite(ret.endpoint) || !std::isfinite(ret.range) || ret.range <= 0.0F) {
                 continue;
@@ -45,14 +47,26 @@ namespace SwarmController {
             ray_keys.reset();
             if(tree_.computeRayKeys(origin, endpoint, ray_keys)) {
                 for(const octomap::OcTreeKey & key : ray_keys) {
-                    tree_.updateNode(key, false, true);
+                    free_keys.insert(key);
                 }
             }
             if(ret.hit) {
-                tree_.updateNode(endpoint, true, true);
+                octomap::OcTreeKey endpoint_key;
+                if(tree_.coordToKeyChecked(endpoint, endpoint_key)) {
+                    occupied_keys.insert(endpoint_key);
+                }
             }
         }
 
+        for(const octomap::OcTreeKey & key : occupied_keys) {
+            free_keys.erase(key);
+        }
+        for(const octomap::OcTreeKey & key : free_keys) {
+            tree_.updateNode(key, false, true);
+        }
+        for(const octomap::OcTreeKey & key : occupied_keys) {
+            tree_.updateNode(key, true, true);
+        }
         tree_.updateInnerOccupancy();
     }
 

@@ -180,7 +180,7 @@ ros2 launch cave_world cave_world_launch.py
 - 扫描环在 **YZ 平面**（⊥ 前进方向）；不用 xy 水平 2D 作主路径
 - 关键话题：`/drone_0/odom`、`/drone_0/points`、`/drone_0/cloud_map`
 - 累积默认 **50 万点上限**（超出丢最早点）；**轨迹结束后停扫**，避免停飞空转占满上限
-- **Phase 3 将扩展：** 环面俯仰（`ring_pitch`）以消除正前盲区；本 Phase 默认 `pitch=0`
+- **Phase 3 已扩展：** 环面俯仰（`ring_pitch`）、高度自适应与全 beam `/scan_returns`；Phase 2 兼容入口仍可使用 `pitch=0`
 
 **当前预览（Phase 2 single_drone 入口 = `fake_lidar_launch.py`；双 RViz，仿真窗默认叠加洞穴真值）：**
 
@@ -195,9 +195,9 @@ ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 
 ---
 
-### Phase 3：多机未知探索与地图融合 — **未开始**
+### Phase 3：多机未知探索与地图融合 — **进行中（3-1～3-4 已完成）**
 
-**分支（建议）：** `phase/3-swarm-controller`
+**分支：** `phase/3-swarm-controller`
 
 **目标：** 未知探索（规划不读洞穴真值拓扑）；可俯仰垂直环 + 高度自适应；**OctoMap** 观测地图；多机任务调度；`/global_map` 融合。
 
@@ -207,8 +207,8 @@ ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 |----|------|------|
 | 3-1 | 环面俯仰倾斜 `ring_pitch`（方案 A，不增 beam） | ✅ |
 | 3-2 | 高度自适应 | ✅ |
-| 3-3 | OctoMap 观测地图（含未命中 beam free 雕刻） | ⬜ |
-| 3-4 | `IExplorationStrategy`（单机选目标） | ⬜ |
+| 3-3 | OctoMap 观测地图（含未命中 beam free 雕刻） | ✅ |
+| 3-4 | `IExplorationStrategy`（单机选目标） | ✅ |
 | 3-5 | 单机探索闭环 + 最小避障 | ⬜ |
 | 3-6 | 多机 launch（`num_drones:=3`） | ⬜ |
 | 3-7 | 多机任务调度（未知分配） | ⬜ |
@@ -368,7 +368,8 @@ flowchart TB
             L0["fake_lidar<br/>俯仰环"]
             OCT0["octomap 更新"]
             O0 -. 位姿 .-> L0
-            L0 --> P0(["/drone_0/points"]) --> OCT0
+            L0 --> P0(["/drone_0/points"])
+            L0 --> R0(["/drone_0/scan_returns"]) --> OCT0
         end
         subgraph D1["/drone_1"]
             direction LR
@@ -376,7 +377,8 @@ flowchart TB
             L1["fake_lidar"]
             OCT1["octomap 更新"]
             O1 -. 位姿 .-> L1
-            L1 --> P1(["/drone_1/points"]) --> OCT1
+            L1 --> P1(["/drone_1/points"])
+            L1 --> R1(["/drone_1/scan_returns"]) --> OCT1
         end
         subgraph DN["/drone_N …"]
             direction LR
@@ -384,7 +386,8 @@ flowchart TB
             LN["fake_lidar"]
             OCTN["octomap 更新"]
             ON -. 位姿 .-> LN
-            LN --> PN(["/drone_N/points"]) --> OCTN
+            LN --> PN(["/drone_N/points"])
+            LN --> RN(["/drone_N/scan_returns"]) --> OCTN
         end
     end
 
@@ -424,7 +427,7 @@ flowchart TB
     classDef node fill:#1f2933,stroke:#5c7080,color:#e8eef2;
     classDef topic fill:#22303c,stroke:#4a90d9,color:#dbeafe;
     class O0,L0,OCT0,O1,L1,OCT1,ON,LN,OCTN,STRAT,MERGE,MESH,RVIZ node;
-    class P0,P1,PN,G0,GM,MK topic;
+    class P0,P1,PN,R0,R1,RN,G0,GM,MK topic;
 ```
 
 ### 话题一览表
@@ -432,9 +435,11 @@ flowchart TB
 | 话题 | 消息类型 | 发布者 | 订阅者 |
 |------|----------|--------|--------|
 | `/cave/points` | `sensor_msgs/PointCloud2` | `cave_world` | `rviz2`（对照，不参与规划） |
-| `/drone_0/points` | `sensor_msgs/PointCloud2` | `fake_lidar` | OctoMap 更新、RViz |
+| `/drone_0/points` | `sensor_msgs/PointCloud2` | `fake_lidar` | 高度自适应、scan 累积、RViz |
+| `/drone_0/scan_returns` | `sensor_msgs/PointCloud2` | `fake_lidar` | 本机 OctoMap 更新 |
 | `/drone_0/cloud_map` | `sensor_msgs/PointCloud2` | scan 累积 | RViz（可选） |
 | `/drone_0/odom` | `nav_msgs/Odometry` | `fake_odom` | `fake_lidar`、探索执行 |
+| `/drone_0/octomap` | `octomap_msgs/Octomap` | `octomap_builder` | 探索策略、RViz |
 | `/global_map` | `octomap_msgs/Octomap` | map merger | 调度、`mesh_builder`、`rviz2` |
 | `/cave_mesh` | `visualization_msgs/Marker` | `mesh_builder`（Phase 4） | `rviz2` |
 | `/tf`, `/tf_static` | `tf2_msgs/TFMessage` | `fake_odom`、static TF | 全体 |
@@ -476,7 +481,7 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 [ ] 5. （可选）ros2 bag 录制 + README 演示 GIF
 ```
 
-**当前进度：** Phase 1、Phase 2 已完成；下一步 Phase 3（见 [`docs/phases/phase-03-swarm.md`](phases/phase-03-swarm.md)）。
+**当前进度：** Phase 1、Phase 2 已完成；Phase 3 已完成 3-1～3-4，下一步实现 3-5 单机探索闭环与最小避障（见 [`docs/phases/phase-03-swarm.md`](phases/phase-03-swarm.md)）。
 
 ---
 
@@ -503,5 +508,5 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 | 字段 | 值 |
 |------|-----|
 | 创建日期 | 2026-07-06 |
-| 最后更新 | 2026-07-09 |
-| 状态 | Phase 1–2 已完成；Phase 3 规划已就绪（未开始实现）；分步细节见 `docs/phases/` |
+| 最后更新 | 2026-07-10 |
+| 状态 | Phase 1–2 已完成；Phase 3 进行中（3-1～3-4 已完成，下一步 3-5）；分步细节见 `docs/phases/` |

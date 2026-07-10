@@ -1,13 +1,9 @@
 #ifndef SWARM_CONTROLLER_RAYRETURN_HPP
 #define SWARM_CONTROLLER_RAYRETURN_HPP
 
-namespace SwarmController {
+#include "swarm_controller/Point3f.hpp"
 
-    struct Point3f {
-        float x {};
-        float y {};
-        float z {};
-    };
+namespace SwarmController {
 
     /// map 坐标系下的一束 LiDAR return。hit=false 表示 endpoint 只是 max_range free-ray 终点。
     struct RayReturn {

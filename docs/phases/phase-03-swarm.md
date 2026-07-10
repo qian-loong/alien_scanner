@@ -1,6 +1,6 @@
 # Phase 3：多机未知探索与地图融合（swarm_controller）
 
-> **状态：** 🟡 进行中（3-1～3-3 已完成；分支 `phase/3-swarm-controller`）  
+> **状态：** 🟡 进行中（3-1～3-4 已完成；分支 `phase/3-swarm-controller`）
 > **上级摘要：** [`docs/xenomorph-scanner-plan.md`](../xenomorph-scanner-plan.md) §6 Phase 3  
 > **依赖：** Phase 1 [`phase-01-cave-world.md`](phase-01-cave-world.md)、Phase 2 [`phase-02-drone-scanner.md`](phase-02-drone-scanner.md)  
 > **工程约定：** [`AGENTS.md`](../../AGENTS.md)（含 §5.1 Git 分步提交）
@@ -90,7 +90,7 @@ ICaveField（真值）──仅造数──► FakeLidar（俯仰环）
 | 3-1 | 环面俯仰倾斜 `ring_pitch`（方案 A） | ✅ | `phase3(step1): pitched vertical ring` |
 | 3-2 | 高度自适应 | ✅ | `phase3(step2): altitude adaptation` |
 | 3-3 | OctoMap 观测地图（含未命中 beam free 雕刻） | ✅ | `phase3(step3): octomap observation` |
-| 3-4 | `IExplorationStrategy`（单机选目标） | ⬜ | `phase3(step4): exploration strategy` |
+| 3-4 | `IExplorationStrategy`（单机选目标） | ✅ | `phase3(step4): exploration strategy` |
 | 3-5 | 单机探索闭环 + **最小避障** | ⬜ | `phase3(step5): single-drone explore loop` |
 | 3-6 | 多机 launch（`num_drones:=3`） | ⬜ | `phase3(step6): multi-drone launch` |
 | 3-7 | 多机任务调度（未知分配） | ⬜ | `phase3(step7): swarm task allocation` |
@@ -592,15 +592,176 @@ sudo apt install -y \
 
 ## Step 3-4：`IExplorationStrategy`
 
-### 设计
+> **实现状态：** ✅ 已完成；ROS-free `swarm_exploration` 库与确定性合成 OctoMap 测试已通过。
 
-- 接口：位姿 + OctoMap 只读视图 → 下一目标（map 系）；无可探目标则失败
-- 首实现：基于 frontier（自由–未知边界）的简单策略
-- **禁止**读取洞穴真值拓扑 / 出口列表
+### 目标与边界
+
+从当前位姿与只读 OctoMap 中选择下一探索目标，为 3-5 单机闭环提供决策：
+
+```text
+GoalSelectionRequest（Pose3D + rejected_cluster_ids）
+    + const octomap::OcTree
+    → FrontierExplorationStrategy
+    → GoalSelectionResult（map 系）
+```
+
+- 本步只做 ROS-free 目标选择，不新增运行期节点
+- 3-5 负责 ROS 消息转换、短移执行、直线路径避障、拒绝目标集合、重规划与主动重扫
+- **禁止**读取洞穴真值拓扑 / 中轴线 / 出口列表
+- 直接依赖 `const octomap::OcTree&`；OctoMap 是便宜、可直接构造的算法数据，不额外引入 `IMapView`
+
+### 3-3 前置加固
+
+frontier 会放大地图中的假孔洞，因此实现策略前先修正 `OctoMapBuilder::insertScan()`：
+
+- 一帧先汇总 `free_keys` 与 `occupied_keys`
+- 从 free 集合删除 occupied key
+- 每个 key 每帧只更新一次，且 occupied 优先
+- miss endpoint 继续保持 unknown
+
+这与 OctoMap `computeUpdate()` 的 occupied-preferred 语义一致，可避免相邻 beam 在同一帧把真实墙点抵消成 free。
+
+新增回归断言：
+
+- miss endpoint 明确为 `Unknown`
+- 同一 voxel 被一束 beam 命中、另一束 beam 穿过时，结果仍为 `Occupied`
+
+### ROS-free 接口
+
+新增通用类型：
+
+```text
+Point3f.hpp
+Pose3D.hpp
+IExplorationStrategy.hpp
+FrontierExplorationStrategy.hpp/.cpp
+```
+
+`RayReturn.hpp` 收为复用通用 `Point3f`。`GoalSelectionRequest` 携带当前位姿和 3-5
+传入的 `rejected_cluster_ids`；成功结果同时返回目标点和稳定 cluster ID，避免路径失败后
+确定性策略反复返回同一目标。策略状态为：
+
+```cpp
+enum class GoalSelectionStatus {
+    Success,
+    InvalidInput,
+    NoKnownFree,
+    NoFrontier,
+    NoSafeCandidate,
+};
+```
+
+`Success` 时目标及机体占用体积必须全部为 known-free，且与当前位置有有效距离；它只表示
+**目标点局部安全**，不表示当前到目标的路径可达。直线路径检查属于 3-5。其他状态供 3-5
+决定等待、原地转向重扫或换策略，不能把 `NoFrontier` 直接解释为探索完成。
+
+### 3D frontier 定义
+
+在当前位姿附近局部 BBX 中只遍历已知 free leaf；若遇到 coarse leaf，再展开成
+`tree.getResolution()` 的 full-resolution key，避免对大块 unknown 空间做立方穷举。
+某 voxel 是原始 frontier 当且仅当：
+
+1. 当前 voxel 已知且为 free
+2. 6 个面邻居中至少一个为 unknown
+3. 位于当前位姿的局部规划窗口内
+
+只用 6 邻域判定，避免 26 邻域把墙角对角 unknown 误认为可进入方向。frontier 的基本单位是
+**free voxel 与 unknown 面邻居之间的 face**；物理面积按
+`unknown_face_count × resolution²` 计算，不能直接用 voxel 数代替。
+
+### 聚类与安全目标
+
+1. 对原始 frontier 做 6 连通聚类
+2. 删除面积过小的单 beam / 小孔噪点
+3. 删除距离当前位置过近的伪目标
+4. 根据 frontier face 的 unknown 法向过滤地面 / 顶棚 frontier（可配置，未来竖井场景可放宽）
+5. 不直接使用 cluster 质心，也不依赖可能相互抵消的 cluster 平均法向
+6. 逐 frontier face 沿其明确 unknown 法向向已知区后退 `goal_standoff`
+7. 以稳定 key 顺序在后退位置附近选取目标
+8. 目标周围按机体半径 / 半高检查 3D 球体或圆柱体，覆盖 voxel 必须全部 known-free
+9. 目标 z 仅按几何候选与垂直变化代价选择；3-4 没有 `AltitudeBand`，不得声称知道“安全高度”
+
+初始建议配置：
+
+| 参数 | 初值 | 含义 |
+|------|------|------|
+| `min_goal_distance` | `0.8 m` | 排除当前位置附近 frontier |
+| `max_goal_distance` | `4.0 m` | 只生成短程局部目标 |
+| `goal_standoff` | `0.6 m` | 从 unknown 边界退回已知区 |
+| `robot_radius` | `0.25 m` | 无人机水平包络半径 |
+| `robot_half_height` | `0.15 m` | 无人机垂直包络半高 |
+| `safety_margin` | `0.25 m` | 水平 known-free 余量 |
+| `vertical_margin` | `0.20 m` | 垂直 known-free 余量 |
+| `min_cluster_area` | `0.2 m²` | 过滤小孔 / 离散噪点 |
+| `max_abs_frontier_normal_z` | `0.6` | 过滤地面 / 顶棚方向 |
+
+局部枚举窗口必须至少覆盖 `max_goal_distance + goal_standoff + clearance`；构造时校验所有配置
+有限、范围合法且窗口覆盖上述边界，运行时按实际 OctoMap resolution 枚举 full-resolution key。
+
+### 评分与确定性
+
+对安全 cluster 使用以下因素评分：
+
+- frontier 面积 / unknown 面数量：信息收益
+- 与当前位置距离：短移成本
+- 目标高度变化：抑制追逐地面 / 顶棚
+- 当前 yaw 对目标方向：小幅朝向奖励
+
+排序必须稳定：总分 → 信息收益 → 距离 → stable cluster ID / key 字典序；不得依赖随机数或
+无序容器迭代顺序。stable cluster ID 使用 cluster 内字典序最小 full-resolution key；
+3-5 可把该 ID 加入本轮 rejected 集合。
+
+### 单环扫描限制与恢复契约
+
+当前前倾单环每帧只在一个倾斜平面内产生 free 观测，可能形成扫描薄面两侧的伪 frontier；
+经过法向、物理面积和 3D known-free 净空过滤后，也可能没有候选。因此：
+
+- 3-4 允许返回 `NoFrontier` / `NoSafeCandidate`
+- 3-5 必须实现 `无候选 → 分段原地 yaw 重扫 → 地图更新 → 重选`
+- 重扫达到次数 / 角度上限仍失败时悬停并上报，不把 unknown 当 free 强行推进
+- 端到端验证若证明 yaw 重扫仍不足，再单独评估 pitch 摆扫或多 pitch 环；不在 3-4 提前扩展传感器
+
+### 文件与构建
+
+新增：
+
+```text
+include/swarm_controller/Point3f.hpp
+include/swarm_controller/Pose3D.hpp
+include/swarm_controller/IExplorationStrategy.hpp
+include/swarm_controller/FrontierExplorationStrategy.hpp
+src/FrontierExplorationStrategy.cpp
+test/TestFrontierExplorationStrategy.cpp
+```
+
+CMake 新增独立 ROS-free 静态库 `swarm_exploration`，继续链接 OctoMap；3-4 不增加 launch test。
+
+### 测试
+
+合成确定性 OctoMap，覆盖：
+
+- 封闭隧道仅 +X 开口：目标位于开口内侧的已知 free standoff
+- 多个 frontier：按收益 / 距离配置选择预期 cluster
+- 不同 OctoMap resolution：物理面积阈值行为一致
+- 近身 frontier：不得返回当前位置
+- 地面 / 顶棚 frontier：默认失败、放宽法向阈值成功的配对测试
+- 墙面小孔：默认面积阈值失败、降低阈值成功的配对测试
+- unknown 进入机体包络：无 occupied 干扰时仍不得返回 `Success`
+- 多面 cluster 法向抵消：按独立 frontier face 仍能稳定生成或拒绝候选
+- rejected cluster：选择下一个候选，不重复返回失败目标
+- 空地图、无 frontier、全部候选不安全：返回对应失败状态
+- 非有限 pose / 非法配置：返回 `InvalidInput` 或构造失败
+- 改变节点插入顺序：选择结果保持一致
 
 ### 验收
 
-- gtest：合成 OctoMap，断言目标落在 frontier 附近
+- 目标来自 free–unknown 边界附近，但目标自身位于已知 free
+- 目标满足最小距离、物理 cluster 面积和 3D known-free 机体净空
+- 不选择地面 / 顶棚或墙孔伪 frontier
+- rejected cluster 不会在同一轮再次返回
+- 相同地图与位姿输出确定
+- 零 ROS 依赖、零洞穴真值依赖
+- `TestFrontierExplorationStrategy` 11 项与 `TestOctoMapBuilder` 3 项回归测试通过
 
 ---
 
@@ -610,7 +771,10 @@ sudo apt install -y \
 
 - 循环：策略目标 → 执行短移（高度自适应）→ 扫描 → 更新 OctoMap → 再决策
 - **最小避障并入本步**（不整段后置）：
-  - 指向目标的直线若穿越 occupied → 停止 / 近邻 free 绕行 / 换目标
+  - 指向目标的直线必须完全位于已知 free；unknown 按阻塞处理
+  - 路径不可达 → 将 cluster ID 加入 rejected 集合 → 请求下一目标
+  - `NoFrontier` / `NoSafeCandidate` → 分段原地 yaw 重扫 → 更新地图 → 重选
+  - 重扫限次仍失败 → 悬停并上报
   - 完整 A* / 长路径留 3-9
 - 调试用短预设段允许存在，**不计入**本步验收
 
@@ -729,7 +893,7 @@ ros2 launch swarm_controller swarm.launch.xml num_drones:=3
 [x] 3-1  环面俯仰倾斜 ring_pitch（方案 A）
 [x] 3-2  高度自适应
 [x] 3-3  OctoMap 观测地图
-[ ] 3-4  IExplorationStrategy
+[x] 3-4  IExplorationStrategy
 [ ] 3-5  单机闭环 + 最小避障          ← M1
 [ ] 3-6  多机 launch
 [ ] 3-7  多机任务调度
