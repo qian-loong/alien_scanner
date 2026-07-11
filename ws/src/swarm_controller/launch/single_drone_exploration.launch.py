@@ -1,5 +1,5 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
@@ -19,10 +19,15 @@ def generate_launch_description():
     max_range = DeclareLaunchArgument('max_range', default_value='30.0')
     ring_pitch_rad = DeclareLaunchArgument('ring_pitch_rad', default_value='0.35')
 
-    fake_lidar_launch = PathJoinSubstitution([
+    sensing_stack_launch = PathJoinSubstitution([
         FindPackageShare('drone_scanner'),
         'launch',
-        'fake_lidar_launch.py',
+        'drone_sensing_stack.launch.py',
+    ])
+    cave_publisher_launch = PathJoinSubstitution([
+        FindPackageShare('cave_world'),
+        'launch',
+        'cave_publisher_launch.py',
     ])
     rviz_config = PathJoinSubstitution([
         FindPackageShare('swarm_controller'),
@@ -30,30 +35,36 @@ def generate_launch_description():
         'exploration.rviz',
     ])
 
+    # Keep 3-5 single-drone TF convention (global odom/base_link/lidar_link).
+    sensing_args = {
+        'drone_ns': 'drone_0',
+        'map_frame': 'map',
+        'odom_frame': 'odom',
+        'base_frame': 'base_link',
+        'lidar_frame': 'lidar_link',
+        'publish_map_to_odom': 'true',
+        'enable_scan_accumulator': 'true',
+        'motion.mode': 'goal',
+        'motion.linear_speed': '0.4',
+        'motion.yaw_rate': '0.5',
+        'max_range': LaunchConfiguration('max_range'),
+        'ring_pitch_rad': LaunchConfiguration('ring_pitch_rad'),
+        'stop_scan_when_trajectory_done': 'false',
+    }
+
     return LaunchDescription([
         show_rviz,
         show_cave_truth,
         resolution,
         max_range,
         ring_pitch_rad,
-        GroupAction(
-            scoped=True,
-            actions=[
-                IncludeLaunchDescription(
-                    PythonLaunchDescriptionSource(fake_lidar_launch),
-                    launch_arguments={
-                        'motion.mode': 'goal',
-                        'motion.linear_speed': '0.4',
-                        'motion.yaw_rate': '0.5',
-                        'max_range': LaunchConfiguration('max_range'),
-                        'ring_pitch_rad': LaunchConfiguration('ring_pitch_rad'),
-                        'stop_scan_when_trajectory_done': 'false',
-                        'show_cave': LaunchConfiguration('show_cave_truth'),
-                        'show_rviz_sim': 'false',
-                        'show_rviz_map': 'false',
-                    }.items(),
-                ),
-            ],
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(cave_publisher_launch),
+            condition=IfCondition(LaunchConfiguration('show_cave_truth')),
+        ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(sensing_stack_launch),
+            launch_arguments=sensing_args.items(),
         ),
         Node(
             package='swarm_controller',

@@ -160,6 +160,11 @@ if(BUILD_TESTING)
             RUNNER "${RUNNER}"
             TIMEOUT 120
     )
+    add_launch_test(
+            test/test_multi_drone_sensing_integration.py
+            RUNNER "${RUNNER}"
+            TIMEOUT 180
+    )
 endif()
 
 ament_export_include_directories(include)

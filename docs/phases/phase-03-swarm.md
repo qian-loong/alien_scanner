@@ -1,6 +1,6 @@
 # Phase 3：多机未知探索与地图融合（swarm_controller）
 
-> **状态：** 🟡 进行中（3-1～3-5 / M1 已完成；下一步 3-6；分支 `phase/3-swarm-controller`）
+> **状态：** 🟡 进行中（3-1～3-6 已完成；下一步 3-7；分支 `phase/3-swarm-controller`）
 > **上级摘要：** [`docs/xenomorph-scanner-plan.md`](../xenomorph-scanner-plan.md) §6 Phase 3  
 > **依赖：** Phase 1 [`phase-01-cave-world.md`](phase-01-cave-world.md)、Phase 2 [`phase-02-drone-scanner.md`](phase-02-drone-scanner.md)  
 > **工程约定：** [`AGENTS.md`](../../AGENTS.md)（含 §5.1 Git 分步提交）
@@ -92,7 +92,7 @@ ICaveField（真值）──仅造数──► FakeLidar（俯仰环）
 | 3-3 | OctoMap 观测地图（含未命中 beam free 雕刻） | ✅ | `phase3(step3): octomap observation` |
 | 3-4 | `IExplorationStrategy`（单机选目标） | ✅ | `phase3(step4): exploration strategy` |
 | 3-5 | 单机探索闭环 + **最小避障** | ✅ | `phase3(step5): single-drone explore loop` |
-| 3-6 | 多机 launch（`num_drones:=3`） | ⬜ | `phase3(step6): multi-drone launch` |
+| 3-6 | 多机 launch（`num_drones:=3`） | ✅ | `phase3(step6): multi-drone sensing launch` |
 | 3-7 | 多机任务调度（未知分配） | ⬜ | `phase3(step7): swarm task allocation` |
 | 3-8 | `/global_map` 融合 | ⬜ | `phase3(step8): global map merge` |
 | 3-9 | 更强短程/全局路径规划 | ⬜ 按需 | `phase3(step9): path planner` |
@@ -1143,16 +1143,162 @@ swarm_controller/
 
 ---
 
-## Step 3-6：多机 launch
+## Step 3-6：多机 launch（感知栈）
 
-### 设计
+> **实现状态：** ✅ 已完成；Grok 4.5 high fast 代码审核通过；构建 / launch_testing /
+> 干净实例手动核对话题·TF·错开位姿已通过。  
+> **建议 commit：** `phase3(step6): multi-drone sensing launch`  
+> **手动入口：** `ros2 launch swarm_controller multi_drone_sensing.launch.py`
 
-- `num_drones:=3`，每机 namespace `/drone_i`：fake_odom + 俯仰环 lidar + 高度自适应 + 本机 OctoMap 更新
-- 复用 Phase 2 节点；由 `swarm_controller` launch 编排
+### 目标与边界
+
+**目标：** `num_drones:=3`（可配置）一键多机**感知 + 本机 OctoMap** launch：每机
+`/drone_i` 下运行 fake_odom、俯仰环 fake_lidar、高度自适应、（可选）scan_accumulator、
+本机 `octomap_builder`；共享唯一 `map` 与至多一份洞穴真值可视化。
+
+**明确不做：**
+
+- ❌ 多机任务调度 / frontier 互斥（3-7）
+- ❌ `/global_map` 融合（3-8）
+- ❌ 挂载 `single_drone_explorer`（多机探索闭环留给 3-7）
+- ❌ 更强路径规划（3-9）；不改探索策略算法
+- ❌ 从 `ICaveField` 读拓扑分配航线或真值分区
+
+**依赖：** 3-1～3-5；现有节点可执行体；算法库原则上零改动。
+
+### 风险
+
+| 风险 | 缓解 |
+|------|------|
+| TF 全局帧名冲突 | 多机强制 `drone_i/odom|base_link|lidar_link` |
+| N 次 Include 旧 `fake_lidar_launch` | 抽出 sensing stack；旧入口薄包装；禁止整包×N |
+| namespace 双前缀 `/drone_i/drone_0/...` | 仅用参数 `drone_ns` 设 `Node(namespace=...)`；禁止再套 `PushRosNamespace` |
+| `cloud_map`×N OOM | 多机默认关闭 accumulator 或强降 `max_points`；RViz 不订 cloud_map |
+| 同起点重叠 | 错开初始 XY |
+| CPU（3× raycast + 3× OctoMap） | 可覆盖降 `scan_rate`/`num_beams`；N=3 不共享 ICaveField（YAGNI） |
+
+### TF / namespace 契约
+
+| 项 | 约定 |
+|----|------|
+| 共享世界系 | `map`（唯一） |
+| 每机 odom / base / lidar | `drone_i/odom`、`drone_i/base_link`、`drone_i/lidar_link` |
+| ROS namespace | 参数 `drone_ns`=`drone_i`；**禁止**与外层 `PushRosNamespace` 叠加 |
+| `map → odom` | identity；见下节归属 |
+| `base → lidar` | 在 sensing stack 内，parent/child 与帧参数一致 |
+| 单机默认帧（兼容 3-5） | 仍可用全局 `odom` / `base_link` / `lidar_link` |
+| 多机帧 | 必须前缀化；C++ 默认值不改，靠 launch 传参 |
+
+相对话题（落在 `/drone_i/...`）：`odom`、`points`、`scan_returns`、`cloud_map`（若启用）、`octomap`、`path`。
+
+### Launch 结构
+
+复杂循环与按机参数 → **Python launch**（与 3-5 一致）。
+
+1. **`drone_scanner/launch/drone_sensing_stack.launch.py`**（新建）
+   - 参数：`drone_ns`、`map_frame`、`odom_frame`、`base_frame`、`lidar_frame`、
+     初始位姿、`motion.mode`、`ring_pitch`、`max_range`、altitude、
+     `publish_map_to_odom`（默认 `true`）、`enable_scan_accumulator` 等
+   - 节点：`fake_odom`、`fake_lidar`、可选 `scan_accumulator`；
+     `base→lidar` static TF；若 `publish_map_to_odom` 则发 `map→{odom_frame}`
+   - **节点不得硬编码** `namespace='drone_0'`；一律用 `drone_ns`
+   - static TF 节点名按机唯一（如 `map_to_odom_drone_0`）
+   - **不含** cave_publisher、全局 RViz、explorer、`octomap_builder`
+
+2. **`swarm_controller/launch/multi_drone_sensing.launch.py`**（新建主入口）
+   - `num_drones` 默认 3；共享 cave 参数；`show_rviz` / `show_cave_truth`
+   - 全局至多一份 `cave_publisher`
+   - 循环 `i=0..N-1`：Include sensing stack（`drone_ns:=drone_i`，前缀帧，
+     `publish_map_to_odom:=false`）+ 本机 `octomap_builder` +
+     static `map→drone_i/odom`（节点名唯一）
+   - 默认运动：`motion.mode:=goal` 悬停 + `stop_scan_when_trajectory_done:=false`；
+     仅用 `line.start_*` 作初值。CLI 可覆盖为 `motion.mode:=line`（沿 +X 飞
+     `line.length`，默认 8 m），**不得在 launch 内写死 goal 忽略该参数**
+   - 默认初值表示例：`drone_0→(0,0,1.5)`，`drone_1→(0,1.0,1.5)`，
+     `drone_2→(0,-1.0,1.5)`，yaw 同向入口 +X
+   - **悬停时 RViz Occupied 环几乎不长**：位姿/yaw 不变则反复扫同一批 voxel；
+     要看地图沿廊道增长请用 `motion.mode:=line`，或等 3-7 挂 explorer
+   - 多机默认 `enable_scan_accumulator:=false`（或 `max_cloud_map_points`≤2e4）
+   - 可选 `config/swarm_sensing.rviz`：三机 odom/path/octomap；**默认不订 cloud_map**
+
+3. **重构（行为回归）：**
+   - `single_drone_exploration.launch.py` 改 Include sensing stack
+     （`publish_map_to_odom:=true` 或由该入口显式补 TF）+ 现有 explorer/octomap/rviz
+   - `fake_lidar_launch.py` 薄包装 sensing stack + cave + 旧双 RViz；
+     **3-6 不得** N 次 Include 旧整包
+
+### 节点改动
+
+| 组件 | 范围 |
+|------|------|
+| FakeOdom / FakeLidar / Accumulator / OctoMapBuilder | 原则上零算法改；launch 传帧与位姿 |
+| 若有硬编码帧字符串 | 改为已有参数（预期已是参数） |
+| gtest | 不新增 |
+| launch_testing | 新增多机冒烟 |
+
+### 测试
+
+**launch_testing（`show_rviz:=false`）：**
+
+- `num_drones:=3` 启动成功
+- 对每机**同时**在超时内收到：`/drone_i/odom`、`/drone_i/scan_returns`、`/drone_i/octomap`
+- TF 可查：`map→drone_i/odom`、`drone_i/odom→drone_i/base_link`、
+  `drone_i/base_link→drone_i/lidar_link`
+- 可选：三机 odom XY 不完全相同
+
+**RViz 目检：** 三机 TF/odom/本机 OctoMap 同时可见；默认关 cloud_map / cave。
+
+**不做：** 调度、融合、探索覆盖率、可视化外观单测。
+
+### 文件清单
+
+```text
+drone_scanner/
+  launch/drone_sensing_stack.launch.py       # 新建
+  launch/fake_lidar_launch.py                # 薄包装重构
+
+swarm_controller/
+  launch/multi_drone_sensing.launch.py       # 新建主入口
+  launch/single_drone_exploration.launch.py  # 改挂 sensing stack
+  config/swarm_sensing.rviz                  # 新建；默认无 cloud_map
+  test/test_multi_drone_sensing_integration.py
+  CMakeLists.txt / package.xml
+
+docs/phases/phase-03-swarm.md                # 本方案
+docs/xenomorph-scanner-plan.md               # 实现后同步进度
+```
+
+### 实施顺序
+
+1. 抽出 `drone_sensing_stack`；单机探索 launch 挂接并回归
+2. `multi_drone_sensing.launch.py` + 按机 TF/位姿/accumulator 策略
+3. `swarm_sensing.rviz`
+4. launch_testing
+5. 文档进度同步
+6. 代码审核（Grok 4.5 high fast）→ 修复 → 用户验收 → 再提交
+
+### 与后续步
+
+- 3-7：在本 launch 上按机加 explorer + 调度；TF/namespace 契约不变
+- 3-8：订各 `/drone_i/octomap` → `/global_map`；本步保证独立树 + 共享 `map`
 
 ### 验收
 
-- 三机同时运行，话题 / TF 正常，CPU 可接受
+- `num_drones:=3` 启动；每机 odom + scan_returns + octomap + TF 链正常
+- 三机本机 OctoMap 独立增长（不融合）
+- CPU/内存可接受（默认不因 cloud_map×N 被 OOM 杀）
+- 零真值规划依赖（本步无规划器）
+
+### 方案评审记录
+
+- **方案模型：** Grok 4.5 high fast（`grok-4.5-fast-xhigh`）— 有条件通过；M1–M7 已吸收
+- **代码审核：** Grok 4.5 high fast — **通过**（无必须修复；已补 `cave_world` exec_depend）
+- **验证（2026-07-11）：**
+  - `colcon build --packages-select drone_scanner swarm_controller` 通过
+  - `test_multi_drone_sensing_integration.py` 通过（odom + scan_returns + octomap + TF）
+  - `test_single_drone_exploration_integration.py` 回归通过
+  - 干净单实例手动核对：三机 pose Y=`0/±1`、TF 链 OK、octomap 在发；
+    先前 `non-increasing stamp` 来自容器内叠跑两套 launch，非实现缺陷
 
 ---
 
@@ -1251,7 +1397,7 @@ ros2 launch swarm_controller swarm.launch.xml num_drones:=3
 [x] 3-3  OctoMap 观测地图
 [x] 3-4  IExplorationStrategy
 [x] 3-5  单机闭环 + 最小避障          ← M1
-[ ] 3-6  多机 launch
+[x] 3-6  多机 launch
 [ ] 3-7  多机任务调度
 [ ] 3-8  /global_map                   ← M2
 [ ] 3-9  更强路径规划（按需）

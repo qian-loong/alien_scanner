@@ -23,6 +23,7 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>drone_scanner</exec_depend>
+  <exec_depend>cave_world</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>octomap_rviz_plugins</exec_depend>
 
