@@ -19,6 +19,7 @@ find_package(sensor_msgs REQUIRED)
 
 add_library(drone_trajectory STATIC
         src/LineTrajectory.cpp
+        src/PoseSegmentTrajectory.cpp
 )
 target_include_directories(drone_trajectory PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -75,6 +76,7 @@ install(
         include/drone_scanner/ITrajectory.hpp
         include/drone_scanner/Pose3D.hpp
         include/drone_scanner/LineTrajectory.hpp
+        include/drone_scanner/PoseSegmentTrajectory.hpp
         DESTINATION include/drone_scanner
 )
 install(
@@ -146,6 +148,14 @@ if(BUILD_TESTING)
         )
     endif()
 
+    ament_add_gtest(TestPoseSegmentTrajectory test/TestPoseSegmentTrajectory.cpp)
+    if(TARGET TestPoseSegmentTrajectory)
+        target_link_libraries(TestPoseSegmentTrajectory drone_trajectory)
+        target_include_directories(TestPoseSegmentTrajectory PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
     ament_add_gtest(TestFakeLidar test/TestFakeLidar.cpp)
     if(TARGET TestFakeLidar)
         target_link_libraries(TestFakeLidar drone_lidar)
@@ -178,6 +188,7 @@ if(BUILD_TESTING)
         add_launch_test("${path}" RUNNER "${RUNNER}" TIMEOUT 120 ${ARGN})
     endfunction()
     add_ros_isolated_launch_test(test/test_fake_odom_integration.py)
+    add_ros_isolated_launch_test(test/test_fake_odom_goal_integration.py)
     add_ros_isolated_launch_test(test/test_fake_lidar_integration.py)
     add_ros_isolated_launch_test(test/test_cloud_map_integration.py)
     add_ros_isolated_launch_test(test/test_stop_scan_integration.py)

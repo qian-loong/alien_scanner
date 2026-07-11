@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -77,6 +78,24 @@ namespace SwarmController {
         bool isFinite(const Pose3D & pose)
         {
             return isFinite(pose.position) && std::isfinite(pose.yaw);
+        }
+
+        bool isValid(const GoalSelectionRequest & request)
+        {
+            if(!isFinite(request.pose)) {
+                return false;
+            }
+            if(request.forward_half_space.has_value()) {
+                const ForwardHalfSpaceConstraint & constraint = *request.forward_half_space;
+                if(!isFinite(constraint.origin) || !std::isfinite(constraint.yaw)
+                   || !std::isfinite(constraint.backward_margin)
+                   || constraint.backward_margin < 0.0F)
+                {
+                    return false;
+                }
+            }
+            return !request.fixed_altitude.has_value()
+                   || std::isfinite(request.fixed_altitude->altitude);
         }
 
         bool keysEqual(const octomap::OcTreeKey & lhs, const octomap::OcTreeKey & rhs)
@@ -228,42 +247,6 @@ namespace SwarmController {
             }
         }
 
-        bool hasKnownFreeClearance(
-                const octomap::OcTree & tree, const Point3f & candidate,
-                const FrontierExplorationConfig & config)
-        {
-            const float horizontal_clearance = config.robot_radius + config.safety_margin;
-            const float vertical_clearance   = config.robot_half_height + config.vertical_margin;
-            const float resolution           = static_cast<float>(tree.getResolution());
-            const float horizontal_limit =
-                    horizontal_clearance + resolution * std::sqrt(0.5F);
-            const float vertical_limit = vertical_clearance + resolution * 0.5F;
-
-            octomap::OcTreeKey min_key;
-            octomap::OcTreeKey max_key;
-            const float range = std::max(horizontal_limit, vertical_limit);
-            if(!keyRange(tree, candidate, range, min_key, max_key)) {
-                return false;
-            }
-
-            bool safe = true;
-            forEachKey(min_key, max_key, [&](const octomap::OcTreeKey & key) {
-                if(!safe) {
-                    return;
-                }
-                const Point3f point = toPoint3f(tree.keyToCoord(key));
-                const float  dx    = point.x - candidate.x;
-                const float  dy    = point.y - candidate.y;
-                const float  dz    = std::fabs(point.z - candidate.z);
-                if(dx * dx + dy * dy <= horizontal_limit * horizontal_limit
-                   && dz <= vertical_limit && !isFree(tree, key))
-                {
-                    safe = false;
-                }
-            });
-            return safe;
-        }
-
         std::vector<octomap::OcTreeKey> nearbyFreeKeys(
                 const octomap::OcTree & tree, const Point3f & nominal, const float radius)
         {
@@ -304,6 +287,35 @@ namespace SwarmController {
             return (std::cos(pose.yaw) * dx + std::sin(pose.yaw) * dy) / xy_norm;
         }
 
+        bool satisfiesForwardHalfSpace(
+                const Point3f & candidate,
+                const std::optional<ForwardHalfSpaceConstraint> & constraint)
+        {
+            if(!constraint.has_value()) {
+                return true;
+            }
+            const float dx = candidate.x - constraint->origin.x;
+            const float dy = candidate.y - constraint->origin.y;
+            const float forward =
+                    std::cos(constraint->yaw) * dx + std::sin(constraint->yaw) * dy;
+            return forward + constraint->backward_margin >= -SCORE_EPSILON;
+        }
+
+        const char * pathStatusName(const PathCheckStatus status)
+        {
+            switch(status) {
+                case PathCheckStatus::Safe:
+                    return "Safe";
+                case PathCheckStatus::UnknownBlocked:
+                    return "UnknownBlocked";
+                case PathCheckStatus::OccupiedBlocked:
+                    return "OccupiedBlocked";
+                case PathCheckStatus::InvalidInput:
+                    return "InvalidInput";
+            }
+            return "InvalidInput";
+        }
+
         float score(
                 const FrontierCluster & cluster, const Point3f & candidate, const Pose3D & pose,
                 const FrontierExplorationConfig & config)
@@ -318,13 +330,13 @@ namespace SwarmController {
 
         bool betterCandidate(const GoalCandidate & candidate, const GoalCandidate & current)
         {
-            if(std::fabs(candidate.utility - current.utility) > SCORE_EPSILON) {
+            if(candidate.utility != current.utility) {
                 return candidate.utility > current.utility;
             }
-            if(std::fabs(candidate.frontier_area - current.frontier_area) > SCORE_EPSILON) {
+            if(candidate.frontier_area != current.frontier_area) {
                 return candidate.frontier_area > current.frontier_area;
             }
-            if(std::fabs(candidate.travel_distance - current.travel_distance) > SCORE_EPSILON) {
+            if(candidate.travel_distance != current.travel_distance) {
                 return candidate.travel_distance < current.travel_distance;
             }
             if(!keysEqual(candidate.cluster_id, current.cluster_id)) {
@@ -382,21 +394,45 @@ namespace SwarmController {
 
     FrontierExplorationStrategy::FrontierExplorationStrategy(FrontierExplorationConfig config)
         : config_(std::move(config))
+        , path_checker_(BodyEnvelopeConfig {
+                  config_.robot_radius,
+                  config_.robot_half_height,
+                  config_.safety_margin,
+                  config_.vertical_margin,
+                  0.5F,
+          })
     {
         validateConfig(config_);
     }
 
     GoalSelectionResult FrontierExplorationStrategy::selectGoal(
-            const GoalSelectionRequest & request, const octomap::OcTree & tree) const
+            const GoalSelectionRequest & request, const octomap::OcTree & tree,
+            ExplorationDiagnostics * diagnostics) const
     {
-        if(!isFinite(request.pose)) {
-            return GoalSelectionResult {GoalSelectionStatus::InvalidInput, std::nullopt};
+        const auto selection_start = std::chrono::steady_clock::now();
+        if(diagnostics != nullptr) {
+            diagnostics->clear();
+        }
+        const auto finish =
+                [diagnostics, selection_start](
+                        const GoalSelectionStatus status,
+                        std::optional<ExplorationGoal> goal) {
+                    if(diagnostics != nullptr) {
+                        diagnostics->selection_elapsed_seconds =
+                                std::chrono::duration<double>(
+                                        std::chrono::steady_clock::now() - selection_start)
+                                        .count();
+                    }
+                    return GoalSelectionResult {status, std::move(goal)};
+                };
+        if(!isValid(request)) {
+            return finish(GoalSelectionStatus::InvalidInput, std::nullopt);
         }
 
         octomap::OcTreeKey min_key;
         octomap::OcTreeKey max_key;
         if(!keyRange(tree, request.pose.position, config_.planning_radius, min_key, max_key)) {
-            return GoalSelectionResult {GoalSelectionStatus::InvalidInput, std::nullopt};
+            return finish(GoalSelectionStatus::InvalidInput, std::nullopt);
         }
 
         std::map<octomap::OcTreeKey, FrontierCell, KeyLess> frontier_cells;
@@ -428,10 +464,10 @@ namespace SwarmController {
                 });
 
         if(!has_known_free) {
-            return GoalSelectionResult {GoalSelectionStatus::NoKnownFree, std::nullopt};
+            return finish(GoalSelectionStatus::NoKnownFree, std::nullopt);
         }
         if(raw_frontier_faces == 0U) {
-            return GoalSelectionResult {GoalSelectionStatus::NoFrontier, std::nullopt};
+            return finish(GoalSelectionStatus::NoFrontier, std::nullopt);
         }
 
         std::map<octomap::OcTreeKey, bool, KeyLess> visited;
@@ -472,11 +508,41 @@ namespace SwarmController {
 
             cluster.area = static_cast<float>(cluster.faces.size()) * face_area;
             if(cluster.area + SCORE_EPSILON >= config_.min_cluster_area) {
+                if(diagnostics != nullptr) {
+                    if(diagnostics->frontier_clusters.size()
+                       < diagnostics->max_debug_candidates)
+                    {
+                        diagnostics->frontier_clusters.push_back(DebugFrontierCluster {
+                                cluster.id,
+                                toPoint3f(tree.keyToCoord(cluster.id)),
+                                cluster.area,
+                                containsKey(request.rejected_cluster_ids, cluster.id),
+                        });
+                    }
+                    for(const FrontierFace & face : cluster.faces) {
+                        if(diagnostics->frontier_faces.size()
+                           >= diagnostics->max_debug_faces)
+                        {
+                            break;
+                        }
+                        diagnostics->frontier_faces.push_back(DebugFrontierFace {
+                                toPoint3f(tree.keyToCoord(face.key)),
+                                cluster.id,
+                        });
+                    }
+                }
                 clusters.push_back(std::move(cluster));
             }
         }
 
-        std::optional<GoalCandidate> best;
+        std::map<octomap::OcTreeKey, bool, KeyLess>          body_safety_cache;
+        std::map<octomap::OcTreeKey, GoalCandidate, KeyLess> unique_candidates;
+        Pose3D scoring_pose = request.pose;
+        if(request.forward_half_space.has_value()) {
+            // 主动重扫会改变当前 yaw；部署方向约束存在时，评分朝向必须保持稳定，
+            // 否则候选会跟随扫描 yaw 绕入口旋转。
+            scoring_pose.yaw = request.forward_half_space->yaw;
+        }
         for(const FrontierCluster & cluster : clusters) {
             if(containsKey(request.rejected_cluster_ids, cluster.id)) {
                 continue;
@@ -493,40 +559,121 @@ namespace SwarmController {
                 for(const octomap::OcTreeKey & candidate_key :
                     nearbyFreeKeys(tree, nominal, config_.goal_search_radius))
                 {
-                    const Point3f candidate = toPoint3f(tree.keyToCoord(candidate_key));
-                    const float  goal_distance = distance(candidate, request.pose.position);
-                    if(goal_distance + SCORE_EPSILON < config_.min_goal_distance
-                       || goal_distance > config_.max_goal_distance + SCORE_EPSILON
-                       || !hasKnownFreeClearance(tree, candidate, config_))
+                    Point3f candidate = toPoint3f(tree.keyToCoord(candidate_key));
+                    if(request.fixed_altitude.has_value()) {
+                        candidate.z = request.fixed_altitude->altitude;
+                    }
+                    octomap::OcTreeKey effective_key;
+                    if(!tree.coordToKeyChecked(
+                               octomap::point3d(candidate.x, candidate.y, candidate.z),
+                               effective_key))
                     {
                         continue;
+                    }
+                    const float  goal_distance = distance(candidate, request.pose.position);
+                    if(goal_distance + SCORE_EPSILON < config_.min_goal_distance
+                       || goal_distance > config_.max_goal_distance + SCORE_EPSILON)
+                    {
+                        continue;
+                    }
+                    if(!satisfiesForwardHalfSpace(candidate, request.forward_half_space)) {
+                        if(diagnostics != nullptr) {
+                            ++diagnostics->forward_filtered_count;
+                        }
+                        continue;
+                    }
+
+                    auto body_safety = body_safety_cache.find(effective_key);
+                    if(body_safety == body_safety_cache.end()) {
+                        body_safety = body_safety_cache
+                                              .emplace(
+                                                      effective_key,
+                                                      path_checker_
+                                                              .checkBody(tree, candidate)
+                                                              .safe())
+                                              .first;
+                    }
+                    if(!body_safety->second)
+                    {
+                        continue;
+                    }
+                    if(diagnostics != nullptr) {
+                        ++diagnostics->raw_candidate_count;
                     }
 
                     const GoalCandidate goal {
                             candidate,
-                            candidate_key,
+                            effective_key,
                             cluster.id,
-                            score(cluster, candidate, request.pose, config_),
+                            score(cluster, candidate, scoring_pose, config_),
                             cluster.area,
                             goal_distance,
                     };
-                    if(!best.has_value() || betterCandidate(goal, *best)) {
-                        best = goal;
+                    auto existing = unique_candidates.find(effective_key);
+                    if(existing == unique_candidates.end()) {
+                        unique_candidates.emplace(effective_key, goal);
+                    } else if(betterCandidate(goal, existing->second)) {
+                        existing->second = goal;
                     }
-                    break;
                 }
             }
         }
 
-        if(!best.has_value()) {
-            return GoalSelectionResult {GoalSelectionStatus::NoSafeCandidate, std::nullopt};
+        if(diagnostics != nullptr) {
+            diagnostics->unique_candidate_count = unique_candidates.size();
+            for(const auto & [key, candidate] : unique_candidates) {
+                (void) key;
+                if(diagnostics->locally_safe_candidates.size()
+                   >= diagnostics->max_debug_candidates)
+                {
+                    break;
+                }
+                diagnostics->locally_safe_candidates.push_back(candidate.position);
+            }
+        }
+        if(unique_candidates.empty()) {
+            return finish(GoalSelectionStatus::NoSafeCandidate, std::nullopt);
         }
 
-        return GoalSelectionResult {
-                GoalSelectionStatus::Success,
-                ExplorationGoal {
-                        best->position, best->cluster_id, best->utility, best->frontier_area},
-        };
+        std::vector<GoalCandidate> ranked_candidates;
+        ranked_candidates.reserve(unique_candidates.size());
+        for(const auto & [key, candidate] : unique_candidates) {
+            (void) key;
+            ranked_candidates.push_back(candidate);
+        }
+        std::sort(
+                ranked_candidates.begin(), ranked_candidates.end(),
+                [](const GoalCandidate & lhs, const GoalCandidate & rhs) {
+                    return betterCandidate(lhs, rhs);
+                });
+
+        for(const GoalCandidate & candidate : ranked_candidates) {
+            const PathCheckResult path = path_checker_.checkSegment(
+                    tree, request.pose.position, candidate.position);
+            if(diagnostics != nullptr) {
+                ++diagnostics->segment_check_count;
+                diagnostics->path_start             = request.pose.position;
+                diagnostics->path_goal              = candidate.position;
+                diagnostics->path_status            = pathStatusName(path.status);
+                diagnostics->first_blocked_position = path.first_blocked_position;
+            }
+            if(!path.safe()) {
+                continue;
+            }
+
+            if(diagnostics != nullptr) {
+                diagnostics->selected_goal = candidate.position;
+            }
+            return finish(
+                    GoalSelectionStatus::Success,
+                    ExplorationGoal {
+                            candidate.position,
+                            candidate.cluster_id,
+                            candidate.utility,
+                            candidate.frontier_area,
+                    });
+        }
+        return finish(GoalSelectionStatus::NoSafeCandidate, std::nullopt);
     }
 
 }// namespace SwarmController

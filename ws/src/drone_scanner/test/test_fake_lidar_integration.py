@@ -110,6 +110,9 @@ class TestFakeLidarIntegration(unittest.TestCase):
             qos_profile_sensor_data,
         )
         try:
+            discovery_deadline = time.time() + 2.0
+            while time.time() < discovery_deadline and sub.get_publisher_count() == 0:
+                rclpy.spin_once(self.node, timeout_sec=0.05)
             end_time = time.time() + seconds
             while time.time() < end_time:
                 rclpy.spin_once(self.node, timeout_sec=0.2)

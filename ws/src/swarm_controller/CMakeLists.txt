@@ -11,9 +11,13 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(tf2 REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(visualization_msgs REQUIRED)
 find_package(octomap REQUIRED)
 find_package(octomap_msgs REQUIRED)
 
@@ -30,6 +34,8 @@ target_compile_features(swarm_octomap PUBLIC cxx_std_17)
 
 add_library(swarm_exploration STATIC
         src/FrontierExplorationStrategy.cpp
+        src/KnownFreePathChecker.cpp
+        src/SingleDroneExplorer.cpp
 )
 target_include_directories(swarm_exploration PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -48,6 +54,10 @@ install(
         include/swarm_controller/OctoMapBuilderNode.hpp
         include/swarm_controller/IExplorationStrategy.hpp
         include/swarm_controller/FrontierExplorationStrategy.hpp
+        include/swarm_controller/KnownFreePathChecker.hpp
+        include/swarm_controller/ExplorationDiagnostics.hpp
+        include/swarm_controller/SingleDroneExplorer.hpp
+        include/swarm_controller/SingleDroneExplorerNode.hpp
         DESTINATION include/swarm_controller
 )
 install(
@@ -68,8 +78,22 @@ target_include_directories(octomap_builder PUBLIC
 target_link_libraries(octomap_builder swarm_octomap)
 ament_target_dependencies(octomap_builder rclcpp sensor_msgs tf2 tf2_ros octomap_msgs)
 
+add_executable(single_drone_explorer
+        src/SingleDroneExplorerNode.cpp
+        src/SingleDroneExplorerMain.cpp
+)
+target_include_directories(single_drone_explorer PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(single_drone_explorer swarm_exploration)
+ament_target_dependencies(
+        single_drone_explorer
+        rclcpp geometry_msgs nav_msgs octomap_msgs tf2 tf2_geometry_msgs tf2_ros visualization_msgs
+)
+
 install(
-        TARGETS octomap_builder
+        TARGETS octomap_builder single_drone_explorer
         DESTINATION lib/${PROJECT_NAME}
 )
 install(
@@ -98,10 +122,44 @@ if(BUILD_TESTING)
         )
     endif()
 
+    ament_add_gtest(TestKnownFreePathChecker test/TestKnownFreePathChecker.cpp)
+    if(TARGET TestKnownFreePathChecker)
+        target_link_libraries(TestKnownFreePathChecker swarm_exploration)
+        target_include_directories(TestKnownFreePathChecker PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
+    ament_add_gtest(TestSingleDroneExplorer test/TestSingleDroneExplorer.cpp)
+    if(TARGET TestSingleDroneExplorer)
+        target_link_libraries(TestSingleDroneExplorer swarm_exploration)
+        target_include_directories(TestSingleDroneExplorer PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
+    ament_add_gtest(TestYawSweepCoverage test/TestYawSweepCoverage.cpp)
+    if(TARGET TestYawSweepCoverage)
+        target_link_libraries(TestYawSweepCoverage swarm_exploration swarm_octomap)
+        target_include_directories(TestYawSweepCoverage PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
     find_package(ament_cmake_ros REQUIRED)
     find_package(launch_testing_ament_cmake REQUIRED)
     set(RUNNER "${ament_cmake_ros_DIR}/run_test_isolated.py")
     add_launch_test(test/test_octomap_builder_integration.py RUNNER "${RUNNER}" TIMEOUT 120)
+    add_launch_test(
+            test/test_octomap_observation_stamp_integration.py
+            RUNNER "${RUNNER}"
+            TIMEOUT 120
+    )
+    add_launch_test(
+            test/test_single_drone_exploration_integration.py
+            RUNNER "${RUNNER}"
+            TIMEOUT 120
+    )
 endif()
 
 ament_export_include_directories(include)

@@ -87,6 +87,9 @@ def generate_launch_description():
     line_end_z = DeclareLaunchArgument('line.end_z', default_value='1.5')
     line_duration = DeclareLaunchArgument('line.duration_seconds', default_value='60.0')
     publish_rate = DeclareLaunchArgument('publish_rate', default_value='20.0')
+    motion_mode = DeclareLaunchArgument('motion.mode', default_value='line')
+    motion_linear_speed = DeclareLaunchArgument('motion.linear_speed', default_value='0.4')
+    motion_yaw_rate = DeclareLaunchArgument('motion.yaw_rate', default_value='0.5')
 
     scan_rate = DeclareLaunchArgument('scan_rate', default_value='10.0')
     num_beams = DeclareLaunchArgument('num_beams', default_value='360')
@@ -167,6 +170,9 @@ def generate_launch_description():
         line_end_z,
         line_duration,
         publish_rate,
+        motion_mode,
+        motion_linear_speed,
+        motion_yaw_rate,
         scan_rate,
         num_beams,
         max_range,
@@ -229,6 +235,9 @@ def generate_launch_description():
                 'publish_rate': _f('publish_rate'),
                 'odom_frame': 'odom',
                 'base_frame': 'base_link',
+                'motion.mode': LaunchConfiguration('motion.mode'),
+                'motion.linear_speed': _f('motion.linear_speed'),
+                'motion.yaw_rate': _f('motion.yaw_rate'),
                 'altitude_adapt.enable': _b('altitude_adapt.enable'),
                 'altitude_adapt.target_fraction': _f('altitude_adapt.target_fraction'),
                 'altitude_adapt.min_clearance': _f('altitude_adapt.min_clearance'),

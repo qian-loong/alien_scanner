@@ -41,7 +41,9 @@ namespace SwarmController {
                 const int half_width, const int half_height, const bool reverse_order = false)
         {
             std::vector<CellUpdate> updates;
-            for(int x = 0; x <= length; ++x) {
+            const int back_wall =
+                    -static_cast<int>(std::ceil(0.8 / tree.getResolution()));
+            for(int x = back_wall + 1; x <= length; ++x) {
                 for(int y = -half_width; y <= half_width; ++y) {
                     for(int z = -half_height; z <= half_height; ++z) {
                         updates.push_back(CellUpdate {offsetKey(base, x, y, z), false});
@@ -51,10 +53,10 @@ namespace SwarmController {
 
             for(int y = -half_width; y <= half_width; ++y) {
                 for(int z = -half_height; z <= half_height; ++z) {
-                    updates.push_back(CellUpdate {offsetKey(base, -1, y, z), true});
+                    updates.push_back(CellUpdate {offsetKey(base, back_wall, y, z), true});
                 }
             }
-            for(int x = -1; x <= length; ++x) {
+            for(int x = back_wall; x <= length; ++x) {
                 for(int z = -half_height; z <= half_height; ++z) {
                     updates.push_back(
                             CellUpdate {offsetKey(base, x, -half_width - 1, z), true});
@@ -85,6 +87,29 @@ namespace SwarmController {
             populateOpenCorridorAt(
                     tree, tree.coordToKey(0.0, 0.0, 0.0), length, half_width, half_height,
                     reverse_order);
+        }
+
+        void populateTwoEndedCorridor(
+                octomap::OcTree & tree, const int half_length, const int half_width,
+                const int half_height)
+        {
+            const auto base = tree.coordToKey(0.0, 0.0, 0.0);
+            for(int x = -half_length; x <= half_length; ++x) {
+                for(int y = -half_width; y <= half_width; ++y) {
+                    for(int z = -half_height; z <= half_height; ++z) {
+                        tree.updateNode(offsetKey(base, x, y, z), false, true);
+                    }
+                }
+                for(int z = -half_height; z <= half_height; ++z) {
+                    tree.updateNode(offsetKey(base, x, -half_width - 1, z), true, true);
+                    tree.updateNode(offsetKey(base, x, half_width + 1, z), true, true);
+                }
+                for(int y = -half_width; y <= half_width; ++y) {
+                    tree.updateNode(offsetKey(base, x, y, -half_height - 1), true, true);
+                    tree.updateNode(offsetKey(base, x, y, half_height + 1), true, true);
+                }
+            }
+            tree.updateInnerOccupancy();
         }
 
         void surroundFreeCell(
@@ -143,8 +168,7 @@ namespace SwarmController {
     {
         octomap::OcTree tree(0.2);
         const auto base = tree.coordToKey(0.0, 0.0, 0.0);
-        populateOpenCorridorAt(tree, base, 15, 5, 3);
-        populateOpenCorridorAt(tree, offsetKey(base, 0, 12, 0), 15, 5, 3);
+        populateTwoEndedCorridor(tree, 15, 5, 3);
         const Pose3D pose = poseAtKey(tree, base);
         FrontierExplorationStrategy strategy;
 
@@ -152,14 +176,16 @@ namespace SwarmController {
                 strategy.selectGoal(GoalSelectionRequest {pose, {}}, tree);
         ASSERT_EQ(first.status, GoalSelectionStatus::Success);
         ASSERT_TRUE(first.goal.has_value());
-        EXPECT_LT(first.goal->position.y, 1.2F);
 
         const GoalSelectionResult rejected = strategy.selectGoal(
                 GoalSelectionRequest {pose, {first.goal->cluster_id}}, tree);
         ASSERT_EQ(rejected.status, GoalSelectionStatus::Success);
         ASSERT_TRUE(rejected.goal.has_value());
         EXPECT_FALSE(keysEqual(first.goal->cluster_id, rejected.goal->cluster_id));
-        EXPECT_GT(rejected.goal->position.y, 1.2F);
+        EXPECT_LT(
+                (first.goal->position.x - pose.position.x)
+                        * (rejected.goal->position.x - pose.position.x),
+                0.0F);
     }
 
     TEST(FrontierExplorationStrategyTest, ReportsEmptyAndClosedMapStates)
@@ -206,7 +232,7 @@ namespace SwarmController {
         tree.updateInnerOccupancy();
 
         const GoalSelectionResult result = FrontierExplorationStrategy {}.selectGoal(
-                GoalSelectionRequest {poseAtKey(tree, base), {}}, tree);
+                GoalSelectionRequest {poseAtKey(tree, offsetKey(base, 0, 0, 3)), {}}, tree);
 
         EXPECT_EQ(result.status, GoalSelectionStatus::NoSafeCandidate);
         EXPECT_FALSE(result.goal.has_value());
@@ -215,7 +241,10 @@ namespace SwarmController {
         vertical_config.max_abs_frontier_normal_z = 1.0F;
         EXPECT_EQ(
                 FrontierExplorationStrategy {vertical_config}
-                        .selectGoal(GoalSelectionRequest {poseAtKey(tree, base), {}}, tree)
+                        .selectGoal(
+                                GoalSelectionRequest {
+                                        poseAtKey(tree, offsetKey(base, 0, 0, 3)), {}},
+                                tree)
                         .status,
                 GoalSelectionStatus::Success);
     }
@@ -308,6 +337,74 @@ namespace SwarmController {
         EXPECT_GT(result.goal->position.x, 0.8F);
     }
 
+    TEST(FrontierExplorationStrategyTest, DeduplicatesFixedAltitudeCandidatesByEffectiveKey)
+    {
+        octomap::OcTree tree(0.2);
+        populateOpenCorridor(tree, 15, 5, 3);
+        const Pose3D pose = poseAtKey(tree, tree.coordToKey(0.0, 0.0, 0.0));
+        GoalSelectionRequest request {pose, {}};
+        request.fixed_altitude = FixedAltitudeConstraint {pose.position.z};
+        ExplorationDiagnostics diagnostics;
+
+        const GoalSelectionResult result =
+                FrontierExplorationStrategy {}.selectGoal(request, tree, &diagnostics);
+
+        ASSERT_EQ(result.status, GoalSelectionStatus::Success);
+        EXPECT_GT(diagnostics.raw_candidate_count, diagnostics.unique_candidate_count);
+        EXPECT_EQ(
+                diagnostics.locally_safe_candidates.size(),
+                std::min(
+                        diagnostics.unique_candidate_count,
+                        diagnostics.max_debug_candidates));
+    }
+
+    TEST(FrontierExplorationStrategyTest, UsesReachableFallbackAfterTopCandidatesAreBlocked)
+    {
+        octomap::OcTree tree(0.2);
+        populateTwoEndedCorridor(tree, 15, 5, 3);
+        const auto base = tree.coordToKey(0.0, 0.0, 0.0);
+        for(int y = -5; y <= 5; ++y) {
+            for(int z = -3; z <= 3; ++z) {
+                tree.updateNode(offsetKey(base, 4, y, z), true, true);
+            }
+        }
+        tree.updateInnerOccupancy();
+
+        const Pose3D pose = poseAtKey(tree, base);
+        GoalSelectionRequest request {pose, {}};
+        request.fixed_altitude = FixedAltitudeConstraint {pose.position.z};
+        ExplorationDiagnostics diagnostics;
+
+        const GoalSelectionResult result =
+                FrontierExplorationStrategy {}.selectGoal(request, tree, &diagnostics);
+
+        ASSERT_EQ(result.status, GoalSelectionStatus::Success);
+        ASSERT_TRUE(result.goal.has_value());
+        EXPECT_LT(result.goal->position.x, pose.position.x - 0.8F);
+        EXPECT_GT(diagnostics.segment_check_count, 1U);
+        EXPECT_EQ(diagnostics.path_status, "Safe");
+    }
+
+    TEST(FrontierExplorationStrategyTest, ForwardHalfSpaceSelectsOnlyDeploymentDirection)
+    {
+        octomap::OcTree tree(0.2);
+        populateTwoEndedCorridor(tree, 15, 5, 3);
+        const Pose3D pose = poseAtKey(tree, tree.coordToKey(0.0, 0.0, 0.0));
+        GoalSelectionRequest request {pose, {}};
+        request.forward_half_space =
+                ForwardHalfSpaceConstraint {pose.position, 3.14159265359F, 0.0F};
+        request.fixed_altitude = FixedAltitudeConstraint {pose.position.z};
+        ExplorationDiagnostics diagnostics;
+
+        const GoalSelectionResult result =
+                FrontierExplorationStrategy {}.selectGoal(request, tree, &diagnostics);
+
+        ASSERT_EQ(result.status, GoalSelectionStatus::Success);
+        ASSERT_TRUE(result.goal.has_value());
+        EXPECT_LT(result.goal->position.x, pose.position.x - 0.8F);
+        EXPECT_GT(diagnostics.forward_filtered_count, 0U);
+    }
+
     TEST(FrontierExplorationStrategyTest, UsesPhysicalAreaAcrossResolutions)
     {
         FrontierExplorationStrategy strategy;
@@ -371,6 +468,13 @@ namespace SwarmController {
         FrontierExplorationConfig config;
         config.planning_radius = 1.0F;
         EXPECT_THROW(FrontierExplorationStrategy {config}, std::invalid_argument);
+
+        GoalSelectionRequest invalid_constraint {poseAtKey(tree, tree.coordToKey(0.0, 0.0, 0.0)), {}};
+        invalid_constraint.forward_half_space =
+                ForwardHalfSpaceConstraint {Point3f {}, 0.0F, -0.1F};
+        EXPECT_EQ(
+                FrontierExplorationStrategy {}.selectGoal(invalid_constraint, tree).status,
+                GoalSelectionStatus::InvalidInput);
     }
 
 }// namespace SwarmController

@@ -4,6 +4,7 @@
 #include "swarm_controller/OctoMapBuilder.hpp"
 
 #include <memory>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,9 @@ namespace SwarmController {
         std::string                                                          output_topic_;
         float                                                                max_range_ {30.0F};
         double                                                               publish_rate_hz_ {2.0};
+        std::uint64_t                                                        observation_epoch_ {0U};
+        rclcpp::Time                                                         latest_observation_stamp_;
+        bool                                                                 map_dirty_ {false};
     };
 
 }// namespace SwarmController

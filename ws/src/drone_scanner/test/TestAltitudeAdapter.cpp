@@ -1,8 +1,11 @@
 #include "drone_scanner/AltitudeAdapter.hpp"
+#include "drone_scanner/FakeLidar.hpp"
+#include "cave_world/TreeCaveField.hpp"
 
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <memory>
 #include <vector>
 
 namespace DroneScanner {
@@ -57,7 +60,7 @@ namespace DroneScanner {
         EXPECT_LT(band.ceiling_z, z0 + 4.0F);
     }
 
-    TEST(AltitudeAdapterTest, TargetsMidBandByDefault)
+    TEST(AltitudeAdapterTest, HoldsAltitudeWhenAlreadyInsideClearanceBand)
     {
         AltitudeAdaptConfig config;
         config.target_fraction    = 0.5F;
@@ -66,7 +69,22 @@ namespace DroneScanner {
         config.band_ema_alpha     = 1.0F;
         AltitudeAdapter adapter(config);
 
-        const float adapted = adapter.adaptFromHits(verticalBandHits(2.0F, -1.5F), 0.2F, 0.2F, 1.0F);
+        // floor=0, ceiling=3.5 → 安全带 [0.35, 3.15]；1.5 已在带内，不拉向中带 1.75
+        const float adapted = adapter.adaptFromHits(verticalBandHits(2.0F, -1.5F), 1.5F, 1.5F, 1.0F);
+        EXPECT_NEAR(adapted, 1.5F, 1e-4F);
+    }
+
+    TEST(AltitudeAdapterTest, CorrectsTowardMidWhenBelowClearance)
+    {
+        AltitudeAdaptConfig config;
+        config.target_fraction    = 0.5F;
+        config.min_clearance      = 0.35F;
+        config.max_vertical_speed = 100.0F;
+        config.band_ema_alpha     = 1.0F;
+        AltitudeAdapter adapter(config);
+
+        // scan_origin=0.2 → floor=-1.3, ceiling=2.2；current=-1.2 低于 floor+clearance
+        const float adapted = adapter.adaptFromHits(verticalBandHits(2.0F, -1.5F), 0.2F, -1.2F, 1.0F);
         EXPECT_NEAR(adapted, 0.45F, 1e-3F);
     }
 
@@ -75,12 +93,13 @@ namespace DroneScanner {
         AltitudeAdaptConfig config;
         config.target_fraction    = 0.5F;
         config.max_vertical_speed = 0.5F;
-        config.min_clearance      = 0.0F;
+        config.min_clearance      = 0.35F;
         config.band_ema_alpha     = 1.0F;
         AltitudeAdapter adapter(config);
 
-        const float adapted = adapter.adaptFromHits(verticalBandHits(2.0F, -1.5F), 0.0F, 0.0F, 0.1F);
-        EXPECT_NEAR(adapted, 0.05F, 1e-4F);
+        // 低于净空下沿，向中带纠正但受 0.5 m/s * 0.1 s 限幅
+        const float adapted = adapter.adaptFromHits(verticalBandHits(2.0F, -1.5F), 0.0F, -2.0F, 0.1F);
+        EXPECT_NEAR(adapted, -1.95F, 1e-4F);
     }
 
     TEST(AltitudeAdapterTest, KeepsClearanceFromFloorAndCeiling)
@@ -92,7 +111,8 @@ namespace DroneScanner {
         config.band_ema_alpha     = 1.0F;
         AltitudeAdapter adapter(config);
 
-        const float adapted = adapter.adaptFromHits(verticalBandHits(2.0F, -1.5F), 1.5F, 1.5F, 1.0F);
+        // 贴地越界时纠正到 floor+min_clearance，而不是 floor 本身
+        const float adapted = adapter.adaptFromHits(verticalBandHits(2.0F, -1.5F), 1.5F, -0.2F, 1.0F);
         EXPECT_NEAR(adapted, 0.4F, 1e-3F);
     }
 
@@ -191,6 +211,33 @@ namespace DroneScanner {
         ASSERT_TRUE(wrong.valid);
         EXPECT_NEAR(wrong.ceiling_z, 4.5F, 1e-3F);
         EXPECT_NE(ok.ceiling_z, wrong.ceiling_z);
+    }
+
+    TEST(AltitudeAdapterTest, EntranceHoverDoesNotDiveThroughAsymmetricBand)
+    {
+        auto field = std::make_shared<CaveWorld::TreeCaveField>(CaveWorld::TreeCaveFieldConfig {});
+        FakeLidarConfig lidar_config;
+        lidar_config.num_beams      = 360;
+        lidar_config.max_range      = 30.0F;
+        lidar_config.ring_pitch_rad = 0.35F;
+        FakeLidar lidar(field, lidar_config);
+
+        AltitudeAdaptConfig config;
+        config.ring_pitch_rad     = 0.35F;
+        config.vertical_dot_min   = 0.65F;
+        config.min_clearance      = 0.35F;
+        config.max_vertical_speed = 0.6F;
+        config.band_ema_alpha     = 0.25F;
+        AltitudeAdapter adapter(config);
+
+        float z = 1.5F;
+        for(int i = 0; i < 400; ++i) {
+            const float yaw  = static_cast<float>(i / 50) * 0.785398F;
+            const auto  hits = lidar.scan({0.0F, 0.0F, z, yaw});
+            const auto  band = adapter.estimateBand(hits, z);
+            z                = adapter.adaptZ(band, z, 0.05F);
+        }
+        EXPECT_NEAR(z, 1.5F, 0.05F);
     }
 
 }// namespace DroneScanner

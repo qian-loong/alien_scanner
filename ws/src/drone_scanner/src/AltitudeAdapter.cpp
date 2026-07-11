@@ -101,11 +101,16 @@ namespace DroneScanner {
             return current_z;
         }
 
-        const float height = band.ceiling_z - band.floor_z;
-        float       target = band.floor_z + config_.target_fraction * height;
-
         const float lo = band.floor_z + config_.min_clearance;
         const float hi = band.ceiling_z - config_.min_clearance;
+
+        // 已在顶/底净空内则保持高度，避免入口等不对称截面被强行拉向中带后正反馈下坠。
+        if(lo <= hi && current_z >= lo && current_z <= hi) {
+            return current_z;
+        }
+
+        const float height = band.ceiling_z - band.floor_z;
+        float       target = band.floor_z + config_.target_fraction * height;
         if(lo <= hi) {
             target = std::clamp(target, lo, hi);
         } else {

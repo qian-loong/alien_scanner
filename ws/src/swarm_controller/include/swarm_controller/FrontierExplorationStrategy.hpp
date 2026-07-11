@@ -2,6 +2,7 @@
 #define SWARM_CONTROLLER_FRONTIEREXPLORATIONSTRATEGY_HPP
 
 #include "swarm_controller/IExplorationStrategy.hpp"
+#include "swarm_controller/KnownFreePathChecker.hpp"
 
 namespace SwarmController {
 
@@ -33,10 +34,12 @@ namespace SwarmController {
         explicit FrontierExplorationStrategy(FrontierExplorationConfig config = {});
 
         GoalSelectionResult selectGoal(
-                const GoalSelectionRequest & request, const octomap::OcTree & tree) const override;
+                const GoalSelectionRequest & request, const octomap::OcTree & tree,
+                ExplorationDiagnostics * diagnostics = nullptr) const override;
 
     private:
         FrontierExplorationConfig config_;
+        KnownFreePathChecker      path_checker_;
     };
 
 }// namespace SwarmController

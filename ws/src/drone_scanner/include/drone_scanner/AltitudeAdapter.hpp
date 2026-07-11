@@ -8,8 +8,8 @@
 namespace DroneScanner {
 
     struct AltitudeAdaptConfig {
-        float target_fraction {0.5F};     ///< 0=贴底，1=贴顶；默认走廊中带
-        float min_clearance {0.35F};      ///< 相对顶/底至少保留的净空 (m)
+        float target_fraction {0.5F};     ///< 越界纠正时的目标：0=贴底，1=贴顶；默认中带
+        float min_clearance {0.35F};      ///< 相对顶/底至少保留的净空 (m)；带内则保持当前 z
         float max_vertical_speed {0.6F};  ///< |vz| 上限 (m/s)，按 dt 限幅
         float band_ema_alpha {0.25F};     ///< 顶/底估计 EMA；越大越跟新帧
         float min_band_height {0.8F};     ///< 顶底间距过小则视为无效

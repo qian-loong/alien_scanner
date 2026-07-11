@@ -202,6 +202,21 @@ namespace SwarmController {
 
     void OctoMapBuilderNode::onScanReturns(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
     {
+        const rclcpp::Time scan_stamp(msg->header.stamp);
+        if(scan_stamp.nanoseconds() == 0) {
+            RCLCPP_WARN_THROTTLE(
+                    get_logger(), *get_clock(), 5000,
+                    "ignored scan_returns with zero acquisition stamp");
+            return;
+        }
+        if(latest_observation_stamp_.nanoseconds() != 0
+           && scan_stamp <= latest_observation_stamp_)
+        {
+            RCLCPP_WARN_THROTTLE(
+                    get_logger(), *get_clock(), 5000,
+                    "ignored non-increasing scan_returns stamp");
+            return;
+        }
         if(msg->width * msg->height == 0) {
             return;
         }
@@ -231,15 +246,23 @@ namespace SwarmController {
         origin_map.x = static_cast<float>(transform.transform.translation.x);
         origin_map.y = static_cast<float>(transform.transform.translation.y);
         origin_map.z = static_cast<float>(transform.transform.translation.z);
-        builder_->insertScan(origin_map, extractReturnsInMap(*msg, transform.transform));
+        const std::vector<RayReturn> returns = extractReturnsInMap(*msg, transform.transform);
+        if(returns.empty()) {
+            return;
+        }
+        builder_->insertScan(origin_map, returns);
+        latest_observation_stamp_ = scan_stamp;
+        ++observation_epoch_;
+        map_dirty_ = true;
     }
 
     void OctoMapBuilderNode::onPublishTimer()
     {
-        if(builder_->knownCount() == 0U) {
+        if(!map_dirty_ || builder_->knownCount() == 0U) {
             return;
         }
-        publishMap(get_clock()->now());
+        publishMap(latest_observation_stamp_);
+        map_dirty_ = false;
     }
 
     void OctoMapBuilderNode::publishMap(const rclcpp::Time & stamp)

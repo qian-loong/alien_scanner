@@ -195,7 +195,7 @@ ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 
 ---
 
-### Phase 3：多机未知探索与地图融合 — **进行中（3-1～3-4 已完成）**
+### Phase 3：多机未知探索与地图融合 — **进行中（3-1～3-5 / M1 已完成）**
 
 **分支：** `phase/3-swarm-controller`
 
@@ -209,12 +209,14 @@ ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 | 3-2 | 高度自适应 | ✅ |
 | 3-3 | OctoMap 观测地图（含未命中 beam free 雕刻） | ✅ |
 | 3-4 | `IExplorationStrategy`（单机选目标） | ✅ |
-| 3-5 | 单机探索闭环 + 最小避障 | ⬜ |
+| 3-5 | 单机探索闭环 + 最小避障（M1） | ✅ |
 | 3-6 | 多机 launch（`num_drones:=3`） | ⬜ |
 | 3-7 | 多机任务调度（未知分配） | ⬜ |
 | 3-8 | `/global_map` 融合 | ⬜ |
 | 3-9 | 更强路径规划（按需） | ⬜ |
 | 3-10 | 一键 swarm + 测试验收 | ⬜ |
+
+**M1 实际状况（摘要）：** 单机闭环已打通（感知→OctoMap→短段目标→执行→再选）；RViz 可见短 hop 折线弯折，属贪心局部 frontier 形态，非闭环失败。细节见 [`phase-03-swarm.md`](phases/phase-03-swarm.md) Step 3-5「当前实际状况」。
 
 **跨 Phase 契约（摘要）：**
 
@@ -481,7 +483,7 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 [ ] 5. （可选）ros2 bag 录制 + README 演示 GIF
 ```
 
-**当前进度：** Phase 1、Phase 2 已完成；Phase 3 已完成 3-1～3-4，下一步实现 3-5 单机探索闭环与最小避障（见 [`docs/phases/phase-03-swarm.md`](phases/phase-03-swarm.md)）。
+**当前进度：** Phase 1、Phase 2 已完成；Phase 3 已完成 3-1～3-5（M1 单机自主探索闭环），下一步 3-6 多机 launch（见 [`docs/phases/phase-03-swarm.md`](phases/phase-03-swarm.md)）。
 
 ---
 
@@ -508,5 +510,5 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 | 字段 | 值 |
 |------|-----|
 | 创建日期 | 2026-07-06 |
-| 最后更新 | 2026-07-10 |
-| 状态 | Phase 1–2 已完成；Phase 3 进行中（3-1～3-4 已完成，下一步 3-5）；分步细节见 `docs/phases/` |
+| 最后更新 | 2026-07-11 |
+| 状态 | Phase 1–2 已完成；Phase 3 进行中（3-1～3-5 / M1 已完成，下一步 3-6）；分步细节见 `docs/phases/` |

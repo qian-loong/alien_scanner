@@ -3,8 +3,10 @@
 
 #include "swarm_controller/Point3f.hpp"
 #include "swarm_controller/Pose3D.hpp"
+#include "swarm_controller/ExplorationDiagnostics.hpp"
 
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include <octomap/OcTree.h>
@@ -21,9 +23,30 @@ namespace SwarmController {
         NoSafeCandidate,
     };
 
+    struct ForwardHalfSpaceConstraint {
+        Point3f origin {};
+        float   yaw {};
+        float   backward_margin {};
+    };
+
+    struct FixedAltitudeConstraint {
+        float altitude {};
+    };
+
     struct GoalSelectionRequest {
-        Pose3D                         pose {};
-        std::vector<FrontierClusterId> rejected_cluster_ids;
+        GoalSelectionRequest() = default;
+
+        GoalSelectionRequest(
+                Pose3D input_pose, std::vector<FrontierClusterId> rejected_ids = {})
+            : pose(input_pose)
+            , rejected_cluster_ids(std::move(rejected_ids))
+        {
+        }
+
+        Pose3D                                    pose {};
+        std::vector<FrontierClusterId>            rejected_cluster_ids;
+        std::optional<ForwardHalfSpaceConstraint> forward_half_space;
+        std::optional<FixedAltitudeConstraint>    fixed_altitude;
     };
 
     struct ExplorationGoal {
@@ -44,7 +67,8 @@ namespace SwarmController {
         virtual ~IExplorationStrategy() = default;
 
         virtual GoalSelectionResult selectGoal(
-                const GoalSelectionRequest & request, const octomap::OcTree & tree) const = 0;
+                const GoalSelectionRequest & request, const octomap::OcTree & tree,
+                ExplorationDiagnostics * diagnostics = nullptr) const = 0;
     };
 
 }// namespace SwarmController
