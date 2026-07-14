@@ -1,6 +1,6 @@
 # Phase 3：多机未知探索与地图融合（swarm_controller）
 
-> **状态：** 🟡 进行中（3-1～3-6 已完成；下一步 3-7；分支 `phase/3-swarm-controller`）
+> **状态：** 🟡 进行中（3-1～3-7 已完成；下一步 3-8 `/global_map`；分支 `phase/3-swarm-controller`）
 > **上级摘要：** [`docs/xenomorph-scanner-plan.md`](../xenomorph-scanner-plan.md) §6 Phase 3  
 > **依赖：** Phase 1 [`phase-01-cave-world.md`](phase-01-cave-world.md)、Phase 2 [`phase-02-drone-scanner.md`](phase-02-drone-scanner.md)  
 > **工程约定：** [`AGENTS.md`](../../AGENTS.md)（含 §5.1 Git 分步提交）
@@ -93,7 +93,7 @@ ICaveField（真值）──仅造数──► FakeLidar（俯仰环）
 | 3-4 | `IExplorationStrategy`（单机选目标） | ✅ | `phase3(step4): exploration strategy` |
 | 3-5 | 单机探索闭环 + **最小避障** | ✅ | `phase3(step5): single-drone explore loop` |
 | 3-6 | 多机 launch（`num_drones:=3`） | ✅ | `phase3(step6): multi-drone sensing launch` |
-| 3-7 | 多机任务调度（未知分配） | ⬜ | `phase3(step7): swarm task allocation` |
+| 3-7 | 多机探索分散（peer 启发式 + 简化前向局部规划） | ✅ | `phase3(step7): multi-drone peer-dispersion allocation` |
 | 3-8 | `/global_map` 融合 | ⬜ | `phase3(step8): global map merge` |
 | 3-9 | 更强短程/全局路径规划 | ⬜ 按需 | `phase3(step9): path planner` |
 | 3-10 | 一键 swarm + 测试 + 文档验收 | ⬜ | `phase3(step10): swarm entry and tests` |
@@ -197,13 +197,17 @@ max_dz = max_vertical_speed × dt
 |------|------|------|
 | `altitude_adapt.enable` | `true` | 是否启用高度自适应 |
 | `altitude_adapt.target_fraction` | `0.5` | 0=贴底，1=贴顶；默认走廊中带 |
-| `altitude_adapt.min_clearance` | `0.35` | 相对顶/底至少保留的净空 (m) |
+| `altitude_adapt.min_clearance` | `auto`（当前 0.1 m 图分辨率下为 `0.41`） | 与规划器机体包络共享的垂直净空契约 |
 | `altitude_adapt.band_ema_alpha` | `0.25` | 顶/底 EMA 系数（仅新扫描帧更新） |
 | `altitude_adapt.max_vertical_speed` | `0.6` | 竖直 \|vz\| 上限 (m/s) |
 | `altitude_adapt.min_band_height` | `0.8` | 顶底间距过小则本帧无效 |
 | `altitude_adapt.vertical_dot_min` | `0.65` | 筛近垂向 beam |
 | `altitude_adapt.ring_pitch_rad` | 与 `ring_pitch_rad` 同步 | 几何兼容校验 |
 | `altitude_adapt.points_stale_sec` | `0.5` | 扫描帧过期丢弃阈值 (s) |
+
+顶层 exploration/sensing launch 按
+`robot_half_height + vertical_margin + resolution/2 + clearance_epsilon`
+计算 `auto` 值；显式配置低于该值时拒绝启动，避免高度控制器把机体保持在规划器必然判阻的边界。
 
 ### 验收
 
@@ -731,12 +735,18 @@ enum class GoalSelectionStatus {
 新增：
 
 ```text
-include/swarm_controller/Point3f.hpp
-include/swarm_controller/Pose3D.hpp
-include/swarm_controller/IExplorationStrategy.hpp
-include/swarm_controller/FrontierExplorationStrategy.hpp
-src/FrontierExplorationStrategy.cpp
-test/TestFrontierExplorationStrategy.cpp
+ws/src/swarm_controller/
+├── include/swarm_controller/
+│   ├── FrontierExplorationStrategy.hpp
+│   ├── IExplorationStrategy.hpp
+│   ├── Point3f.hpp
+│   └── Pose3D.hpp
+├── src/
+│   └── FrontierExplorationStrategy.cpp
+├── test/
+│   └── TestFrontierExplorationStrategy.cpp
+├── CMakeLists.txt
+└── package.xml
 ```
 
 CMake 新增独立 ROS-free 静态库 `swarm_exploration`，继续链接 OctoMap；3-4 不增加 launch test。
@@ -862,7 +872,7 @@ GPT-5.6 Terra Medium 方案评审后采用：
 - frontier 的 3D goal 只提供候选 XY；controller 构造
   `effective_goal=(strategy_goal.x, strategy_goal.y, current_actual_z)`
 - 到达条件只检查 XY 距离和 yaw；不等待被高度适配器覆盖的 `strategy_goal.z`
-- 固定高度整段已由当前 OctoMap 证明 known-free，因此平移期间不再做未批准的 z 跟随
+- 固定高度整段由当前 OctoMap 证明 known-free；平移期间禁止未批准的 z 跟随
 
 #### `swarm_exploration`：统一安全检查
 
@@ -1012,8 +1022,9 @@ Marker 全部在 `map`，每次先 `DELETEALL` 再发布完整当前快照，节
 - 复用现有 fake LiDAR / OctoMap Python launch；复杂参数转换保留在既有文件
 - 所有嵌套 include 参数显式传递并保持 scoped
 - `fake_odom` 使用 goal mode，`fake_lidar` 持续扫描
-- 闭环默认参数（与 `single_drone_exploration.launch.py` 一致）：
-  `frontier.planning_radius=3.5 m`、`frontier.max_goal_distance=2.0 m`；
+- 闭环当前默认参数：
+  `frontier.forward_lookahead_min=0.8 m`、`frontier.forward_lookahead_max=2.0 m`、
+  `frontier.forward_lateral_limit=0.5 m`；
   另启用入口前向半空间约束（`entry.enforce_forward_half_space=true`，
   `entry.backward_margin=0.1 m`）。执行中仍按 fresh observation 复查剩余路径
 - 启动 `single_drone_explorer` 与一份 `exploration.rviz`
@@ -1050,30 +1061,42 @@ M1 **闭环与安全契约已打通**；下列现象属于当前策略/执行形
 若探针失败，依次评估 yaw rate / 扫描密度、resolution、机体包络；仍失败才评估 pitch
 摆扫或多 pitch 环。**不得通过把 unknown 当 free 绕过失败。**
 
-### 文件与构建（预计）
+### 文件与构建
 
 ```text
-drone_scanner/
-  include/drone_scanner/PoseSegmentTrajectory.hpp
-  src/PoseSegmentTrajectory.cpp
-  src/FakeOdomNode.cpp                         # line / goal 双模式
-  test/TestPoseSegmentTrajectory.cpp
-  test/test_fake_odom_goal_integration.py
+ws/src/drone_scanner/
+├── include/drone_scanner/
+│   └── PoseSegmentTrajectory.hpp
+├── src/
+│   ├── FakeOdomNode.cpp                       # line / goal 双模式
+│   └── PoseSegmentTrajectory.cpp
+├── test/
+│   ├── TestPoseSegmentTrajectory.cpp
+│   └── test_fake_odom_goal_integration.py
+├── CMakeLists.txt
+└── package.xml
 
-swarm_controller/
-  include/swarm_controller/KnownFreePathChecker.hpp
-  include/swarm_controller/ExplorationDiagnostics.hpp
-  include/swarm_controller/SingleDroneExplorer.hpp
-  include/swarm_controller/SingleDroneExplorerNode.hpp
-  src/KnownFreePathChecker.cpp
-  src/SingleDroneExplorer.cpp
-  src/SingleDroneExplorerNode.cpp
-  src/SingleDroneExplorerMain.cpp
-  launch/single_drone_exploration.launch.py
-  config/exploration.rviz
-  test/TestKnownFreePathChecker.cpp
-  test/TestSingleDroneExplorer.cpp
-  test/test_single_drone_exploration_integration.py
+ws/src/swarm_controller/
+├── include/swarm_controller/
+│   ├── ExplorationDiagnostics.hpp
+│   ├── KnownFreePathChecker.hpp
+│   ├── SingleDroneExplorer.hpp
+│   └── SingleDroneExplorerNode.hpp
+├── src/
+│   ├── KnownFreePathChecker.cpp
+│   ├── SingleDroneExplorer.cpp
+│   ├── SingleDroneExplorerMain.cpp
+│   └── SingleDroneExplorerNode.cpp
+├── launch/
+│   └── single_drone_exploration.launch.py
+├── config/
+│   └── exploration.rviz
+├── test/
+│   ├── TestKnownFreePathChecker.cpp
+│   ├── TestSingleDroneExplorer.cpp
+│   └── test_single_drone_exploration_integration.py
+├── CMakeLists.txt
+└── package.xml
 ```
 
 同步修改两个包的 CMake / `package.xml`；`drone_scanner` 不依赖
@@ -1160,7 +1183,7 @@ swarm_controller/
 
 - ❌ 多机任务调度 / frontier 互斥（3-7）
 - ❌ `/global_map` 融合（3-8）
-- ❌ 挂载 `single_drone_explorer`（多机探索闭环留给 3-7）
+- ❌ 挂载 `single_drone_explorer`（多机探索闭环使用 3-7 的独立入口）
 - ❌ 更强路径规划（3-9）；不改探索策略算法
 - ❌ 从 `ICaveField` 读拓扑分配航线或真值分区
 
@@ -1217,7 +1240,7 @@ swarm_controller/
    - 默认初值表示例：`drone_0→(0,0,1.5)`，`drone_1→(0,1.0,1.5)`，
      `drone_2→(0,-1.0,1.5)`，yaw 同向入口 +X
    - **悬停时 RViz Occupied 环几乎不长**：位姿/yaw 不变则反复扫同一批 voxel；
-     要看地图沿廊道增长请用 `motion.mode:=line`，或等 3-7 挂 explorer
+     要看地图沿廊道增长请用 `motion.mode:=line`，或运行 3-7 的多机探索入口
    - 多机默认 `enable_scan_accumulator:=false`（或 `max_cloud_map_points`≤2e4）
    - 可选 `config/swarm_sensing.rviz`：三机 odom/path/octomap；**默认不订 cloud_map**
 
@@ -1253,19 +1276,26 @@ swarm_controller/
 ### 文件清单
 
 ```text
-drone_scanner/
-  launch/drone_sensing_stack.launch.py       # 新建
-  launch/fake_lidar_launch.py                # 薄包装重构
+ws/src/drone_scanner/
+└── launch/
+    ├── drone_sensing_stack.launch.py         # 新建
+    └── fake_lidar_launch.py                  # 薄包装重构
 
-swarm_controller/
-  launch/multi_drone_sensing.launch.py       # 新建主入口
-  launch/single_drone_exploration.launch.py  # 改挂 sensing stack
-  config/swarm_sensing.rviz                  # 新建；默认无 cloud_map
-  test/test_multi_drone_sensing_integration.py
-  CMakeLists.txt / package.xml
+ws/src/swarm_controller/
+├── launch/
+│   ├── multi_drone_sensing.launch.py         # 新建主入口
+│   └── single_drone_exploration.launch.py    # 改挂 sensing stack
+├── config/
+│   └── swarm_sensing.rviz                    # 新建；默认无 cloud_map
+├── test/
+│   └── test_multi_drone_sensing_integration.py
+├── CMakeLists.txt
+└── package.xml
 
-docs/phases/phase-03-swarm.md                # 本方案
-docs/xenomorph-scanner-plan.md               # 实现后同步进度
+docs/
+├── phases/
+│   └── phase-03-swarm.md                     # 本方案
+└── xenomorph-scanner-plan.md                 # 实现后同步进度
 ```
 
 ### 实施顺序
@@ -1279,7 +1309,7 @@ docs/xenomorph-scanner-plan.md               # 实现后同步进度
 
 ### 与后续步
 
-- 3-7：在本 launch 上按机加 explorer + 调度；TF/namespace 契约不变
+- 3-7：在本 launch 上按机增加 explorer 与 peer 分散；TF/namespace 契约不变
 - 3-8：订各 `/drone_i/octomap` → `/global_map`；本步保证独立树 + 共享 `map`
 
 ### 验收
@@ -1302,17 +1332,343 @@ docs/xenomorph-scanner-plan.md               # 实现后同步进度
 
 ---
 
-## Step 3-7：多机任务调度
+## Step 3-7：多机探索分散（peer 启发式近似调度）
 
-### 设计
+### 当前局部探索契约
 
-- 在共享或全局 OctoMap 上生成探索任务并分配给空闲机
-- 约束：目标互斥、空间分散，避免长期挤同一未知 frontier
-- **不是**「drone0=外环、drone1=直连」式真值分区
+3-7 的首要目标是验证多机能够基于各自的观测地图并行向未知区域推进，
+而不是在单个倾斜环雷达下完成复杂的 frontier 路线规划。本步保留安全所需的
+OctoMap 语义、机体净空检查和 peer 分散，不承担全局分支分配或强路径规划：
+
+1. 入口前向半空间仅承担 no-retreat 硬过滤，不得覆盖候选评分使用的实际运动航向。
+2. Explorer 跨 tick 保存最近一段有效平移航向；纯 yaw rescan 不得改变该航向。
+3. 正常目标只从当前运动航向前方的短距离走廊生成，优先前向进度，限制横向偏移
+   与航向变化；不对所有 frontier 做大规模邻域展开。
+4. 对称空旷走廊中，连续目标不得因轻微 frontier/体素变化在左右两侧交替。
+5. 无安全前向目标时只允许有限 yaw 重扫并保持 Hold；普通无候选流程不保存回退位姿，
+   也不输出向后恢复目标。重扫后仍无目标时报告传感器受限/探索停滞状态。
+6. 本节不包含样条/圆弧轨迹、曲率约束、A*、拓扑图、多机岔道所有权、地图共享或
+   全局 frontier 分配。
+
+默认参数：
+
+| 参数 | 默认值 | 语义 |
+|---|---:|---|
+| `motion.travel_heading_update_distance` | `0.35 m` | 达到该平移量后更新实际运动航向 |
+| `frontier.forward_lookahead_min` | `0.8 m` | 前向局部目标的最小距离 |
+| `frontier.forward_lookahead_max` | `2.0 m` | 前向局部目标的最大距离 |
+| `frontier.forward_lateral_limit` | `0.5 m` | 前向走廊的横向采样边界 |
+| `frontier.forward_distance_samples` | `4` | 固定纵向采样层数 |
+| `frontier.forward_lateral_samples` | `5` | 固定横向采样数 |
+
+> **实现状态：** ✅ 已完成；固定规模前向采样、停滞 Hold、peer 分散与相关
+> gtest/launch test 均已通过。
+> **表述：** 本步是**分散启发式近似调度**，不是中央 task allocator，也不是全局 frontier 互斥。
+
+### 目标与边界
+
+**目标：** 在 3-6 多机感知栈上挂载 N 台 `SingleDroneExplorer`，使三机自主短段探索；
+用 map 系**同伴位姿软惩罚 + 有效同伴目标硬分离**降低挤同一局部 frontier；
+RViz 目检三机走向不同未观测区域。
+
+**明确不做：**
+
+- ❌ `/global_map` 融合与 `IMapMerger`（3-8）
+- ❌ 在共享/合并 OcTree 上做真正的全局 frontier 互斥（3-8 之后增强）
+- ❌ 真值分区航线（drone0=外环等）
+- ❌ 更强多路点规划（3-9）
+- ❌ 普通探索的安全位姿记录、向后恢复目标或以回退换取地图增量
+- ❌ 随 frontier 数量增长的候选邻域展开和展开预算
+- ❌ 机体级多机动态避碰、路径预约和时空冲突消解
+- ❌ 跨机使用本机 `OcTreeKey` / `cluster_id` 作互斥键
+- ❌ 新增 `ITaskAllocator` / `SwarmPeerStateNode`（YAGNI）
+
+**依赖：** 3-1～3-6；共享 `map` + 每机独立 OctoMap + 前缀 TF。
+
+### 风险
+
+| 风险 | 缓解 |
+|------|------|
+| 无全局图，只能近似互斥 | 本机选目标 + peer 分散；真互斥留 3-8 |
+| 硬过滤半径 > 初始 Y 间距 → 入口饿死候选 | 硬过滤**只对有效 peer goals**；默认 `min_peer_goal_separation=0.8`（≤ Y=0/±1 间距） |
+| Hold/Rescan 伪目标当探索目标 | goal 与 peer 位姿 XY 距 ≤ 阈值则不入 `active_peer_goals` |
+| peer 或其 explorer 退出后留下永久约束 | `PeerStateTracker` 分别对 position/goal 使用 steady 接收时间和超时 |
+| 全候选被 peer goal 排除后无意义 yaw 重扫 | 返回 `PeerGoalConflict`，进入 `WaitingForPeer` Hold 等待 |
+| peer odom 当 map 坐标 | 一律 TF/校验到 `map_frame` |
+| peer 目标分离被误认为动态避碰 | 当前只约束目标点：peer position 仅软惩罚，不检查机体硬距离、路径相交或时间占用 |
+| 单倾斜环无法证明前方完整 3D known-free | 有限 yaw 重扫后 Hold 并报告停滞；不把 unknown 当 free，不输出向后恢复目标 |
+| 3× frontier CPU | 使用固定规模前向走廊采样，不执行全量 frontier 邻域展开 |
+| 自惩罚 | `peer_namespaces` 排除本机 |
+
+### 架构
+
+```text
+multi_drone_sensing (3-6)
+  + N × SingleDroneExplorerNode
+        订本机 odom/octomap + peer odom/motion_goal
+        │
+        PeerStateTracker（position/goal 独立时效 + Hold 门控）
+        │
+        ExplorerInput.peer_positions / active_peer_goals  (map 系)
+        │
+        SingleDroneExplorer::selectAndCommand → GoalSelectionRequest
+        │
+        FrontierExplorationStrategy
+          固定规模：前视距离 × 横向偏移
+          安全检查：目标机体包络 + 当前位姿到目标的直线 known-free
+          硬过滤：仅有效 peer goals（XY）
+          软惩罚：peer positions（及有效 goals）XY 核
+        │
+        PeerGoalConflict → WaitingForPeer（不做 yaw rescan）
+        NoSafeCandidate → 有限 yaw rescan → ExplorationStalled Hold
+```
+
+### 简化局部规划契约
+
+本步继续使用 OctoMap，但只将其作为自由/占用/未知状态与安全路径判定的数据源。
+局部目标生成只采用固定规模的前向走廊采样，不从所有 frontier face 向周围 free voxel
+展开额外候选：
+
+1. 以最近有效平移航向建立局部前向坐标系。
+2. 在 `[forward_lookahead_min, forward_lookahead_max]` 内取固定数量的纵向距离，并在
+   `[-forward_lateral_limit, +forward_lateral_limit]` 内取固定数量的横向 offset。
+3. 候选高度保持当前飞行高度；候选点机体包络和当前位置到候选点的直线路径必须全部
+   为 known-free。
+4. 对通过安全检查的候选按“前向进度优先、横向偏移与航向变化次之、peer 分散修正”
+   做稳定排序。frontier/邻近 unknown 只可作为小幅探索收益，不得触发额外候选展开。
+5. 有效 peer goal 继续承担硬分离；peer position 与有效 goal 继续分别贡献软惩罚。
+6. 本地没有安全前向目标时，不允许选择位于当前位置后方的普通目标，也不允许通过
+   回退获取地图增量。
+
+固定规模采样必须保证单次选择计算量由配置的距离层数与横向 offset 数量直接限定，
+候选数量不得随 frontier 数量增长。
+
+### 多机重叠与动态避碰边界
+
+3-7 当前实现的是探索目标分散，不是完整的多机运动避碰：
+
+- peer 当前位姿只贡献软惩罚，不构成候选硬排斥；候选较少时仍可能靠近 peer 当前位置。
+- 硬分离只检查本机候选目标与 peer active goal 的 XY 距离，不检查运动中的机体间距。
+- 不检查本机直线路径到 peer 当前位置的最小距离。
+- 不检查本机路径与 peer 当前执行路径的线段相交、最近距离或时间重叠。
+- 不提供通道预约、优先级让行或相互等待的死锁消解。
+
+当前通过错开初始 XY、peer position 软惩罚和 active goal 硬分离降低重叠概率，但不形成
+物理防碰撞保证。后续动态避碰必须作为独立安全层设计，不能仅依赖 3-8 分支任务分配；
+任务分配决定“谁去哪里”，动态避碰决定“途中如何保持机体安全距离”。
+
+### 无候选行为
+
+```text
+NoSafeCandidate
+  → Hold
+  → 有限 yaw rescan（等待新 OctoMap observation）
+  → 重新执行固定规模前向采样
+  → 仍无安全目标：ExplorationStalled / SensorLimited，继续 Hold
+```
+
+- `StartBodyConflict` 属于本体安全异常，进入 `RecoveringClearance` 并原地 Hold；
+  机体净空恢复后重选，超过恢复时限则显式失败。
+- `PeerGoalConflict` 继续进入 `WaitingForPeer`，等待 peer goal/地图变化或 retry interval。
+- 普通 `NoSafeCandidate` 不得转成向后移动命令。
+- 后续 3-8/3-9 可在全局地图和更完整 3D 观测到位后新增分支分配、拓扑规划和显式
+  recovery planner；不得把这些能力继续堆入 3-7 默认局部策略。
+
+### 接口与算法（ROS-free）
+
+**`ExplorerInput` / `GoalSelectionRequest` 增加：**
+
+- `std::vector<Point3f> peer_positions`
+- `std::vector<Point3f> active_peer_goals`
+
+**`FrontierExplorationConfig` 增加：**
+
+| 参数 | 默认 | 含义 |
+|------|------|------|
+| `dispersion_weight` | `0.35` | 软惩罚权重；`utility -= w * Σ soft(d_i)` |
+| `min_peer_goal_separation` | `0.8` | 仅对有效 peer **goals** 硬过滤（米，XY） |
+
+- 距离一律 **XY**（忽略 Z）
+- 软核写死：`soft(d) = 1 / (1 + d)`
+- 硬过滤优先于评分；`peer_positions` **不做**硬丢弃
+- `validateConfig`：权重/半径 ≥ 0 且 finite
+- peer 列表空 → 与 3-4/3-5 行为一致
+- active peer 的 position 与 goal 各贡献一次软核：分别避开当前位置与去向，不去重
+
+**有效 peer goal：** 与该 peer 当前位姿 XY 距离 > `position_tolerance`（默认 0.2 m）才计入；
+否则该 peer 只贡献 `peer_positions` 软惩罚。
+
+**`PeerStateTracker`（ROS-free 具体类）：**
+
+| 参数 | 默认 | 约束 / 语义 |
+|------|------|-------------|
+| `peer.position_timeout` | `2.0 s` | `>0`；过期后 position 与 goal 均退出分散计算 |
+| `peer.goal_timeout` | `25.0 s` | `>= motion.timeout`；仅 goal 过期时保留 position 软惩罚 |
+| `peer.retry_interval` | `1.0 s` | `>0`；无 peer/map 事件时也定期重选，避免永久等待 |
+
+时效使用本机 `steady_clock` 接收时间；tick 重复处理同一原始消息不得刷新 TTL。
+
+### 节点接线
+
+- **只扩展** `SingleDroneExplorerNode`：参数 `peer_namespaces`（排除自身）；
+  订阅 peer `odom` + `motion_goal`（transient_local）；回调锁存最新原始消息，control tick
+  以零等待 static TF 变换/校验到 `map`
+- 库内从 `ExplorerInput` 拷贝 peer 字段进 request；**禁止**独立 SwarmPeer 节点
+- 多机帧沿用 3-6：`drone_i/odom|base_link|lidar_link`
+- 发布标准 `diagnostic_msgs/DiagnosticArray`：peer freshness、active goals、过滤计数、TF 状态与失败原因
+
+### Launch / RViz
+
+新建 `multi_drone_exploration.launch.py`：
+
+- 复用 3-6 sensing（goal 悬停初值 + 持续扫描，Y=0/±1）
+- 循环启动 explorer，按机注入 peer 列表
+- 可选小初始 yaw 偏置（如 ±15°）缓解同向拥堵（非真值扇区）
+- `swarm_exploration.rviz`：三机 path/odom/octomap/markers（可基于 sensing rviz 扩展）
+
+### 运行与目检
+
+```bash
+ros2 launch swarm_controller multi_drone_exploration.launch.py
+```
+
+仅运行 3-6 感知栈时继续使用 `multi_drone_sensing.launch.py`，该入口不挂载 explorer。
+
+### 测试
+
+**gtest（算法权威层）：**
+
+- 单 / 多 active goal 硬分离、position 软偏向、双软核与空 peer 回归
+- `PeerStateTracker` position/goal 独立过期、Hold、边界、恢复与倒序消息
+- `PeerGoalConflict` 分类；`WaitingForPeer` 不 yaw 重扫并按 goal/地图变化或定时重试恢复
+- `StartBodyConflict` 区分 unknown/occupied；occupied 进入 `RecoveringClearance`
+- 本体冲突期间保持 Hold，净空恢复后重选；覆盖恢复超时与规划快照重验证
+- 固定前视距离 × 横向偏移的候选数量严格有界，不随 frontier face 数量增长
+- 一轮有限 yaw 主动感知后仍无安全候选时进入 `ExplorationStalled` / `SensorLimited` Hold，
+  新地图到达后可重试，但不得发布向后恢复目标
+- 前向进度、横向偏移和航向变化的稳定排序抑制短 hop 左右交替；全局分支分配和
+  路径优化仍留给后续步骤
+- 可选 `enable_truth_audit:=true` 启动只读真值审计，发布 `/truth_collision_audit`；
+  该诊断不进入 explorer 输入，不破坏零真值依赖
+
+**launch_testing（`show_rviz:=false`）：**
+
+- 每机收到 `octomap` + ≥1 条 `motion_goal`
+- 每台 explorer 通过标准诊断看到两个 fresh peers
+- 每台 explorer 报告有效的共享垂直净空契约（当前 configured=0.41、required=0.40）
+- 受控单 peer 测试验证延迟 static TF 自愈、position/goal 独立过期及 Hold 门控
+- 不测覆盖率数值；不测跨机 cluster_id
+
+launch 测试只证明 ROS 接线和运行稳定性；分散算法性质由确定性 gtest 证明。
+
+**目检：** 三机 path 分离，不长期挤成一点。
+
+### 文件清单
+
+```text
+ws/src/swarm_controller/
+├── include/swarm_controller/
+│   ├── ExplorationDiagnostics.hpp
+│   ├── FrontierExplorationStrategy.hpp
+│   ├── IExplorationStrategy.hpp              # request 扩展
+│   ├── PeerStateTracker.hpp
+│   ├── PlanningSnapshotGuard.hpp
+│   ├── SingleDroneExplorer.hpp               # ExplorerInput 扩展
+│   └── SingleDroneExplorerNode.hpp
+├── src/
+│   ├── FrontierExplorationStrategy.cpp
+│   ├── PeerStateTracker.cpp
+│   ├── PlanningSnapshotGuard.cpp
+│   ├── SingleDroneExplorer.cpp               # request 组装
+│   └── SingleDroneExplorerNode.cpp
+├── launch/
+│   └── multi_drone_exploration.launch.py
+├── config/
+│   └── swarm_exploration.rviz
+├── test/
+│   ├── TestFrontierExplorationStrategy.cpp
+│   ├── TestPeerStateTracker.cpp
+│   ├── TestPlanningSnapshotGuard.cpp
+│   ├── TestSingleDroneExplorer.cpp
+│   ├── test_multi_drone_exploration_integration.py
+│   └── test_single_peer_wiring_integration.py
+├── CMakeLists.txt
+└── package.xml
+
+docs/
+├── phases/
+│   └── phase-03-swarm.md
+└── xenomorph-scanner-plan.md
+```
+
+### 实施顺序
+
+1. ExplorerInput/request/config + 策略分散 + gtest
+2. Node peer 订阅（空列表回归）
+3. multi_drone_exploration launch + rviz
+4. peer 时效、冲突等待、诊断与分层测试修复
+5. launch_testing + 目检
+6. 文档同步 → 代码复核 → 用户验收 → 提交
+
+### 与 3-8
+
+3-8 提供 `/global_map` 后，可将互斥升级为合并图上的 frontier 分配；本步只预留 peer 列表，**不**实现 merger。
 
 ### 验收
 
-- 三机走向不同未观测区域；全局覆盖优于单机同时长
+- 三机探索 launch 启动；每机 explorer + motion_goal + 本机 octomap
+- 每机 peer 数据接线、时效与诊断状态正确
+- 多 peer goal 下的确定性分散 gtest 通过
+- 固定规模前向采样的候选数量有界，不随 frontier 数量增长
+- 普通无候选流程不保存回退位姿或发布向后恢复目标；有限 yaw 重扫后进入 `ExplorationStalled` Hold
+- RViz 三机走向不同区域（目检）
+- 零真值依赖；无 `/global_map` 要求
+- 本步只验收探索目标分散，不把 peer 启发式视为机体级动态避碰保证
+
+### 方案评审记录
+
+- **模型：** Grok 4.5 high fast（`grok-4.5-fast-xhigh`）
+- **结论：** 有条件通过；M1–M8（硬过滤只对 goals、ExplorerInput 注入、禁 SwarmPeer 节点、
+  map 系 TF、伪目标过滤、XY 软核、命名/自排除、加强 launch 断言、明确 peer 启发式边界）
+  均已纳入当前契约
+
+### 实现与验证结果
+
+下表记录当前 3-7 契约的实际实现结果。
+
+| 项 | 结果 |
+|----|------|
+| 策略 peer 软/硬分散 | ✅ `dispersion_weight` / `min_peer_goal_separation` |
+| Node `peer_namespaces` | ✅ 订 peer odom + motion_goal → map 系 |
+| Launch | ✅ `multi_drone_exploration.launch.py` + `swarm_exploration.rviz` |
+| gtest | ✅ 空 peer 回归 / 硬分离 / 软偏向 |
+| peer 生命周期 | ✅ position/goal 独立超时 + Hold 门控 |
+| 冲突状态 | ✅ `PeerGoalConflict` → `WaitingForPeer` |
+| 本体净空恢复 | ✅ `StartBodyConflict` → `RecoveringClearance` 原地 Hold；恢复后重选，超时失败 |
+| 规划并发保护 | ✅ 双线程接收 + 快照重验证/丢弃旧命令；固定采样数量提供计算上界 |
+| 候选生成 | ✅ 固定前视距离 × 横向偏移采样；候选数量不随 frontier 数量增长 |
+| 普通无候选行为 | ✅ 不保存回退位姿或发布向后恢复目标 |
+| 无候选终局 | ✅ 有限 yaw rescan 后 `ExplorationStalled` / `SensorLimited` Hold |
+| 前向局部目标 | ✅ 固定规模前向走廊采样，前向进度优先 |
+| 跨包净空契约 | ✅ launch 自动计算并拒绝低于规划包络的高度净空 |
+| 诊断 | ✅ `exploration_diagnostics` + RViz peer/filter 统计 |
+| launch_testing | ✅ 每机 octomap+goal+2 fresh peers；受控 peer 时效/TF 测试 |
+| `/global_map` | ❌ 仍留给 3-8 |
+
+**自动验收（2026-07-14）：** `swarm_controller` 构建通过；7 个 gtest +
+6 个 launch test 共 13/13 通过。固定采样策略 11 项、Explorer 状态机 23 项均通过。
+包级测试结果为 78 tests、0 errors、0 failures。
+
+**无 RViz 三机烟测（49.6 s）：** 0/1/2 号最终 `x` 分别约为
+`7.93 / 6.29 / 6.33 m`，各机实际回退均为 `0.00 m`。真值审计三机均为 `Clear`，
+`collision_frame_count=0`。
+
+### 代码审核记录
+
+- **审核模型：** Grok 4.5 high fast（`grok-4.5-fast-xhigh`）
+- **审核结论：** 无 >80% 高置信正确性缺陷
+- **落实状态：** 集成测试职责、peer 时效、冲突状态和可观测性均已纳入实现，
+  自动测试全部通过
 
 ---
 
@@ -1398,7 +1754,7 @@ ros2 launch swarm_controller swarm.launch.xml num_drones:=3
 [x] 3-4  IExplorationStrategy
 [x] 3-5  单机闭环 + 最小避障          ← M1
 [x] 3-6  多机 launch
-[ ] 3-7  多机任务调度
+[x] 3-7  多机探索分散
 [ ] 3-8  /global_map                   ← M2
 [ ] 3-9  更强路径规划（按需）
 [ ] 3-10 一键验收 + 文档

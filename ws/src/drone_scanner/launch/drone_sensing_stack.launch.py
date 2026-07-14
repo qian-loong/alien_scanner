@@ -115,7 +115,7 @@ def generate_launch_description():
         DeclareLaunchArgument('ring_pitch_rad', default_value='0.35'),
         DeclareLaunchArgument('altitude_adapt.enable', default_value='true'),
         DeclareLaunchArgument('altitude_adapt.target_fraction', default_value='0.5'),
-        DeclareLaunchArgument('altitude_adapt.min_clearance', default_value='0.35'),
+        DeclareLaunchArgument('altitude_adapt.min_clearance', default_value='0.41'),
         DeclareLaunchArgument('altitude_adapt.max_vertical_speed', default_value='0.6'),
         DeclareLaunchArgument('altitude_adapt.band_ema_alpha', default_value='0.25'),
         DeclareLaunchArgument('altitude_adapt.min_band_height', default_value='0.8'),

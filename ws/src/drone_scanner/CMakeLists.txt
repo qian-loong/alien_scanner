@@ -12,6 +12,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(cave_world REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -53,6 +54,18 @@ install(
         include/drone_scanner/PointCloudAccumulator.hpp
         DESTINATION include/drone_scanner
 )
+
+add_executable(truth_collision_audit
+        src/TruthCollisionAuditNode.cpp
+        src/CaveFieldFromParameters.cpp
+)
+target_include_directories(truth_collision_audit PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(truth_collision_audit cave_world::cave_geometry)
+ament_target_dependencies(truth_collision_audit cave_world rclcpp diagnostic_msgs nav_msgs)
+install(TARGETS truth_collision_audit DESTINATION lib/${PROJECT_NAME})
 install(
         TARGETS drone_accumulator
         ARCHIVE DESTINATION lib

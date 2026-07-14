@@ -106,6 +106,61 @@ namespace SwarmController {
                         .safe());
     }
 
+    TEST(KnownFreePathCheckerTest, ReportsSharedClearanceContract)
+    {
+        BodyEnvelopeConfig config;
+        config.robot_radius      = 0.25F;
+        config.safety_margin     = 0.20F;
+        config.robot_half_height = 0.15F;
+        config.vertical_margin   = 0.20F;
+        KnownFreePathChecker checker(config);
+
+        EXPECT_NEAR(
+                checker.requiredHorizontalClearance(0.1F),
+                0.45F + 0.1F * std::sqrt(0.5F), 1.0e-6F);
+        EXPECT_NEAR(checker.requiredVerticalClearance(0.1F), 0.40F, 1.0e-6F);
+    }
+
+    TEST(KnownFreePathCheckerTest, EgressAllowsBoundedInitialConflict)
+    {
+        octomap::OcTree tree = makeFreeVolume(0.1);
+        tree.updateNode(octomap::point3d(0.0F, 0.0F, 0.0F), true, true);
+        tree.updateInnerOccupancy();
+        KnownFreePathChecker checker;
+
+        EXPECT_EQ(
+                checker
+                        .checkEgressSegment(
+                                tree, Point3f {0.0F, 0.0F, 0.0F},
+                                Point3f {1.0F, 0.0F, 0.0F}, 0.8F)
+                        .status,
+                PathCheckStatus::Safe);
+        EXPECT_NE(
+                checker
+                        .checkEgressSegment(
+                                tree, Point3f {0.0F, 0.0F, 0.0F},
+                                Point3f {1.0F, 0.0F, 0.0F}, 0.2F)
+                        .status,
+                PathCheckStatus::Safe);
+    }
+
+    TEST(KnownFreePathCheckerTest, EgressRejectsConflictAfterBecomingSafe)
+    {
+        octomap::OcTree tree = makeFreeVolume(0.1);
+        tree.updateNode(octomap::point3d(0.0F, 0.0F, 0.0F), true, true);
+        tree.updateNode(octomap::point3d(0.9F, 0.0F, 0.0F), true, true);
+        tree.updateInnerOccupancy();
+        KnownFreePathChecker checker;
+
+        EXPECT_NE(
+                checker
+                        .checkEgressSegment(
+                                tree, Point3f {0.0F, 0.0F, 0.0F},
+                                Point3f {1.2F, 0.0F, 0.0F}, 0.8F)
+                        .status,
+                PathCheckStatus::Safe);
+    }
+
     TEST(KnownFreePathCheckerTest, RejectsInvalidConfigurationAndInput)
     {
         BodyEnvelopeConfig config;

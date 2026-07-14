@@ -1,479 +1,271 @@
 #include "swarm_controller/FrontierExplorationStrategy.hpp"
 
-#include <gtest/gtest.h>
-
-#include <algorithm>
-#include <array>
 #include <cmath>
-#include <cstddef>
+#include <cstdint>
 #include <limits>
-#include <stdexcept>
-#include <utility>
-#include <vector>
+
+#include <gtest/gtest.h>
 
 namespace SwarmController {
 
     namespace {
 
-        octomap::OcTreeKey offsetKey(
-                const octomap::OcTreeKey & base, const int dx, const int dy, const int dz)
-        {
-            return octomap::OcTreeKey {
-                    static_cast<octomap::key_type>(static_cast<int>(base[0]) + dx),
-                    static_cast<octomap::key_type>(static_cast<int>(base[1]) + dy),
-                    static_cast<octomap::key_type>(static_cast<int>(base[2]) + dz),
-            };
-        }
+        constexpr float HALF_PI = 1.57079632679F;
+        constexpr float PI      = 3.14159265359F;
 
-        Pose3D poseAtKey(const octomap::OcTree & tree, const octomap::OcTreeKey & key)
+        void fillFreeBox(
+                octomap::OcTree & tree, const Point3f & minimum, const Point3f & maximum)
         {
-            const octomap::point3d point = tree.keyToCoord(key);
-            return Pose3D {Point3f {point.x(), point.y(), point.z()}, 0.0F};
-        }
-
-        struct CellUpdate {
-            octomap::OcTreeKey key;
-            bool               occupied;
-        };
-
-        void populateOpenCorridorAt(
-                octomap::OcTree & tree, const octomap::OcTreeKey & base, const int length,
-                const int half_width, const int half_height, const bool reverse_order = false)
-        {
-            std::vector<CellUpdate> updates;
-            const int back_wall =
-                    -static_cast<int>(std::ceil(0.8 / tree.getResolution()));
-            for(int x = back_wall + 1; x <= length; ++x) {
-                for(int y = -half_width; y <= half_width; ++y) {
-                    for(int z = -half_height; z <= half_height; ++z) {
-                        updates.push_back(CellUpdate {offsetKey(base, x, y, z), false});
+            const octomap::OcTreeKey min_key = tree.coordToKey(
+                    minimum.x, minimum.y, minimum.z);
+            const octomap::OcTreeKey max_key = tree.coordToKey(
+                    maximum.x, maximum.y, maximum.z);
+            for(std::uint32_t x = min_key[0]; x <= max_key[0]; ++x) {
+                for(std::uint32_t y = min_key[1]; y <= max_key[1]; ++y) {
+                    for(std::uint32_t z = min_key[2]; z <= max_key[2]; ++z) {
+                        tree.updateNode(
+                                octomap::OcTreeKey {
+                                        static_cast<octomap::key_type>(x),
+                                        static_cast<octomap::key_type>(y),
+                                        static_cast<octomap::key_type>(z),
+                                },
+                                false, true);
                     }
                 }
             }
-
-            for(int y = -half_width; y <= half_width; ++y) {
-                for(int z = -half_height; z <= half_height; ++z) {
-                    updates.push_back(CellUpdate {offsetKey(base, back_wall, y, z), true});
-                }
-            }
-            for(int x = back_wall; x <= length; ++x) {
-                for(int z = -half_height; z <= half_height; ++z) {
-                    updates.push_back(
-                            CellUpdate {offsetKey(base, x, -half_width - 1, z), true});
-                    updates.push_back(
-                            CellUpdate {offsetKey(base, x, half_width + 1, z), true});
-                }
-                for(int y = -half_width; y <= half_width; ++y) {
-                    updates.push_back(
-                            CellUpdate {offsetKey(base, x, y, -half_height - 1), true});
-                    updates.push_back(
-                            CellUpdate {offsetKey(base, x, y, half_height + 1), true});
-                }
-            }
-
-            if(reverse_order) {
-                std::reverse(updates.begin(), updates.end());
-            }
-            for(const CellUpdate & update : updates) {
-                tree.updateNode(update.key, update.occupied, true);
-            }
             tree.updateInnerOccupancy();
         }
 
-        void populateOpenCorridor(
-                octomap::OcTree & tree, const int length, const int half_width,
-                const int half_height, const bool reverse_order = false)
+        FrontierExplorationConfig compactConfig()
         {
-            populateOpenCorridorAt(
-                    tree, tree.coordToKey(0.0, 0.0, 0.0), length, half_width, half_height,
-                    reverse_order);
+            FrontierExplorationConfig config;
+            config.forward_lookahead_min     = 1.0F;
+            config.forward_lookahead_max     = 2.0F;
+            config.forward_lateral_limit     = 1.0F;
+            config.forward_distance_samples = 2U;
+            config.forward_lateral_samples  = 3U;
+            config.robot_radius              = 0.05F;
+            config.robot_half_height         = 0.05F;
+            config.safety_margin             = 0.0F;
+            config.vertical_margin           = 0.0F;
+            config.lateral_weight            = 0.5F;
+            config.heading_weight            = 0.25F;
+            return config;
         }
 
-        void populateTwoEndedCorridor(
-                octomap::OcTree & tree, const int half_length, const int half_width,
-                const int half_height)
+        Pose3D originPose(float yaw = 0.0F)
         {
-            const auto base = tree.coordToKey(0.0, 0.0, 0.0);
-            for(int x = -half_length; x <= half_length; ++x) {
-                for(int y = -half_width; y <= half_width; ++y) {
-                    for(int z = -half_height; z <= half_height; ++z) {
-                        tree.updateNode(offsetKey(base, x, y, z), false, true);
-                    }
-                }
-                for(int z = -half_height; z <= half_height; ++z) {
-                    tree.updateNode(offsetKey(base, x, -half_width - 1, z), true, true);
-                    tree.updateNode(offsetKey(base, x, half_width + 1, z), true, true);
-                }
-                for(int y = -half_width; y <= half_width; ++y) {
-                    tree.updateNode(offsetKey(base, x, y, -half_height - 1), true, true);
-                    tree.updateNode(offsetKey(base, x, y, half_height + 1), true, true);
-                }
-            }
-            tree.updateInnerOccupancy();
-        }
-
-        void surroundFreeCell(
-                octomap::OcTree & tree, const octomap::OcTreeKey & center,
-                const bool leave_top_unknown)
-        {
-            tree.updateNode(center, false, true);
-            const std::array<std::array<int, 3>, 6> offsets {{
-                    {{-1, 0, 0}},
-                    {{1, 0, 0}},
-                    {{0, -1, 0}},
-                    {{0, 1, 0}},
-                    {{0, 0, -1}},
-                    {{0, 0, 1}},
-            }};
-            for(std::size_t i = 0; i < offsets.size(); ++i) {
-                if(leave_top_unknown && i == offsets.size() - 1U) {
-                    continue;
-                }
-                tree.updateNode(
-                        offsetKey(center, offsets[i][0], offsets[i][1], offsets[i][2]), true,
-                        true);
-            }
-            tree.updateInnerOccupancy();
-        }
-
-        bool keysEqual(const octomap::OcTreeKey & lhs, const octomap::OcTreeKey & rhs)
-        {
-            return lhs[0] == rhs[0] && lhs[1] == rhs[1] && lhs[2] == rhs[2];
+            Pose3D pose;
+            pose.yaw = yaw;
+            return pose;
         }
 
     }// namespace
 
-    TEST(FrontierExplorationStrategyTest, SelectsKnownFreeStandoffInsideOpenCorridor)
+    TEST(FrontierExplorationStrategyTest, SelectsFarthestStraightKnownFreeCandidate)
     {
-        octomap::OcTree tree(0.2);
-        populateOpenCorridor(tree, 15, 5, 3);
-        const octomap::OcTreeKey base = tree.coordToKey(0.0, 0.0, 0.0);
-        const Pose3D             pose = poseAtKey(tree, base);
+        octomap::OcTree tree(0.1);
+        fillFreeBox(tree, {-1.0F, -2.0F, -1.0F}, {3.0F, 2.0F, 1.0F});
 
-        const GoalSelectionResult result =
-                FrontierExplorationStrategy {}.selectGoal(GoalSelectionRequest {pose, {}}, tree);
+        FrontierExplorationStrategy strategy(compactConfig());
+        ExplorationDiagnostics diagnostics;
+        const GoalSelectionResult result = strategy.selectGoal(
+                GoalSelectionRequest {originPose(), {}}, tree, &diagnostics);
 
         ASSERT_EQ(result.status, GoalSelectionStatus::Success);
         ASSERT_TRUE(result.goal.has_value());
-        EXPECT_GT(result.goal->position.x, pose.position.x + 1.0F);
-        EXPECT_LT(result.goal->position.x, pose.position.x + 3.1F);
-        EXPECT_GE(result.goal->frontier_area, 0.2F);
-        const octomap::OcTreeNode * node = tree.search(octomap::point3d(
-                result.goal->position.x, result.goal->position.y, result.goal->position.z));
-        ASSERT_NE(node, nullptr);
-        EXPECT_FALSE(tree.isNodeOccupied(node));
+        EXPECT_NEAR(result.goal->position.x, 2.0F, 1e-5F);
+        EXPECT_NEAR(result.goal->position.y, 0.0F, 1e-5F);
+        EXPECT_LE(
+                diagnostics.pre_peer_candidate_count,
+                compactConfig().forward_distance_samples
+                        * compactConfig().forward_lateral_samples);
+        EXPECT_EQ(diagnostics.last_goal_status, "Success");
     }
 
-    TEST(FrontierExplorationStrategyTest, RejectedClusterIsNotReturnedAgain)
+    TEST(FrontierExplorationStrategyTest, UsesPreferredTravelYawInsteadOfPoseYaw)
     {
-        octomap::OcTree tree(0.2);
-        const auto base = tree.coordToKey(0.0, 0.0, 0.0);
-        populateTwoEndedCorridor(tree, 15, 5, 3);
-        const Pose3D pose = poseAtKey(tree, base);
-        FrontierExplorationStrategy strategy;
+        octomap::OcTree tree(0.1);
+        fillFreeBox(tree, {-2.0F, -1.0F, -1.0F}, {2.0F, 3.0F, 1.0F});
+        GoalSelectionRequest request {originPose(), {}};
+        request.preferred_travel_yaw = HALF_PI;
 
-        const GoalSelectionResult first =
-                strategy.selectGoal(GoalSelectionRequest {pose, {}}, tree);
-        ASSERT_EQ(first.status, GoalSelectionStatus::Success);
-        ASSERT_TRUE(first.goal.has_value());
-
-        const GoalSelectionResult rejected = strategy.selectGoal(
-                GoalSelectionRequest {pose, {first.goal->cluster_id}}, tree);
-        ASSERT_EQ(rejected.status, GoalSelectionStatus::Success);
-        ASSERT_TRUE(rejected.goal.has_value());
-        EXPECT_FALSE(keysEqual(first.goal->cluster_id, rejected.goal->cluster_id));
-        EXPECT_LT(
-                (first.goal->position.x - pose.position.x)
-                        * (rejected.goal->position.x - pose.position.x),
-                0.0F);
-    }
-
-    TEST(FrontierExplorationStrategyTest, ReportsEmptyAndClosedMapStates)
-    {
-        FrontierExplorationStrategy strategy;
-        octomap::OcTree             empty_tree(0.2);
-        const Pose3D                origin_pose {Point3f {0.0F, 0.0F, 0.0F}, 0.0F};
-        EXPECT_EQ(
-                strategy.selectGoal(GoalSelectionRequest {origin_pose, {}}, empty_tree).status,
-                GoalSelectionStatus::NoKnownFree);
-
-        octomap::OcTree closed_tree(0.2);
-        const auto      center = closed_tree.coordToKey(0.0, 0.0, 0.0);
-        surroundFreeCell(closed_tree, center, false);
-        EXPECT_EQ(
-                strategy
-                        .selectGoal(
-                                GoalSelectionRequest {poseAtKey(closed_tree, center), {}},
-                                closed_tree)
-                        .status,
-                GoalSelectionStatus::NoFrontier);
-    }
-
-    TEST(FrontierExplorationStrategyTest, FiltersVerticalOnlyFrontier)
-    {
-        octomap::OcTree tree(0.2);
-        const auto      base = tree.coordToKey(0.0, 0.0, 0.0);
-        for(int x = -3; x <= 3; ++x) {
-            for(int y = -3; y <= 3; ++y) {
-                for(int z = 0; z <= 10; ++z) {
-                    tree.updateNode(offsetKey(base, x, y, z), false, true);
-                }
-                tree.updateNode(offsetKey(base, x, y, -1), true, true);
-            }
-        }
-        for(int z = 0; z <= 10; ++z) {
-            for(int axis = -3; axis <= 3; ++axis) {
-                tree.updateNode(offsetKey(base, -4, axis, z), true, true);
-                tree.updateNode(offsetKey(base, 4, axis, z), true, true);
-                tree.updateNode(offsetKey(base, axis, -4, z), true, true);
-                tree.updateNode(offsetKey(base, axis, 4, z), true, true);
-            }
-        }
-        tree.updateInnerOccupancy();
-
-        const GoalSelectionResult result = FrontierExplorationStrategy {}.selectGoal(
-                GoalSelectionRequest {poseAtKey(tree, offsetKey(base, 0, 0, 3)), {}}, tree);
-
-        EXPECT_EQ(result.status, GoalSelectionStatus::NoSafeCandidate);
-        EXPECT_FALSE(result.goal.has_value());
-
-        FrontierExplorationConfig vertical_config;
-        vertical_config.max_abs_frontier_normal_z = 1.0F;
-        EXPECT_EQ(
-                FrontierExplorationStrategy {vertical_config}
-                        .selectGoal(
-                                GoalSelectionRequest {
-                                        poseAtKey(tree, offsetKey(base, 0, 0, 3)), {}},
-                                tree)
-                        .status,
-                GoalSelectionStatus::Success);
-    }
-
-    TEST(FrontierExplorationStrategyTest, TreatsUnknownInsideBodyEnvelopeAsUnsafe)
-    {
-        octomap::OcTree tree(0.2);
-        const auto      center = tree.coordToKey(0.0, 0.0, 0.0);
-        for(int x = 0; x <= 15; ++x) {
-            tree.updateNode(offsetKey(center, x, 0, 0), false, true);
-        }
-        tree.updateInnerOccupancy();
-
-        const GoalSelectionResult result = FrontierExplorationStrategy {}.selectGoal(
-                GoalSelectionRequest {poseAtKey(tree, center), {}}, tree);
-
-        EXPECT_EQ(result.status, GoalSelectionStatus::NoSafeCandidate);
-    }
-
-    TEST(FrontierExplorationStrategyTest, FiltersFrontierBelowPhysicalAreaThreshold)
-    {
-        octomap::OcTree tree(0.2);
-        const auto      base = tree.coordToKey(0.0, 0.0, 0.0);
-        populateOpenCorridorAt(tree, base, 15, 5, 3);
-        for(int y = -5; y <= 5; ++y) {
-            for(int z = -3; z <= 3; ++z) {
-                if(y != 0 || z != 0) {
-                    tree.updateNode(offsetKey(base, 15, y, z), true, true);
-                }
-            }
-        }
-        tree.updateInnerOccupancy();
-
-        FrontierExplorationConfig filtered_config;
-        filtered_config.goal_standoff = 0.8F;
         const GoalSelectionResult result =
-                FrontierExplorationStrategy {filtered_config}.selectGoal(
-                        GoalSelectionRequest {poseAtKey(tree, base), {}}, tree);
-
-        EXPECT_EQ(result.status, GoalSelectionStatus::NoSafeCandidate);
-
-        FrontierExplorationConfig permissive_config = filtered_config;
-        permissive_config.min_cluster_area           = 0.01F;
-        EXPECT_EQ(
-                FrontierExplorationStrategy {permissive_config}
-                        .selectGoal(GoalSelectionRequest {poseAtKey(tree, base), {}}, tree)
-                        .status,
-                GoalSelectionStatus::Success);
-    }
-
-    TEST(FrontierExplorationStrategyTest, DoesNotReturnFrontierInsideMinimumGoalDistance)
-    {
-        octomap::OcTree tree(0.2);
-        populateOpenCorridor(tree, 2, 5, 3);
-        const auto center = tree.coordToKey(0.0, 0.0, 0.0);
-
-        const GoalSelectionResult result = FrontierExplorationStrategy {}.selectGoal(
-                GoalSelectionRequest {poseAtKey(tree, center), {}}, tree);
-
-        EXPECT_EQ(result.status, GoalSelectionStatus::NoSafeCandidate);
-    }
-
-    TEST(FrontierExplorationStrategyTest, UsesIndividualFacesWhenClusterNormalsCancel)
-    {
-        octomap::OcTree tree(0.2);
-        const auto      base = tree.coordToKey(0.0, 0.0, 0.0);
-        for(int x = -10; x <= 10; ++x) {
-            for(int y = -5; y <= 5; ++y) {
-                for(int z = -3; z <= 3; ++z) {
-                    tree.updateNode(offsetKey(base, x, y, z), false, true);
-                }
-            }
-        }
-        for(int x = -10; x <= 10; ++x) {
-            for(int z = -3; z <= 3; ++z) {
-                tree.updateNode(offsetKey(base, x, -6, z), true, true);
-            }
-            for(int y = -5; y <= 5; ++y) {
-                tree.updateNode(offsetKey(base, x, y, -4), true, true);
-                tree.updateNode(offsetKey(base, x, y, 4), true, true);
-            }
-        }
-        tree.updateInnerOccupancy();
-
-        const GoalSelectionResult result = FrontierExplorationStrategy {}.selectGoal(
-                GoalSelectionRequest {poseAtKey(tree, base), {}}, tree);
+                FrontierExplorationStrategy(compactConfig()).selectGoal(request, tree);
 
         ASSERT_EQ(result.status, GoalSelectionStatus::Success);
         ASSERT_TRUE(result.goal.has_value());
-        EXPECT_GT(result.goal->position.x, 0.8F);
+        EXPECT_NEAR(result.goal->position.x, 0.0F, 1e-5F);
+        EXPECT_NEAR(result.goal->position.y, 2.0F, 1e-5F);
     }
 
-    TEST(FrontierExplorationStrategyTest, DeduplicatesFixedAltitudeCandidatesByEffectiveKey)
+    TEST(FrontierExplorationStrategyTest, UsesReachableLateralCandidateWhenCenterPathIsBlocked)
     {
-        octomap::OcTree tree(0.2);
-        populateOpenCorridor(tree, 15, 5, 3);
-        const Pose3D pose = poseAtKey(tree, tree.coordToKey(0.0, 0.0, 0.0));
-        GoalSelectionRequest request {pose, {}};
-        request.fixed_altitude = FixedAltitudeConstraint {pose.position.z};
+        octomap::OcTree tree(0.1);
+        fillFreeBox(tree, {-1.0F, -2.0F, -1.0F}, {3.0F, 2.0F, 1.0F});
+        tree.updateNode(octomap::point3d(1.5F, 0.0F, 0.0F), true, true);
+        tree.updateInnerOccupancy();
+
+        FrontierExplorationStrategy strategy(compactConfig());
+        ExplorationDiagnostics diagnostics;
+        const GoalSelectionResult result = strategy.selectGoal(
+                GoalSelectionRequest {originPose(), {}}, tree, &diagnostics);
+
+        ASSERT_EQ(result.status, GoalSelectionStatus::Success);
+        ASSERT_TRUE(result.goal.has_value());
+        EXPECT_GT(std::fabs(result.goal->position.y), 0.5F);
+        EXPECT_GT(diagnostics.segment_check_count, 0U);
+    }
+
+    TEST(FrontierExplorationStrategyTest, ReportsStartBodyConflictForUnknownOrOccupiedBody)
+    {
+        FrontierExplorationStrategy strategy(compactConfig());
+        octomap::OcTree unknown_tree(0.1);
+        unknown_tree.updateNode(octomap::point3d(2.0F, 0.0F, 0.0F), false, true);
+        unknown_tree.updateInnerOccupancy();
+        EXPECT_EQ(
+                strategy.selectGoal(GoalSelectionRequest {originPose(), {}}, unknown_tree).status,
+                GoalSelectionStatus::StartBodyConflict);
+
+        octomap::OcTree occupied_tree(0.1);
+        fillFreeBox(occupied_tree, {-1.0F, -1.0F, -1.0F}, {2.0F, 1.0F, 1.0F});
+        occupied_tree.updateNode(octomap::point3d(0.0F, 0.0F, 0.0F), true, true);
+        occupied_tree.updateInnerOccupancy();
+        EXPECT_EQ(
+                strategy.selectGoal(GoalSelectionRequest {originPose(), {}}, occupied_tree).status,
+                GoalSelectionStatus::StartBodyConflict);
+    }
+
+    TEST(FrontierExplorationStrategyTest, FixedSampleCountBoundsAllCandidateWork)
+    {
+        octomap::OcTree tree(0.1);
+        fillFreeBox(tree, {-1.0F, -2.0F, -1.0F}, {3.0F, 2.0F, 1.0F});
+        FrontierExplorationConfig config = compactConfig();
+        config.forward_distance_samples = 3U;
+        config.forward_lateral_samples  = 5U;
+        ExplorationDiagnostics diagnostics;
+
+        FrontierExplorationStrategy(config).selectGoal(
+                GoalSelectionRequest {originPose(), {}}, tree, &diagnostics);
+
+        const std::size_t maximum = config.forward_distance_samples
+                                    * config.forward_lateral_samples;
+        EXPECT_LE(diagnostics.pre_peer_candidate_count, maximum);
+        EXPECT_LE(diagnostics.post_peer_candidate_count, maximum);
+        EXPECT_LE(diagnostics.raw_candidate_count, maximum);
+        EXPECT_LE(diagnostics.unique_candidate_count, maximum);
+        EXPECT_LE(diagnostics.segment_check_count, maximum);
+    }
+
+    TEST(FrontierExplorationStrategyTest, ForwardHalfSpaceNeverReturnsBackwardGoal)
+    {
+        octomap::OcTree tree(0.1);
+        fillFreeBox(tree, {-3.0F, -2.0F, -1.0F}, {3.0F, 2.0F, 1.0F});
+        GoalSelectionRequest request {originPose(PI), {}};
+        request.preferred_travel_yaw = PI;
+        request.forward_half_space = ForwardHalfSpaceConstraint {
+                {0.0F, 0.0F, 0.0F},
+                0.0F,
+                0.0F,
+        };
+
+        const GoalSelectionResult result =
+                FrontierExplorationStrategy(compactConfig()).selectGoal(request, tree);
+
+        EXPECT_EQ(result.status, GoalSelectionStatus::NoSafeCandidate);
+    }
+
+    TEST(FrontierExplorationStrategyTest, PeerGoalHardSeparationSelectsUnclaimedOffset)
+    {
+        octomap::OcTree tree(0.1);
+        fillFreeBox(tree, {-1.0F, -2.0F, -1.0F}, {3.0F, 2.0F, 1.0F});
+        FrontierExplorationConfig config = compactConfig();
+        config.min_peer_goal_separation = 0.6F;
+        GoalSelectionRequest request {originPose(), {}};
+        request.active_peer_goals = {{2.0F, 0.0F, 0.0F}};
+
+        const GoalSelectionResult result =
+                FrontierExplorationStrategy(config).selectGoal(request, tree);
+
+        ASSERT_EQ(result.status, GoalSelectionStatus::Success);
+        ASSERT_TRUE(result.goal.has_value());
+        EXPECT_GT(std::fabs(result.goal->position.y), 0.5F);
+    }
+
+    TEST(FrontierExplorationStrategyTest, ReportsPeerConflictWhenAllSamplesAreClaimed)
+    {
+        octomap::OcTree tree(0.1);
+        fillFreeBox(tree, {-1.0F, -2.0F, -1.0F}, {3.0F, 2.0F, 1.0F});
+        FrontierExplorationConfig config = compactConfig();
+        config.min_peer_goal_separation = 10.0F;
+        GoalSelectionRequest request {originPose(), {}};
+        request.active_peer_goals = {{2.0F, 0.0F, 0.0F}};
         ExplorationDiagnostics diagnostics;
 
         const GoalSelectionResult result =
-                FrontierExplorationStrategy {}.selectGoal(request, tree, &diagnostics);
+                FrontierExplorationStrategy(config).selectGoal(request, tree, &diagnostics);
 
-        ASSERT_EQ(result.status, GoalSelectionStatus::Success);
-        EXPECT_GT(diagnostics.raw_candidate_count, diagnostics.unique_candidate_count);
+        EXPECT_EQ(result.status, GoalSelectionStatus::PeerGoalConflict);
+        EXPECT_GT(diagnostics.pre_peer_candidate_count, 0U);
+        EXPECT_EQ(diagnostics.post_peer_candidate_count, 0U);
         EXPECT_EQ(
-                diagnostics.locally_safe_candidates.size(),
-                std::min(
-                        diagnostics.unique_candidate_count,
-                        diagnostics.max_debug_candidates));
+                FrontierExplorationStrategy(config).selectGoal(request, tree).status,
+                GoalSelectionStatus::PeerGoalConflict);
     }
 
-    TEST(FrontierExplorationStrategyTest, UsesReachableFallbackAfterTopCandidatesAreBlocked)
+    TEST(FrontierExplorationStrategyTest, SoftPeerPositionBiasesAwayFromPeer)
     {
-        octomap::OcTree tree(0.2);
-        populateTwoEndedCorridor(tree, 15, 5, 3);
-        const auto base = tree.coordToKey(0.0, 0.0, 0.0);
-        for(int y = -5; y <= 5; ++y) {
-            for(int z = -3; z <= 3; ++z) {
-                tree.updateNode(offsetKey(base, 4, y, z), true, true);
-            }
-        }
-        tree.updateInnerOccupancy();
-
-        const Pose3D pose = poseAtKey(tree, base);
-        GoalSelectionRequest request {pose, {}};
-        request.fixed_altitude = FixedAltitudeConstraint {pose.position.z};
-        ExplorationDiagnostics diagnostics;
+        octomap::OcTree tree(0.1);
+        fillFreeBox(tree, {-1.0F, -2.0F, -1.0F}, {3.0F, 2.0F, 1.0F});
+        FrontierExplorationConfig config = compactConfig();
+        config.lateral_weight    = 0.0F;
+        config.heading_weight    = 0.0F;
+        config.dispersion_weight = 5.0F;
+        GoalSelectionRequest request {originPose(), {}};
+        request.peer_positions = {{2.0F, -1.0F, 0.0F}};
 
         const GoalSelectionResult result =
-                FrontierExplorationStrategy {}.selectGoal(request, tree, &diagnostics);
+                FrontierExplorationStrategy(config).selectGoal(request, tree);
 
         ASSERT_EQ(result.status, GoalSelectionStatus::Success);
         ASSERT_TRUE(result.goal.has_value());
-        EXPECT_LT(result.goal->position.x, pose.position.x - 0.8F);
-        EXPECT_GT(diagnostics.segment_check_count, 1U);
-        EXPECT_EQ(diagnostics.path_status, "Safe");
+        EXPECT_GT(result.goal->position.y, 0.5F);
     }
 
-    TEST(FrontierExplorationStrategyTest, ForwardHalfSpaceSelectsOnlyDeploymentDirection)
+    TEST(FrontierExplorationStrategyTest, ActivePositionAndGoalEachAddSoftPenalty)
     {
-        octomap::OcTree tree(0.2);
-        populateTwoEndedCorridor(tree, 15, 5, 3);
-        const Pose3D pose = poseAtKey(tree, tree.coordToKey(0.0, 0.0, 0.0));
-        GoalSelectionRequest request {pose, {}};
-        request.forward_half_space =
-                ForwardHalfSpaceConstraint {pose.position, 3.14159265359F, 0.0F};
-        request.fixed_altitude = FixedAltitudeConstraint {pose.position.z};
-        ExplorationDiagnostics diagnostics;
+        octomap::OcTree tree(0.1);
+        fillFreeBox(tree, {-1.0F, -2.0F, -1.0F}, {3.0F, 2.0F, 1.0F});
+        FrontierExplorationConfig config = compactConfig();
+        config.min_peer_goal_separation = 0.0F;
+        GoalSelectionRequest position_only {originPose(), {}};
+        position_only.peer_positions = {{2.0F, 0.0F, 0.0F}};
+        GoalSelectionRequest position_and_goal = position_only;
+        position_and_goal.active_peer_goals = {{2.0F, 0.0F, 0.0F}};
+        FrontierExplorationStrategy strategy(config);
 
-        const GoalSelectionResult result =
-                FrontierExplorationStrategy {}.selectGoal(request, tree, &diagnostics);
+        const GoalSelectionResult once = strategy.selectGoal(position_only, tree);
+        const GoalSelectionResult twice = strategy.selectGoal(position_and_goal, tree);
 
-        ASSERT_EQ(result.status, GoalSelectionStatus::Success);
-        ASSERT_TRUE(result.goal.has_value());
-        EXPECT_LT(result.goal->position.x, pose.position.x - 0.8F);
-        EXPECT_GT(diagnostics.forward_filtered_count, 0U);
-    }
-
-    TEST(FrontierExplorationStrategyTest, UsesPhysicalAreaAcrossResolutions)
-    {
-        FrontierExplorationStrategy strategy;
-        octomap::OcTree             coarse_tree(0.2);
-        octomap::OcTree             fine_tree(0.1);
-        populateOpenCorridor(coarse_tree, 15, 5, 3);
-        populateOpenCorridor(fine_tree, 30, 10, 6);
-
-        const auto coarse_result = strategy.selectGoal(
-                GoalSelectionRequest {
-                        poseAtKey(coarse_tree, coarse_tree.coordToKey(0.0, 0.0, 0.0)), {}},
-                coarse_tree);
-        const auto fine_result = strategy.selectGoal(
-                GoalSelectionRequest {
-                        poseAtKey(fine_tree, fine_tree.coordToKey(0.0, 0.0, 0.0)), {}},
-                fine_tree);
-
-        ASSERT_EQ(coarse_result.status, GoalSelectionStatus::Success);
-        ASSERT_EQ(fine_result.status, GoalSelectionStatus::Success);
-        ASSERT_TRUE(coarse_result.goal.has_value());
-        ASSERT_TRUE(fine_result.goal.has_value());
-        EXPECT_NEAR(coarse_result.goal->frontier_area, 3.08F, 1.0e-4F);
-        EXPECT_NEAR(fine_result.goal->frontier_area, 2.73F, 1.0e-4F);
-    }
-
-    TEST(FrontierExplorationStrategyTest, SelectionIsIndependentOfInsertionOrder)
-    {
-        octomap::OcTree forward_tree(0.2);
-        octomap::OcTree reverse_tree(0.2);
-        populateOpenCorridor(forward_tree, 15, 5, 3, false);
-        populateOpenCorridor(reverse_tree, 15, 5, 3, true);
-        FrontierExplorationStrategy strategy;
-
-        const auto forward = strategy.selectGoal(
-                GoalSelectionRequest {
-                        poseAtKey(forward_tree, forward_tree.coordToKey(0.0, 0.0, 0.0)), {}},
-                forward_tree);
-        const auto reverse = strategy.selectGoal(
-                GoalSelectionRequest {
-                        poseAtKey(reverse_tree, reverse_tree.coordToKey(0.0, 0.0, 0.0)), {}},
-                reverse_tree);
-
-        ASSERT_EQ(forward.status, GoalSelectionStatus::Success);
-        ASSERT_EQ(reverse.status, GoalSelectionStatus::Success);
-        ASSERT_TRUE(forward.goal.has_value());
-        ASSERT_TRUE(reverse.goal.has_value());
-        EXPECT_TRUE(keysEqual(forward.goal->cluster_id, reverse.goal->cluster_id));
-        EXPECT_FLOAT_EQ(forward.goal->position.x, reverse.goal->position.x);
-        EXPECT_FLOAT_EQ(forward.goal->position.y, reverse.goal->position.y);
-        EXPECT_FLOAT_EQ(forward.goal->position.z, reverse.goal->position.z);
+        ASSERT_TRUE(once.goal.has_value());
+        ASSERT_TRUE(twice.goal.has_value());
+        EXPECT_LT(twice.goal->utility, once.goal->utility);
     }
 
     TEST(FrontierExplorationStrategyTest, RejectsInvalidInputAndConfiguration)
     {
-        octomap::OcTree tree(0.2);
-        const float     nan = std::numeric_limits<float>::quiet_NaN();
-        const auto result = FrontierExplorationStrategy {}.selectGoal(
-                GoalSelectionRequest {Pose3D {Point3f {nan, 0.0F, 0.0F}, 0.0F}, {}}, tree);
-        EXPECT_EQ(result.status, GoalSelectionStatus::InvalidInput);
+        FrontierExplorationConfig invalid = compactConfig();
+        invalid.forward_distance_samples = 0U;
+        EXPECT_THROW((void) FrontierExplorationStrategy {invalid}, std::invalid_argument);
 
-        FrontierExplorationConfig config;
-        config.planning_radius = 1.0F;
-        EXPECT_THROW(FrontierExplorationStrategy {config}, std::invalid_argument);
-
-        GoalSelectionRequest invalid_constraint {poseAtKey(tree, tree.coordToKey(0.0, 0.0, 0.0)), {}};
-        invalid_constraint.forward_half_space =
-                ForwardHalfSpaceConstraint {Point3f {}, 0.0F, -0.1F};
+        octomap::OcTree tree(0.1);
+        fillFreeBox(tree, {-1.0F, -1.0F, -1.0F}, {3.0F, 1.0F, 1.0F});
+        Pose3D pose = originPose();
+        pose.position.x = std::numeric_limits<float>::quiet_NaN();
         EXPECT_EQ(
-                FrontierExplorationStrategy {}.selectGoal(invalid_constraint, tree).status,
+                FrontierExplorationStrategy(compactConfig())
+                        .selectGoal(GoalSelectionRequest {pose, {}}, tree)
+                        .status,
                 GoalSelectionStatus::InvalidInput);
     }
 

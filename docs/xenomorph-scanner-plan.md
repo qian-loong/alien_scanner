@@ -195,7 +195,7 @@ ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 
 ---
 
-### Phase 3：多机未知探索与地图融合 — **进行中（3-1～3-6 已完成）**
+### Phase 3：多机未知探索与地图融合 — **进行中（3-1～3-7 已完成；下一步 3-8）**
 
 **分支：** `phase/3-swarm-controller`
 
@@ -211,14 +211,25 @@ ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 | 3-4 | `IExplorationStrategy`（单机选目标） | ✅ |
 | 3-5 | 单机探索闭环 + 最小避障（M1） | ✅ |
 | 3-6 | 多机 launch（`num_drones:=3`）感知栈 | ✅ |
-| 3-7 | 多机任务调度（未知分配） | ⬜ |
+| 3-7 | 多机探索分散（peer 启发式 + 简化前向局部规划） | ✅ |
 | 3-8 | `/global_map` 融合 | ⬜ |
 | 3-9 | 更强路径规划（按需） | ⬜ |
 | 3-10 | 一键 swarm + 测试验收 | ⬜ |
 
-**M1 实际状况（摘要）：** 单机闭环已打通（感知→OctoMap→短段目标→执行→再选）；RViz 可见短 hop 折线弯折，属贪心局部 frontier 形态，非闭环失败。细节见 [`phase-03-swarm.md`](phases/phase-03-swarm.md) Step 3-5「当前实际状况」。
+**单机探索闭环摘要：** 感知→OctoMap→固定规模前向短段目标→执行→再选；候选点机体包络
+和直线路径必须为 known-free，无安全目标时执行有限 yaw 重扫并 Hold。细节见
+[`phase-03-swarm.md`](phases/phase-03-swarm.md) Step 3-5 和 Step 3-7。
 
-**3-6 摘要：** 三机独立 namespace/TF/本机 OctoMap；goal 悬停建图；不挂 explorer（留给 3-7）。
+**3-6 摘要：** 三机独立 namespace/TF/本机 OctoMap；goal 悬停建图；感知入口不挂 explorer。
+
+**3-7 摘要：** N×`SingleDroneExplorer` + peer 位姿软惩罚 / 有效 peer goal 硬分离；
+ROS-free `PeerStateTracker` 管理独立 position/goal 时效；全候选被 peer 占用时 Hold
+进入 `WaitingForPeer`；标准诊断可观测接线与过滤原因。默认局部规划收缩为基于 OctoMap
+的固定规模前向短段安全推进，不保存回退位姿、不发布向后恢复目标，也不执行随 frontier
+数量增长的候选邻域展开；无安全前向目标时有限 yaw 重扫后 Hold。分叉所有权、全局地图与
+更强规划留给 3-8/3-9。3-7 实现与自动测试已完成；无 `/global_map`；launch
+`multi_drone_exploration.launch.py`。当前 peer position 仅软惩罚、active goal 仅做目标点
+硬分离，不提供机体、路径或时间维度的动态避碰保证；该能力必须作为独立安全层后续设计。
 
 **跨 Phase 契约（摘要）：**
 
@@ -485,7 +496,9 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 [ ] 5. （可选）ros2 bag 录制 + README 演示 GIF
 ```
 
-**当前进度：** Phase 1、Phase 2 已完成；Phase 3 已完成 3-1～3-6，下一步 3-7 多机任务调度（见 [`docs/phases/phase-03-swarm.md`](phases/phase-03-swarm.md)）。
+**当前进度：** Phase 1、Phase 2 已完成；Phase 3 已完成 3-1～3-7，下一步为
+3-8 `/global_map`（见
+[`docs/phases/phase-03-swarm.md`](phases/phase-03-swarm.md)）。
 
 ---
 
@@ -512,5 +525,5 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 | 字段 | 值 |
 |------|-----|
 | 创建日期 | 2026-07-06 |
-| 最后更新 | 2026-07-11 |
-| 状态 | Phase 1–2 已完成；Phase 3 进行中（3-1～3-6 已完成，下一步 3-7）；分步细节见 `docs/phases/` |
+| 最后更新 | 2026-07-14 |
+| 状态 | Phase 1–2 已完成；Phase 3 进行中（3-1～3-7 已完成，下一步 3-8）；分步细节见 `docs/phases/` |

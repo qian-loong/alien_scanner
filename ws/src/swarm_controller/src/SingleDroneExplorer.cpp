@@ -19,11 +19,30 @@ namespace SwarmController {
 
         bool isFinite(const ExplorerInput & input)
         {
+            const auto points_finite = [](const std::vector<Point3f> & points) {
+                return std::all_of(points.begin(), points.end(), [](const Point3f & point) {
+                    return std::isfinite(point.x) && std::isfinite(point.y)
+                           && std::isfinite(point.z);
+                });
+            };
             return isFinite(input.pose) && std::isfinite(input.linear_velocity.x)
                    && std::isfinite(input.linear_velocity.y)
                    && std::isfinite(input.linear_velocity.z)
                    && std::isfinite(input.angular_velocity_z)
-                   && std::isfinite(input.monotonic_time_seconds);
+                   && std::isfinite(input.monotonic_time_seconds)
+                   && points_finite(input.peer_positions)
+                   && points_finite(input.active_peer_goals);
+        }
+
+        bool samePoints(const std::vector<Point3f> & lhs, const std::vector<Point3f> & rhs)
+        {
+            return lhs.size() == rhs.size()
+                   && std::equal(
+                           lhs.begin(), lhs.end(), rhs.begin(),
+                           [](const Point3f & left, const Point3f & right) {
+                               return left.x == right.x && left.y == right.y
+                                      && left.z == right.z;
+                           });
         }
 
         float shortestYawDistance(float lhs, float rhs)
@@ -43,6 +62,12 @@ namespace SwarmController {
                     return "WaitingForMap";
                 case ExplorerState::Selecting:
                     return "Selecting";
+                case ExplorerState::WaitingForPeer:
+                    return "WaitingForPeer";
+                case ExplorerState::ExplorationStalled:
+                    return "ExplorationStalled";
+                case ExplorerState::RecoveringClearance:
+                    return "RecoveringClearance";
                 case ExplorerState::Moving:
                     return "Moving";
                 case ExplorerState::AwaitingFreshObservation:
@@ -55,21 +80,6 @@ namespace SwarmController {
                     return "HoveringFailure";
             }
             return "Unknown";
-        }
-
-        const char * pathStatusName(PathCheckStatus status)
-        {
-            switch(status) {
-                case PathCheckStatus::Safe:
-                    return "Safe";
-                case PathCheckStatus::UnknownBlocked:
-                    return "UnknownBlocked";
-                case PathCheckStatus::OccupiedBlocked:
-                    return "OccupiedBlocked";
-                case PathCheckStatus::InvalidInput:
-                    return "InvalidInput";
-            }
-            return "InvalidInput";
         }
 
     }// namespace
@@ -88,15 +98,22 @@ namespace SwarmController {
                             && std::isfinite(config_.motion_timeout_seconds)
                             && std::isfinite(config_.hold_timeout_seconds)
                             && std::isfinite(config_.stopped_linear_speed_max)
-                            && std::isfinite(config_.stopped_angular_speed_max)
+                             && std::isfinite(config_.stopped_angular_speed_max)
                             && std::isfinite(config_.map_stale_timeout_seconds)
+                            && std::isfinite(config_.peer_retry_interval_seconds)
+                            && std::isfinite(config_.travel_heading_update_distance)
+                            && std::isfinite(config_.clearance_recovery_timeout_seconds)
                             && std::isfinite(config_.rescan_yaw_step)
                             && std::isfinite(config_.entry_backward_margin);
         if(!finite || config_.position_tolerance <= 0.0F || config_.yaw_tolerance <= 0.0F
            || config_.motion_timeout_seconds <= 0.0 || config_.hold_timeout_seconds <= 0.0
            || config_.stopped_linear_speed_max < 0.0F
            || config_.stopped_angular_speed_max < 0.0F
-           || config_.map_stale_timeout_seconds <= 0.0 || config_.rescan_yaw_step <= 0.0F
+           || config_.map_stale_timeout_seconds <= 0.0
+           || config_.peer_retry_interval_seconds <= 0.0
+           || config_.travel_heading_update_distance <= 0.0F
+           || config_.clearance_recovery_timeout_seconds <= 0.0
+           || config_.rescan_yaw_step <= 0.0F
            || config_.rescan_max_steps == 0U || config_.max_rejections_per_epoch == 0U
            || config_.entry_backward_margin < 0.0F)
         {
@@ -116,13 +133,10 @@ namespace SwarmController {
             return {state_, {}};
         }
 
-        if(input.observation_epoch > current_epoch_) {
-            current_epoch_              = input.observation_epoch;
-            last_observation_time_      = effectiveNow(input);
-            rejected_cluster_ids_.clear();
-        }
+        adoptObservation(input);
         if(!entry_pose_.has_value() && input.map != nullptr && current_epoch_ > 0U) {
             entry_pose_ = input.pose;
+            preferred_travel_yaw_ = input.pose.yaw;
         }
         if(entry_pose_.has_value()) {
             const float dx = input.pose.position.x - entry_pose_->position.x;
@@ -154,11 +168,98 @@ namespace SwarmController {
             return selectAndCommand(input);
         }
 
+        if(state_ == ExplorerState::WaitingForPeer) {
+            if(isMapStale(input)) {
+                return beginStopping(
+                        input, StopDestination::Failure,
+                        "map stale while waiting for peer goals");
+            }
+            if(!isStopped(input) || !hold_pose_.has_value()
+               || !isReached(input.pose, *hold_pose_))
+            {
+                return {state_, {}};
+            }
+            const bool goals_changed =
+                    !samePoints(input.active_peer_goals, waiting_peer_goals_);
+            const bool map_changed = current_epoch_ > event_epoch_;
+            const bool retry_due = effectiveNow(input) - state_start_time_
+                                   >= config_.peer_retry_interval_seconds;
+            if(goals_changed || map_changed || retry_due) {
+                diagnostics_.failure_reason.clear();
+                setState(ExplorerState::Selecting);
+                state_start_time_ = effectiveNow(input);
+            }
+            return {state_, {}};
+        }
+
+        if(state_ == ExplorerState::ExplorationStalled) {
+            if(isMapStale(input)) {
+                return beginStopping(
+                        input, StopDestination::Failure,
+                        "map stale while exploration is stalled");
+            }
+            if(!isStopped(input) || !hold_pose_.has_value()
+               || !isReached(input.pose, *hold_pose_))
+            {
+                return {state_, {}};
+            }
+            if(input.map != nullptr && input.map->size() != stalled_map_node_count_) {
+                completed_rescan_steps_ = 0U;
+                diagnostics_.failure_reason.clear();
+                setState(ExplorerState::Selecting);
+                state_start_time_ = effectiveNow(input);
+            }
+            return {state_, {}};
+        }
+
+        if(state_ == ExplorerState::RecoveringClearance) {
+            if(input.map == nullptr || isMapStale(input)) {
+                return beginStopping(
+                        input, StopDestination::Failure,
+                        "map unavailable while recovering body clearance");
+            }
+            if(effectiveNow(input) - state_start_time_
+               > config_.clearance_recovery_timeout_seconds)
+            {
+                return beginStopping(
+                        input, StopDestination::Failure,
+                        "body clearance recovery exhausted");
+            }
+
+            const PathCheckResult body =
+                    path_checker_.checkBody(*input.map, input.pose.position);
+            diagnostics_.current_body_status      = pathCheckStatusName(body.status);
+            diagnostics_.path_start               = input.pose.position;
+            diagnostics_.path_goal                = input.pose.position;
+            diagnostics_.path_status              = pathCheckStatusName(body.status);
+            diagnostics_.first_blocked_position   = body.first_blocked_position;
+            if(body.status == PathCheckStatus::InvalidInput) {
+                return beginStopping(
+                        input, StopDestination::Failure,
+                        "invalid body clearance recovery input");
+            }
+            if(body.safe()) {
+                active_goal_.reset();
+                completed_rescan_steps_ = 0U;
+                diagnostics_.failure_reason.clear();
+                if(!isStopped(input)) {
+                    return beginStopping(input, StopDestination::Selecting, "");
+                }
+                setState(ExplorerState::Selecting);
+                state_start_time_ = effectiveNow(input);
+                return {state_, {}};
+            }
+
+            hold_pose_ = input.pose;
+            return {state_, {}};
+        }
+
         if(state_ == ExplorerState::Moving) {
             if(isMapStale(input)) {
                 return beginStopping(input, StopDestination::Failure, "map stale while moving");
             }
             if(effectiveNow(input) - state_start_time_ > config_.motion_timeout_seconds) {
+                updateTravelHeading(input.pose);
                 return beginStopping(input, StopDestination::Selecting, "motion timeout");
             }
 
@@ -170,9 +271,13 @@ namespace SwarmController {
                 last_checked_path_epoch_     = current_epoch_;
                 diagnostics_.path_start      = input.pose.position;
                 diagnostics_.path_goal       = active_goal_->position;
-                diagnostics_.path_status     = pathStatusName(result.status);
+                diagnostics_.path_status     = pathCheckStatusName(result.status);
                 diagnostics_.first_blocked_position = result.first_blocked_position;
                 if(!result.safe()) {
+                    updateTravelHeading(input.pose);
+                    const PathCheckResult body =
+                            path_checker_.checkBody(*input.map, input.pose.position);
+                    diagnostics_.current_body_status = pathCheckStatusName(body.status);
                     if(active_cluster_id_.has_value()
                        && std::find(
                                   rejected_cluster_ids_.begin(), rejected_cluster_ids_.end(),
@@ -182,12 +287,19 @@ namespace SwarmController {
                         rejected_cluster_ids_.push_back(*active_cluster_id_);
                     }
                     return beginStopping(
-                            input, StopDestination::Selecting,
-                            "remaining path blocked by fresh observation");
+                            input,
+                            body.status == PathCheckStatus::OccupiedBlocked
+                                    ? StopDestination::ClearanceRecovery
+                                    : StopDestination::Selecting,
+                            body.status == PathCheckStatus::OccupiedBlocked
+                                    ? "current body clearance blocked by fresh observation"
+                                    : "remaining path blocked by fresh observation");
                 }
+                diagnostics_.current_body_status = "Safe";
             }
 
             if(active_goal_.has_value() && isReached(input.pose, *active_goal_)) {
+                updateTravelHeading(input.pose);
                 hold_pose_             = input.pose;
                 event_epoch_           = current_epoch_;
                 event_odom_stamp_ns_   = input.odom_stamp_ns;
@@ -246,6 +358,18 @@ namespace SwarmController {
             {
                 if(stop_destination_ == StopDestination::Failure) {
                     setState(ExplorerState::HoveringFailure);
+                } else if(stop_destination_ == StopDestination::ClearanceRecovery) {
+                    const PathCheckResult body = input.map != nullptr
+                                                         ? path_checker_.checkBody(
+                                                                 *input.map,
+                                                                 input.pose.position)
+                                                         : PathCheckResult {
+                                                                   PathCheckStatus::InvalidInput,
+                                                                   std::nullopt,
+                                                           };
+                    return beginClearanceRecovery(
+                            input, body,
+                            "current body clearance blocked by fresh observation");
                 } else {
                     setState(ExplorerState::Selecting);
                     state_start_time_ = effectiveNow(input);
@@ -276,7 +400,10 @@ namespace SwarmController {
             GoalSelectionRequest request;
             request.pose                 = input.pose;
             request.rejected_cluster_ids = rejected_cluster_ids_;
+            request.preferred_travel_yaw = preferred_travel_yaw_;
             request.fixed_altitude = FixedAltitudeConstraint {input.pose.position.z};
+            request.peer_positions     = input.peer_positions;
+            request.active_peer_goals  = input.active_peer_goals;
             if(config_.enforce_entry_forward_half_space && entry_pose_.has_value()) {
                 Point3f forward_plane_origin = entry_pose_->position;
                 forward_plane_origin.x +=
@@ -294,6 +421,18 @@ namespace SwarmController {
 
             if(selection.status == GoalSelectionStatus::InvalidInput) {
                 return beginStopping(input, StopDestination::Failure, "goal selection invalid");
+            }
+            if(selection.status == GoalSelectionStatus::PeerGoalConflict) {
+                return beginWaitingForPeer(input);
+            }
+            if(selection.status == GoalSelectionStatus::StartBodyConflict) {
+                const PathCheckResult body =
+                        path_checker_.checkBody(*input.map, input.pose.position);
+                if(body.status == PathCheckStatus::UnknownBlocked) {
+                    return beginRescan(input);
+                }
+                return beginClearanceRecovery(
+                        input, body, "current body clearance conflict while selecting");
             }
             if(selection.status != GoalSelectionStatus::Success || !selection.goal.has_value()) {
                 return beginRescan(input);
@@ -313,14 +452,24 @@ namespace SwarmController {
                     path_checker_.checkSegment(*input.map, input.pose.position, goal.position);
             diagnostics_.path_start             = input.pose.position;
             diagnostics_.path_goal              = goal.position;
-            diagnostics_.path_status            = pathStatusName(path.status);
+            diagnostics_.path_status            = pathCheckStatusName(path.status);
             diagnostics_.first_blocked_position = path.first_blocked_position;
             if(!path.safe()) {
+                const PathCheckResult body =
+                        path_checker_.checkBody(*input.map, input.pose.position);
+                diagnostics_.current_body_status = pathCheckStatusName(body.status);
+                if(!body.safe()) {
+                    return beginClearanceRecovery(
+                            input, body,
+                            "current body clearance conflict before command");
+                }
                 rejected_cluster_ids_.push_back(selection.goal->cluster_id);
                 continue;
             }
 
+            diagnostics_.current_body_status = "Safe";
             active_goal_               = goal;
+            active_goal_origin_        = input.pose.position;
             active_cluster_id_         = selection.goal->cluster_id;
             last_checked_path_epoch_   = current_epoch_;
             state_start_time_          = effectiveNow(input);
@@ -334,11 +483,12 @@ namespace SwarmController {
     ExplorerTickResult SingleDroneExplorer::beginRescan(const ExplorerInput & input)
     {
         if(completed_rescan_steps_ >= config_.rescan_max_steps) {
-            return beginStopping(input, StopDestination::Failure, "yaw rescan limit reached");
+            return beginExplorationStalled(input);
         }
         Pose3D goal = input.pose;
         goal.yaw    = normalizedYaw(input.pose.yaw + config_.rescan_yaw_step);
         active_goal_       = goal;
+        active_goal_origin_.reset();
         active_cluster_id_.reset();
         rescan_reached_    = false;
         state_start_time_  = effectiveNow(input);
@@ -346,15 +496,134 @@ namespace SwarmController {
         return {state_, MotionCommand {MotionCommandType::MoveTo, goal}};
     }
 
+    ExplorerTickResult SingleDroneExplorer::beginWaitingForPeer(const ExplorerInput & input)
+    {
+        hold_pose_                  = input.pose;
+        active_goal_.reset();
+        active_goal_origin_.reset();
+        active_cluster_id_.reset();
+        waiting_peer_goals_         = input.active_peer_goals;
+        event_epoch_                = current_epoch_;
+        state_start_time_           = effectiveNow(input);
+        diagnostics_.failure_reason = "all candidates blocked by peer goals";
+        setState(ExplorerState::WaitingForPeer);
+        return {state_, MotionCommand {MotionCommandType::Hold, *hold_pose_}};
+    }
+
+    ExplorerTickResult SingleDroneExplorer::beginExplorationStalled(
+            const ExplorerInput & input)
+    {
+        hold_pose_                  = input.pose;
+        active_goal_.reset();
+        active_goal_origin_.reset();
+        active_cluster_id_.reset();
+        event_epoch_                = current_epoch_;
+        stalled_map_node_count_     = input.map != nullptr ? input.map->size() : 0U;
+        state_start_time_           = effectiveNow(input);
+        diagnostics_.failure_reason =
+                "no safe forward candidate after yaw rescan; sensor-limited hold";
+        setState(ExplorerState::ExplorationStalled);
+        return {state_, MotionCommand {MotionCommandType::Hold, *hold_pose_}};
+    }
+
+    ExplorerTickResult SingleDroneExplorer::beginClearanceRecovery(
+            const ExplorerInput & input, const PathCheckResult & conflict,
+            const std::string & reason)
+    {
+        hold_pose_                        = input.pose;
+        active_goal_.reset();
+        active_goal_origin_.reset();
+        active_cluster_id_.reset();
+        state_start_time_                 = effectiveNow(input);
+        diagnostics_.failure_reason      = reason;
+        diagnostics_.current_body_status = pathCheckStatusName(conflict.status);
+        diagnostics_.path_start          = input.pose.position;
+        diagnostics_.path_goal           = input.pose.position;
+        diagnostics_.path_status         = pathCheckStatusName(conflict.status);
+        diagnostics_.first_blocked_position = conflict.first_blocked_position;
+        setState(ExplorerState::RecoveringClearance);
+        return {state_, MotionCommand {MotionCommandType::Hold, *hold_pose_}};
+    }
+
     ExplorerTickResult SingleDroneExplorer::beginStopping(
             const ExplorerInput & input, StopDestination destination, const std::string & reason)
     {
         hold_pose_                   = input.pose;
+        active_goal_origin_.reset();
         stop_destination_            = destination;
         state_start_time_            = effectiveNow(input);
         diagnostics_.failure_reason  = reason;
         setState(ExplorerState::Stopping);
         return {state_, MotionCommand {MotionCommandType::Hold, *hold_pose_}};
+    }
+
+    bool SingleDroneExplorer::revalidatePendingResult(
+            const ExplorerInput & input, ExplorerTickResult & result)
+    {
+        tick_wall_start_ = std::chrono::steady_clock::now();
+        if(!isFinite(input) || input.map == nullptr || result.command.type == MotionCommandType::None) {
+            return false;
+        }
+        adoptObservation(input);
+
+        if(result.command.type == MotionCommandType::Hold) {
+            hold_pose_          = input.pose;
+            result.command.goal = *hold_pose_;
+            result.state        = state_;
+            if(state_ == ExplorerState::WaitingForPeer) {
+                waiting_peer_goals_ = input.active_peer_goals;
+                event_epoch_        = current_epoch_;
+            } else if(state_ == ExplorerState::ExplorationStalled) {
+                stalled_map_node_count_ = input.map->size();
+            }
+            return true;
+        }
+
+        if(state_ == ExplorerState::Moving && active_goal_.has_value()) {
+            Pose3D goal = *active_goal_;
+            goal.position.z = input.pose.position.z;
+            goal.yaw = std::atan2(
+                    goal.position.y - input.pose.position.y,
+                    goal.position.x - input.pose.position.x);
+            const PathCheckResult path =
+                    path_checker_.checkSegment(*input.map, input.pose.position, goal.position);
+            diagnostics_.path_start             = input.pose.position;
+            diagnostics_.path_goal              = goal.position;
+            diagnostics_.path_status            = pathCheckStatusName(path.status);
+            diagnostics_.first_blocked_position = path.first_blocked_position;
+            diagnostics_.current_body_status = pathCheckStatusName(
+                    path_checker_.checkBody(*input.map, input.pose.position).status);
+            if(!path.safe()) {
+                return false;
+            }
+            active_goal_             = goal;
+            active_goal_origin_      = input.pose.position;
+            last_checked_path_epoch_ = current_epoch_;
+            state_start_time_        = effectiveNow(input);
+            result.command.goal = goal;
+            result.state        = state_;
+            return true;
+        }
+
+        if(state_ == ExplorerState::Rescanning) {
+            const PathCheckResult body =
+                    path_checker_.checkBody(*input.map, input.pose.position);
+            diagnostics_.current_body_status = pathCheckStatusName(body.status);
+            if(!body.safe()) {
+                return false;
+            }
+            Pose3D goal = input.pose;
+            goal.yaw    = normalizedYaw(input.pose.yaw + config_.rescan_yaw_step);
+            active_goal_             = goal;
+            last_checked_path_epoch_ = current_epoch_;
+            state_start_time_        = effectiveNow(input);
+            rescan_reached_          = false;
+            result.command.goal      = goal;
+            result.state             = state_;
+            return true;
+        }
+
+        return false;
     }
 
     bool SingleDroneExplorer::isReached(const Pose3D & pose, const Pose3D & goal) const
@@ -383,6 +652,28 @@ namespace SwarmController {
         return current_epoch_ > 0U
                && effectiveNow(input) - last_observation_time_
                           > config_.map_stale_timeout_seconds;
+    }
+
+    void SingleDroneExplorer::updateTravelHeading(const Pose3D & pose)
+    {
+        if(!active_goal_origin_.has_value()) {
+            return;
+        }
+        const float dx = pose.position.x - active_goal_origin_->x;
+        const float dy = pose.position.y - active_goal_origin_->y;
+        if(std::hypot(dx, dy) >= config_.travel_heading_update_distance) {
+            preferred_travel_yaw_ = std::atan2(dy, dx);
+        }
+        active_goal_origin_.reset();
+    }
+
+    void SingleDroneExplorer::adoptObservation(const ExplorerInput & input)
+    {
+        if(input.observation_epoch > current_epoch_) {
+            current_epoch_         = input.observation_epoch;
+            last_observation_time_ = effectiveNow(input);
+            rejected_cluster_ids_.clear();
+        }
     }
 
     void SingleDroneExplorer::setState(ExplorerState state)

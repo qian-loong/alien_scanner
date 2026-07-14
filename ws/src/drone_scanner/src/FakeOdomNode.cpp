@@ -102,7 +102,7 @@ void FakeOdomNode::declareParameters()
 
     declare_parameter("altitude_adapt.enable", true);
     declare_parameter("altitude_adapt.target_fraction", 0.5);
-    declare_parameter("altitude_adapt.min_clearance", 0.35);
+    declare_parameter("altitude_adapt.min_clearance", 0.41);
     declare_parameter("altitude_adapt.max_vertical_speed", 0.6);
     declare_parameter("altitude_adapt.band_ema_alpha", 0.25);
     declare_parameter("altitude_adapt.min_band_height", 0.8);

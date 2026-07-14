@@ -7,25 +7,23 @@
 namespace SwarmController {
 
     struct FrontierExplorationConfig {
-        float planning_radius {5.5F};
-        float min_goal_distance {0.8F};
-        float max_goal_distance {4.0F};
-        float goal_standoff {0.6F};
-        float goal_search_radius {0.4F};
+        float forward_lookahead_min {0.8F};
+        float forward_lookahead_max {2.0F};
+        float forward_lateral_limit {0.5F};
+        std::size_t forward_distance_samples {4U};
+        std::size_t forward_lateral_samples {5U};
 
         float robot_radius {0.25F};
         float robot_half_height {0.15F};
         float safety_margin {0.25F};
         float vertical_margin {0.20F};
 
-        float min_cluster_area {0.20F};
-        float max_abs_frontier_normal_z {0.60F};
-
-        float gain_weight {1.0F};
-        float distance_weight {0.25F};
-        float vertical_weight {0.30F};
-        float heading_weight {0.15F};
-        float gain_reference_area {0.20F};
+        float lateral_weight {0.60F};
+        float heading_weight {0.25F};
+        /// Soft penalty weight: utility -= w * Σ 1/(1+d_xy) over peers/goals.
+        float dispersion_weight {0.35F};
+        /// Hard filter radius (m, XY) against active peer goals only.
+        float min_peer_goal_separation {0.8F};
     };
 
     class FrontierExplorationStrategy final : public IExplorationStrategy

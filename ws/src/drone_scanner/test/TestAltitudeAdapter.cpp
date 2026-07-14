@@ -74,6 +74,22 @@ namespace DroneScanner {
         EXPECT_NEAR(adapted, 1.5F, 1e-4F);
     }
 
+    TEST(AltitudeAdapterTest, CorrectsLegacyBoundaryThatViolatesPlannerClearance)
+    {
+        AltitudeAdaptConfig config;
+        config.target_fraction    = 0.5F;
+        config.min_clearance      = 0.41F;
+        config.max_vertical_speed = 100.0F;
+        config.band_ema_alpha     = 1.0F;
+        AltitudeAdapter adapter(config);
+
+        // floor=0, ceiling=1.85，current=1.50 只有 0.35 m 顶部净空，必须离开旧边界。
+        const float adapted = adapter.adaptFromHits(
+                verticalBandHits(0.35F, -1.5F), 1.5F, 1.5F, 1.0F);
+        EXPECT_LT(adapted, 1.5F);
+        EXPECT_NEAR(adapted, 0.925F, 1.0e-3F);
+    }
+
     TEST(AltitudeAdapterTest, CorrectsTowardMidWhenBelowClearance)
     {
         AltitudeAdaptConfig config;

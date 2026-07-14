@@ -24,6 +24,8 @@ namespace SwarmController {
         InvalidInput,
     };
 
+    const char * pathCheckStatusName(PathCheckStatus status);
+
     struct PathCheckResult {
         PathCheckStatus       status {PathCheckStatus::InvalidInput};
         std::optional<Point3f> first_blocked_position;
@@ -43,6 +45,14 @@ namespace SwarmController {
         PathCheckResult checkSegment(
                 const octomap::OcTree & tree, const Point3f & start,
                 const Point3f & goal) const;
+        /// 仅用于从“当前包络已冲突”状态退出：允许起点附近连续冲突，
+        /// 但必须在 max_initial_conflict_distance 内进入 known-free，之后整段保持安全。
+        PathCheckResult checkEgressSegment(
+                const octomap::OcTree & tree, const Point3f & start,
+                const Point3f & goal, float max_initial_conflict_distance) const;
+
+        float requiredHorizontalClearance(float map_resolution) const;
+        float requiredVerticalClearance(float map_resolution) const;
 
         const BodyEnvelopeConfig & config() const;
 

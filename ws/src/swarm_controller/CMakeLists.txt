@@ -11,6 +11,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -35,6 +36,8 @@ target_compile_features(swarm_octomap PUBLIC cxx_std_17)
 add_library(swarm_exploration STATIC
         src/FrontierExplorationStrategy.cpp
         src/KnownFreePathChecker.cpp
+        src/PeerStateTracker.cpp
+        src/PlanningSnapshotGuard.cpp
         src/SingleDroneExplorer.cpp
 )
 target_include_directories(swarm_exploration PUBLIC
@@ -55,6 +58,8 @@ install(
         include/swarm_controller/IExplorationStrategy.hpp
         include/swarm_controller/FrontierExplorationStrategy.hpp
         include/swarm_controller/KnownFreePathChecker.hpp
+        include/swarm_controller/PeerStateTracker.hpp
+        include/swarm_controller/PlanningSnapshotGuard.hpp
         include/swarm_controller/ExplorationDiagnostics.hpp
         include/swarm_controller/SingleDroneExplorer.hpp
         include/swarm_controller/SingleDroneExplorerNode.hpp
@@ -89,7 +94,8 @@ target_include_directories(single_drone_explorer PUBLIC
 target_link_libraries(single_drone_explorer swarm_exploration)
 ament_target_dependencies(
         single_drone_explorer
-        rclcpp geometry_msgs nav_msgs octomap_msgs tf2 tf2_geometry_msgs tf2_ros visualization_msgs
+        rclcpp diagnostic_msgs geometry_msgs nav_msgs octomap_msgs tf2 tf2_geometry_msgs tf2_ros
+        visualization_msgs
 )
 
 install(
@@ -103,6 +109,7 @@ install(
 
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
+
     ament_add_gtest(TestOctoMapBuilder test/TestOctoMapBuilder.cpp)
     if(TARGET TestOctoMapBuilder)
         target_link_libraries(TestOctoMapBuilder swarm_octomap)
@@ -126,6 +133,22 @@ if(BUILD_TESTING)
     if(TARGET TestKnownFreePathChecker)
         target_link_libraries(TestKnownFreePathChecker swarm_exploration)
         target_include_directories(TestKnownFreePathChecker PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
+    ament_add_gtest(TestPeerStateTracker test/TestPeerStateTracker.cpp)
+    if(TARGET TestPeerStateTracker)
+        target_link_libraries(TestPeerStateTracker swarm_exploration)
+        target_include_directories(TestPeerStateTracker PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
+    ament_add_gtest(TestPlanningSnapshotGuard test/TestPlanningSnapshotGuard.cpp)
+    if(TARGET TestPlanningSnapshotGuard)
+        target_link_libraries(TestPlanningSnapshotGuard swarm_exploration)
+        target_include_directories(TestPlanningSnapshotGuard PUBLIC
                 $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         )
     endif()
@@ -165,10 +188,20 @@ if(BUILD_TESTING)
             RUNNER "${RUNNER}"
             TIMEOUT 180
     )
+    add_launch_test(
+            test/test_single_peer_wiring_integration.py
+            RUNNER "${RUNNER}"
+            TIMEOUT 120
+    )
+    add_launch_test(
+            test/test_multi_drone_exploration_integration.py
+            RUNNER "${RUNNER}"
+            TIMEOUT 180
+    )
 endif()
 
 ament_export_include_directories(include)
-ament_export_dependencies(octomap)
+ament_export_dependencies(octomap diagnostic_msgs)
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 
 ament_package()

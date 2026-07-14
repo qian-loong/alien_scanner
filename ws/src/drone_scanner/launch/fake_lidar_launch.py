@@ -89,7 +89,7 @@ def generate_launch_description():
             'altitude_adapt.enable', default_value='true',
             description='根据环扫顶/底自适应飞行高度（不读洞穴真值）'),
         DeclareLaunchArgument('altitude_adapt.target_fraction', default_value='0.5'),
-        DeclareLaunchArgument('altitude_adapt.min_clearance', default_value='0.35'),
+        DeclareLaunchArgument('altitude_adapt.min_clearance', default_value='0.41'),
         DeclareLaunchArgument(
             'altitude_adapt.max_vertical_speed', default_value='0.6',
             description='高度跟随 |vz| 上限 (m/s)'),

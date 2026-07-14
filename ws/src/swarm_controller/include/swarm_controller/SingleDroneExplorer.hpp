@@ -17,6 +17,9 @@ namespace SwarmController {
     enum class ExplorerState {
         WaitingForMap,
         Selecting,
+        WaitingForPeer,
+        ExplorationStalled,
+        RecoveringClearance,
         Moving,
         AwaitingFreshObservation,
         Rescanning,
@@ -44,6 +47,8 @@ namespace SwarmController {
         std::int64_t         observation_stamp_ns {0};
         std::int64_t         odom_stamp_ns {0};
         double               monotonic_time_seconds {};
+        std::vector<Point3f> peer_positions;
+        std::vector<Point3f> active_peer_goals;
     };
 
     struct SingleDroneExplorerConfig {
@@ -54,6 +59,9 @@ namespace SwarmController {
         float  stopped_linear_speed_max {0.02F};
         float  stopped_angular_speed_max {0.03F};
         double map_stale_timeout_seconds {2.0};
+        double peer_retry_interval_seconds {1.0};
+        float  travel_heading_update_distance {0.35F};
+        double clearance_recovery_timeout_seconds {8.0};
         float  rescan_yaw_step {0.78539816339F};
         std::size_t rescan_max_steps {8U};
         std::size_t max_rejections_per_epoch {16U};
@@ -78,6 +86,11 @@ namespace SwarmController {
 
         ExplorerTickResult tick(const ExplorerInput & input);
 
+        /// 节点在耗时规划期间收到更新输入后，用最新快照重新验证尚未发布的命令。
+        /// 失败时调用方必须丢弃本次候选状态，不得发布旧命令。
+        bool revalidatePendingResult(
+                const ExplorerInput & input, ExplorerTickResult & result);
+
         ExplorerState state() const;
         const ExplorationDiagnostics & diagnostics() const;
         const std::vector<FrontierClusterId> & rejectedClusterIds() const;
@@ -85,12 +98,18 @@ namespace SwarmController {
     private:
         enum class StopDestination {
             Selecting,
+            ClearanceRecovery,
             Failure,
         };
 
         /// input.monotonic + 本 tick 已流逝墙钟，避免长耗时 select 用过期时间启动运动超时。
         double effectiveNow(const ExplorerInput & input) const;
         ExplorerTickResult selectAndCommand(const ExplorerInput & input);
+        ExplorerTickResult beginWaitingForPeer(const ExplorerInput & input);
+        ExplorerTickResult beginExplorationStalled(const ExplorerInput & input);
+        ExplorerTickResult beginClearanceRecovery(
+                const ExplorerInput & input, const PathCheckResult & conflict,
+                const std::string & reason);
         ExplorerTickResult beginRescan(const ExplorerInput & input);
         ExplorerTickResult beginStopping(
                 const ExplorerInput & input, StopDestination destination,
@@ -98,6 +117,8 @@ namespace SwarmController {
         bool isReached(const Pose3D & pose, const Pose3D & goal) const;
         bool isStopped(const ExplorerInput & input) const;
         bool isMapStale(const ExplorerInput & input) const;
+        void updateTravelHeading(const Pose3D & pose);
+        void adoptObservation(const ExplorerInput & input);
         void setState(ExplorerState state);
 
         std::shared_ptr<IExplorationStrategy> strategy_;
@@ -109,8 +130,12 @@ namespace SwarmController {
         std::optional<Pose3D>                 entry_pose_;
         float                                 max_entry_forward_progress_ {};
         std::optional<Pose3D>                 active_goal_;
+        std::optional<Point3f>                active_goal_origin_;
         std::optional<FrontierClusterId>       active_cluster_id_;
+        std::optional<float>                  preferred_travel_yaw_;
         std::optional<Pose3D>                 hold_pose_;
+        std::size_t                           stalled_map_node_count_ {0U};
+        std::vector<Point3f>                  waiting_peer_goals_;
         StopDestination                       stop_destination_ {StopDestination::Selecting};
         std::uint64_t                         current_epoch_ {0U};
         std::uint64_t                         last_checked_path_epoch_ {0U};

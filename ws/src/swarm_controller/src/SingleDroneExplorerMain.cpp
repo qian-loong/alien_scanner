@@ -7,7 +7,10 @@
 int main(int argc, char ** argv)
 {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<SwarmController::SingleDroneExplorerNode>());
+    auto node = std::make_shared<SwarmController::SingleDroneExplorerNode>();
+    rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions {}, 2U);
+    executor.add_node(node);
+    executor.spin();
     rclcpp::shutdown();
     return 0;
 }

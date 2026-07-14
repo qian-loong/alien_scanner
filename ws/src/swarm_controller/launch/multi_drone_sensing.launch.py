@@ -47,6 +47,27 @@ def _default_start_xy(index: int):
     return (0.2 * (index // 2), side * (1.0 + 0.5 * (index // 2)))
 
 
+def _vertical_clearance(context):
+    resolution = float(LaunchConfiguration('resolution').perform(context))
+    half_height = float(
+        LaunchConfiguration('body.robot_half_height').perform(context))
+    vertical_margin = float(
+        LaunchConfiguration('body.vertical_margin').perform(context))
+    epsilon = float(
+        LaunchConfiguration('body.clearance_epsilon').perform(context))
+    required = half_height + vertical_margin + 0.5 * resolution + epsilon
+    requested = LaunchConfiguration(
+        'altitude_adapt.min_clearance').perform(context).strip().lower()
+    if requested == 'auto':
+        return required
+    configured = float(requested)
+    if configured + 1.0e-9 < required:
+        raise RuntimeError(
+            'altitude_adapt.min_clearance must be >= '
+            f'{required:.3f} m for the configured swept-body envelope')
+    return configured
+
+
 def _launch_setup(context, *args, **kwargs):
     num_drones = int(LaunchConfiguration('num_drones').perform(context))
     if num_drones < 1:
@@ -81,6 +102,7 @@ def _launch_setup(context, *args, **kwargs):
     motion_mode = LaunchConfiguration('motion.mode').perform(context)
     start_z = LaunchConfiguration('line.start_z').perform(context)
     line_length = float(LaunchConfiguration('line.length').perform(context))
+    altitude_min_clearance = _vertical_clearance(context)
     shared_sensing = {
         'map_frame': 'map',
         'publish_map_to_odom': 'false',
@@ -101,6 +123,7 @@ def _launch_setup(context, *args, **kwargs):
         'num_beams': LaunchConfiguration('num_beams').perform(context),
         'line.start_z': start_z,
         'line.duration_seconds': LaunchConfiguration('line.duration_seconds').perform(context),
+        'altitude_adapt.min_clearance': str(altitude_min_clearance),
     }
     for key in _cave_arg_names():
         shared_sensing[key] = LaunchConfiguration(key).perform(context)
@@ -199,6 +222,10 @@ def generate_launch_description():
         DeclareLaunchArgument('motion.linear_speed', default_value='0.4'),
         DeclareLaunchArgument('motion.yaw_rate', default_value='0.5'),
         DeclareLaunchArgument('line.start_z', default_value='1.5'),
+        DeclareLaunchArgument('body.robot_half_height', default_value='0.15'),
+        DeclareLaunchArgument('body.vertical_margin', default_value='0.20'),
+        DeclareLaunchArgument('body.clearance_epsilon', default_value='0.01'),
+        DeclareLaunchArgument('altitude_adapt.min_clearance', default_value='auto'),
         DeclareLaunchArgument(
             'line.length', default_value='8.0',
             description='motion.mode=line 时沿 +X 的飞行距离 (m)',

@@ -21,6 +21,21 @@ namespace SwarmController {
 
     }// namespace
 
+    const char * pathCheckStatusName(const PathCheckStatus status)
+    {
+        switch(status) {
+            case PathCheckStatus::Safe:
+                return "Safe";
+            case PathCheckStatus::UnknownBlocked:
+                return "UnknownBlocked";
+            case PathCheckStatus::OccupiedBlocked:
+                return "OccupiedBlocked";
+            case PathCheckStatus::InvalidInput:
+                return "InvalidInput";
+        }
+        return "InvalidInput";
+    }
+
     KnownFreePathChecker::KnownFreePathChecker(BodyEnvelopeConfig config)
         : config_(config)
     {
@@ -47,11 +62,9 @@ namespace SwarmController {
             return {PathCheckStatus::InvalidInput, std::nullopt};
         }
 
-        const float resolution = static_cast<float>(tree.getResolution());
-        const float horizontal_limit = config_.robot_radius + config_.safety_margin
-                                       + resolution * std::sqrt(0.5F);
-        const float vertical_limit = config_.robot_half_height + config_.vertical_margin
-                                     + resolution * 0.5F;
+        const float resolution       = static_cast<float>(tree.getResolution());
+        const float horizontal_limit = requiredHorizontalClearance(resolution);
+        const float vertical_limit   = requiredVerticalClearance(resolution);
         const float range = std::max(horizontal_limit, vertical_limit);
 
         octomap::OcTreeKey min_key;
@@ -131,6 +144,80 @@ namespace SwarmController {
             }
         }
         return {PathCheckStatus::Safe, std::nullopt};
+    }
+
+    PathCheckResult KnownFreePathChecker::checkEgressSegment(
+            const octomap::OcTree & tree, const Point3f & start, const Point3f & goal,
+            const float max_initial_conflict_distance) const
+    {
+        if(!isFinite(start) || !isFinite(goal)
+           || !std::isfinite(max_initial_conflict_distance)
+           || max_initial_conflict_distance < 0.0F)
+        {
+            return {PathCheckStatus::InvalidInput, std::nullopt};
+        }
+
+        const float dx       = goal.x - start.x;
+        const float dy       = goal.y - start.y;
+        const float dz       = goal.z - start.z;
+        const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        const float spacing =
+                static_cast<float>(tree.getResolution()) * config_.sample_spacing_fraction;
+        if(!std::isfinite(spacing) || spacing <= 0.0F) {
+            return {PathCheckStatus::InvalidInput, std::nullopt};
+        }
+
+        const std::uint32_t steps =
+                distance > 0.0F
+                        ? static_cast<std::uint32_t>(std::ceil(distance / spacing))
+                        : 0U;
+        bool            reached_safe_body = false;
+        PathCheckResult initial_conflict {PathCheckStatus::InvalidInput, std::nullopt};
+        for(std::uint32_t i = 0; i <= steps; ++i) {
+            const float fraction =
+                    steps > 0U ? static_cast<float>(i) / static_cast<float>(steps) : 0.0F;
+            const Point3f center {
+                    start.x + dx * fraction,
+                    start.y + dy * fraction,
+                    start.z + dz * fraction,
+            };
+            PathCheckResult result = checkBody(tree, center);
+            if(result.status == PathCheckStatus::InvalidInput) {
+                return result;
+            }
+            if(result.safe()) {
+                reached_safe_body = true;
+                continue;
+            }
+            if(reached_safe_body || distance * fraction > max_initial_conflict_distance) {
+                return result;
+            }
+            if(initial_conflict.status == PathCheckStatus::InvalidInput) {
+                initial_conflict = result;
+            }
+        }
+        if(!reached_safe_body) {
+            return initial_conflict;
+        }
+        return {PathCheckStatus::Safe, std::nullopt};
+    }
+
+    float KnownFreePathChecker::requiredHorizontalClearance(const float map_resolution) const
+    {
+        if(!std::isfinite(map_resolution) || map_resolution <= 0.0F) {
+            return std::numeric_limits<float>::quiet_NaN();
+        }
+        return config_.robot_radius + config_.safety_margin
+               + map_resolution * std::sqrt(0.5F);
+    }
+
+    float KnownFreePathChecker::requiredVerticalClearance(const float map_resolution) const
+    {
+        if(!std::isfinite(map_resolution) || map_resolution <= 0.0F) {
+            return std::numeric_limits<float>::quiet_NaN();
+        }
+        return config_.robot_half_height + config_.vertical_margin
+               + map_resolution * 0.5F;
     }
 
     const BodyEnvelopeConfig & KnownFreePathChecker::config() const
