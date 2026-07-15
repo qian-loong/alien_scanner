@@ -24,6 +24,7 @@ find_package(octomap_msgs REQUIRED)
 
 add_library(swarm_octomap STATIC
         src/OctoMapBuilder.cpp
+        src/OctoMapMerger.cpp
 )
 target_include_directories(swarm_octomap PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -54,6 +55,7 @@ install(
         include/swarm_controller/Pose3D.hpp
         include/swarm_controller/RayReturn.hpp
         include/swarm_controller/OctoMapBuilder.hpp
+        include/swarm_controller/OctoMapMerger.hpp
         include/swarm_controller/OctoMapBuilderNode.hpp
         include/swarm_controller/IExplorationStrategy.hpp
         include/swarm_controller/FrontierExplorationStrategy.hpp
@@ -83,6 +85,16 @@ target_include_directories(octomap_builder PUBLIC
 target_link_libraries(octomap_builder swarm_octomap)
 ament_target_dependencies(octomap_builder rclcpp sensor_msgs tf2 tf2_ros octomap_msgs)
 
+add_executable(global_map_merger
+        src/GlobalMapMergerNode.cpp
+)
+target_include_directories(global_map_merger PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(global_map_merger swarm_octomap)
+ament_target_dependencies(global_map_merger rclcpp diagnostic_msgs octomap_msgs)
+
 add_executable(single_drone_explorer
         src/SingleDroneExplorerNode.cpp
         src/SingleDroneExplorerMain.cpp
@@ -99,7 +111,7 @@ ament_target_dependencies(
 )
 
 install(
-        TARGETS octomap_builder single_drone_explorer
+        TARGETS octomap_builder global_map_merger single_drone_explorer
         DESTINATION lib/${PROJECT_NAME}
 )
 install(
@@ -109,11 +121,34 @@ install(
 
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
+    find_package(std_msgs REQUIRED)
+
+    add_executable(
+            global_map_late_subscriber_probe
+            test/GlobalMapLateSubscriberProbe.cpp
+    )
+    target_link_libraries(global_map_late_subscriber_probe swarm_octomap)
+    ament_target_dependencies(
+            global_map_late_subscriber_probe
+            rclcpp diagnostic_msgs octomap_msgs std_msgs
+    )
+    install(
+            TARGETS global_map_late_subscriber_probe
+            DESTINATION lib/${PROJECT_NAME}
+    )
 
     ament_add_gtest(TestOctoMapBuilder test/TestOctoMapBuilder.cpp)
     if(TARGET TestOctoMapBuilder)
         target_link_libraries(TestOctoMapBuilder swarm_octomap)
         target_include_directories(TestOctoMapBuilder PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
+    ament_add_gtest(TestOctoMapMerger test/TestOctoMapMerger.cpp)
+    if(TARGET TestOctoMapMerger)
+        target_link_libraries(TestOctoMapMerger swarm_octomap)
+        target_include_directories(TestOctoMapMerger PUBLIC
                 $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         )
     endif()
@@ -197,6 +232,11 @@ if(BUILD_TESTING)
             test/test_multi_drone_exploration_integration.py
             RUNNER "${RUNNER}"
             TIMEOUT 180
+    )
+    add_launch_test(
+            test/test_global_map_merger_integration.py
+            RUNNER "${RUNNER}"
+            TIMEOUT 120
     )
 endif()
 

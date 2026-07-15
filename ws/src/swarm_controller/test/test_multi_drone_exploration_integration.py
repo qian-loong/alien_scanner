@@ -64,6 +64,8 @@ class TestMultiDroneExplorationIntegration(unittest.TestCase):
         self.maps = {i: [] for i in range(3)}
         self.goals = {i: [] for i in range(3)}
         self.diagnostics = {i: [] for i in range(3)}
+        self.global_maps = []
+        self.global_diagnostics = []
         for i in range(3):
             ns = f'/drone_{i}'
             self.node.create_subscription(
@@ -76,6 +78,14 @@ class TestMultiDroneExplorationIntegration(unittest.TestCase):
                 self.diagnostics[i].append,
                 transient_qos,
             )
+        self.node.create_subscription(
+            Octomap, '/global_map', self.global_maps.append, transient_qos)
+        self.node.create_subscription(
+            DiagnosticArray,
+            '/global_map_diagnostics',
+            self.global_diagnostics.append,
+            transient_qos,
+        )
 
     def tearDown(self):
         self.node.destroy_node()
@@ -119,6 +129,14 @@ class TestMultiDroneExplorationIntegration(unittest.TestCase):
                     return False
         return True
 
+    def _global_diagnostic_values(self):
+        if not self.global_diagnostics:
+            return {}
+        for status in self.global_diagnostics[-1].status:
+            if status.name == 'global_map_merger':
+                return {item.key: item.value for item in status.values}
+        return {}
+
     def test_each_explorer_receives_two_fresh_peers(self):
         self._spin_until(
             lambda: all(
@@ -139,6 +157,41 @@ class TestMultiDroneExplorationIntegration(unittest.TestCase):
             self.assertAlmostEqual(
                 float(values['required_vertical_clearance']), 0.40, places=3)
         self.assertTrue(self._peer_explorer_subscriptions_present())
+
+    def test_global_map_receives_all_sources(self):
+        self._spin_until(
+            lambda: self.global_maps
+            and self._global_diagnostic_values().get('accepted_sources') == '3',
+            timeout_sec=45.0,
+        )
+        self.assertTrue(self.global_maps, 'global_map missing')
+        message = self.global_maps[-1]
+        self.assertEqual(message.header.frame_id, 'map')
+        self.assertEqual(message.id, 'OcTree')
+        self.assertFalse(message.binary)
+        self.assertTrue(message.data)
+        values = self._global_diagnostic_values()
+        self.assertEqual(values.get('expected_sources'), '3')
+        self.assertEqual(values.get('accepted_sources'), '3')
+        self.assertGreater(int(values.get('known_voxels', '0')), 0)
+        self.assertEqual(values.get('rejected_updates'), '0')
+        self.assertLess(float(values['last_merge_duration_ms']), 1000.0)
+        self.assertLess(float(values['max_merge_duration_ms']), 1000.0)
+
+    def test_global_map_is_transient_local_for_late_subscribers(self):
+        self._spin_until(lambda: bool(self.global_maps), timeout_sec=45.0)
+        late_maps = []
+        transient_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        subscription = self.node.create_subscription(
+            Octomap, '/global_map', late_maps.append, transient_qos)
+        self._spin_until(lambda: bool(late_maps), timeout_sec=5.0)
+        self.assertTrue(late_maps, 'late subscriber did not receive global_map')
+        self.node.destroy_subscription(subscription)
 
 @launch_testing.post_shutdown_test()
 class TestMultiDroneExplorationShutdown(unittest.TestCase):

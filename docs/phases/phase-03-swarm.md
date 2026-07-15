@@ -1,6 +1,7 @@
 # Phase 3：多机未知探索与地图融合（swarm_controller）
 
-> **状态：** 🟡 进行中（3-1～3-7 已完成；下一步 3-8 `/global_map`；分支 `phase/3-swarm-controller`）
+> **状态：** 🟡 进行中（3-1～3-8 已完成；3-9 按需、3-10 待实施；分支 `phase/3-swarm-controller`）
+> **答疑与决策：** [`docs/decisions/phase-03-swarm-qa.md`](../decisions/phase-03-swarm-qa.md)
 > **上级摘要：** [`docs/xenomorph-scanner-plan.md`](../xenomorph-scanner-plan.md) §6 Phase 3  
 > **依赖：** Phase 1 [`phase-01-cave-world.md`](phase-01-cave-world.md)、Phase 2 [`phase-02-drone-scanner.md`](phase-02-drone-scanner.md)  
 > **工程约定：** [`AGENTS.md`](../../AGENTS.md)（含 §5.1 Git 分步提交）
@@ -94,7 +95,7 @@ ICaveField（真值）──仅造数──► FakeLidar（俯仰环）
 | 3-5 | 单机探索闭环 + **最小避障** | ✅ | `phase3(step5): single-drone explore loop` |
 | 3-6 | 多机 launch（`num_drones:=3`） | ✅ | `phase3(step6): multi-drone sensing launch` |
 | 3-7 | 多机探索分散（peer 启发式 + 简化前向局部规划） | ✅ | `phase3(step7): multi-drone peer-dispersion allocation` |
-| 3-8 | `/global_map` 融合 | ⬜ | `phase3(step8): global map merge` |
+| 3-8 | `/global_map` 融合 | ✅ | `phase3(step8): global map merge` |
 | 3-9 | 更强短程/全局路径规划 | ⬜ 按需 | `phase3(step9): path planner` |
 | 3-10 | 一键 swarm + 测试 + 文档验收 | ⬜ | `phase3(step10): swarm entry and tests` |
 
@@ -1674,17 +1675,328 @@ docs/
 
 ## Step 3-8：`/global_map` 融合
 
-### 设计
+> **实现状态：** 融合库、薄节点、launch / RViz 接线与测试均已实现；指定模型代码审核、
+> 15 项包级自动测试和人工 RViz 目检均已通过。
 
-- 合并各机 OctoMap（或扫描插入同一全局树）→ `/global_map`
-- 仿真：共享 `map` + `map→odom` 零变换，融合相对直接；重点是接口、QoS、可视化
-- `IMapMerger`：先具体实现，预留接口边界（见 `AGENTS.md`）
+### 目标与边界
+
+**目标：** 将 N 台无人机各自发布的完整 OctoMap 状态快照融合为共享 `map` 坐标系下的
+`/global_map`，完成里程碑 M2，并为后续全局覆盖统计、frontier 分配和路径规划提供统一地图。
+
+```text
+/drone_0/octomap ─┐
+/drone_1/octomap ─┼──► global_map_merger ──► /global_map
+/drone_2/octomap ─┘                       └─► /global_map_diagnostics
+```
+
+3-8 只承担地图融合、运行诊断、ROS 接线和 RViz 展示：
+
+- 每台 `SingleDroneExplorer` 继续使用本机 `/drone_i/octomap`
+- 不在本步实现全局 frontier 分配、岔道所有权或 task allocator
+- 不修改 3-7 的前向局部规划、peer 分散和状态机
+- 不实现多机动态避碰、路径预约或更强路径规划
+- `/cave/points` 只用于 RViz 对照，不进入融合算法
+- 不重新订阅原始扫描并构建第二套地图；融合输入以各机 OctoMap 快照为唯一来源
+
+### 分层与接口决策
+
+- 在现有 ROS-free `swarm_octomap` 库中新增具体类 `OctoMapMerger`
+- 当前只有一种状态融合语义，不创建 `IMapMerger`；出现第二种实现或运行时切换需求后再提取接口
+- 新增薄 C++ 节点可执行体 `global_map_merger`，只负责参数、消息校验/转换、节流和发布
+- 算法头文件保持无 `rclcpp` / ROS 消息依赖；节点实现放在 `src/`
+- 使用标准 `octomap_msgs/msg/Octomap` 和 `diagnostic_msgs/msg/DiagnosticArray`，不新增自定义接口
+
+### 输入契约
+
+每个 `source_topics` 元素同时作为稳定来源标识。节点启动时先解析为绝对话题名，空字符串、
+重复项及解析后别名重复均拒绝启动。
+
+每条输入消息必须满足：
+
+- `header.frame_id == map_frame`，默认 `map`；不在本步对整棵 OctoMap 做 TF 变换
+- `header.stamp` 非零，并且相对该来源最后接受/待处理时间戳严格递增
+- `binary == false`，当前契约只接收 `fullMapToMsg` 产生的完整状态图
+- 反序列化结果能够 `dynamic_cast` 为 `octomap::OcTree`
+- 输入树 resolution 与配置 resolution 一致，只允许浮点比较容差，不隐式重采样
+- 序列化 `data` 大小和规范化后的体素数量均未超过资源上限
+
+成功反序列化得到的**零叶节点 `OcTree` 是合法空快照**，表示清除该来源的全部贡献；
+空 frame、错误类型、错误 binary 标志或无法反序列化的数据才是非法消息。
+
+当前多机仿真中的各本机 OctoMap 已经由 `OctoMapBuilderNode` 变换到共享 `map`，因此上述
+严格同帧契约不依赖 `map→drone_i/odom` 再次转换。
+
+### 融合语义
+
+本机 OctoMap 是传感器证据累积后的**状态快照**，不是可以再次累计的独立射线证据。
+因此 merger 不把重复完整消息反复传给 `updateNode()`，而是按来源替换贡献：
+
+1. 将新树规范化为该来源唯一、按 key 排序的
+   `VoxelRecord{OcTreeKey, Free|Occupied}` 序列。
+2. 新快照与该来源旧快照做差分，删除旧贡献并加入新贡献。
+3. 每个全局 max-depth key 保存 `free_sources` 和 `occupied_sources` 计数。
+4. 派生全局状态固定为：
+   - `occupied_sources > 0` → `Occupied`
+   - 否则 `free_sources > 0` → `Free`
+   - 否则 → `Unknown`，从输出树删除该 key
+5. 该规则必须满足幂等、交换、结合以及来源处理顺序无关。
+
+输出 `/global_map` 是保守状态合并图，不宣称保留各本机树的原始概率证据。对变化 key：
+
+- `Occupied` 使用 `setNodeValue(key, getClampingThresMaxLog(), true)`
+- `Free` 使用 `setNodeValue(key, getClampingThresMinLog(), true)`
+- `Unknown` 使用 `deleteNode(key)`
+- 批次结束后调用一次 `updateInnerOccupancy()`
+- 禁止在 merger 内调用 `updateNode()`，禁止自动 `prune()`
+
+occupied 优先是安全侧决策：不同来源对同一体素冲突时保留障碍，不让一份 free 快照覆盖
+另一份 occupied 快照。
+
+### 层级叶节点规范化
+
+输入树可能含经过压缩的浅层 leaf。规范化不能只写 leaf 中心点：
+
+1. 对每个 leaf 计算 `level = tree_depth - leaf_depth` 和边长体素数 `1 << level`。
+2. 使用 leaf 的 index key 作为覆盖区起点，枚举其立方体覆盖的全部 max-depth key。
+3. 第一遍只用 `uint64_t` 做乘法、加法和溢出检查，计算展开总数并验证上限。
+4. 通过预检后才分配临时序列并执行第二遍展开、排序和去重。
+
+浅层 leaf、总展开数、全局预计 key 数任一越界时，整条来源更新拒绝；不得留下中心抽样、
+部分展开或半提交状态。
+
+### ROS-free `OctoMapMerger`
+
+建议的具体 API：
+
+```cpp
+struct OctoMapMergerConfig {
+    double resolution {0.1};
+    std::size_t max_voxels_per_source {5'000'000U};
+    std::size_t max_global_voxels {10'000'000U};
+};
+
+enum class SourceUpdateStatus {
+    AcceptedChanged,
+    AcceptedUnchanged,
+    Invalid,
+};
+
+struct SourceUpdateResult {
+    SourceUpdateStatus status;
+    bool global_changed {false};
+    std::uint64_t source_revision {0U};
+    std::uint64_t global_revision {0U};
+    std::size_t added_keys {0U};
+    std::size_t removed_keys {0U};
+    std::size_t flipped_keys {0U};
+};
+
+class OctoMapMerger {
+public:
+    explicit OctoMapMerger(const OctoMapMergerConfig& config);
+
+    SourceUpdateResult updateSource(
+        const std::string& source_id,
+        const octomap::OcTree& source);
+    SourceUpdateResult removeSource(const std::string& source_id);
+
+    const octomap::OcTree& tree() const;
+    std::uint64_t sourceRevision() const;
+    std::uint64_t globalRevision() const;
+    std::size_t sourceCount() const;
+    std::size_t knownCount() const;
+    std::size_t freeCount() const;
+    std::size_t occupiedCount() const;
+};
+```
+
+修订语义明确分为：
+
+- `source_revision`：任一来源的规范快照内容发生变化时递增
+- `global_revision`：派生全局体素状态实际发生变化时递增
+- 来源变化可能被其他来源遮蔽，此时 source revision 递增而 global revision 不变
+- `AcceptedUnchanged` 不增加两类 revision，但合法新观测时间仍可刷新输出消息时间戳
+
+所有可预期的配置、resolution、展开上限和全局上限错误必须在提交前完成验证；错误返回时
+来源快照、贡献计数、输出树和两类 revision 均保持不变。资源上限用于在进入提交阶段前
+排除可预期内存风险，不把 `std::bad_alloc` 定义为可恢复业务错误。
+
+### 资源上限
+
+| 参数 | 默认值 | 作用 |
+|------|------:|------|
+| `max_serialized_bytes_per_source` | `67,108,864`（64 MiB） | 反序列化前限制单条 `Octomap.data` |
+| `max_voxels_per_source` | `5,000,000` | 限制浅层 leaf 展开及单来源快照 |
+| `max_global_voxels` | `10,000,000` | 限制派生全局 unique key 数 |
+
+三个上限必须为正值，launch 显式传给节点。节点还必须使用溢出安全乘法检查
+`source_count × max_voxels_per_source`，使来源贡献总量存在确定上界。更新前根据新旧差分
+预计算 global key 数，超过上限时原子拒绝并保留上一次合法全局图。
+
+诊断同时发布当前使用量和上限；达到 80% 时进入 WARN，但不自动删除来源地图。
+
+### 节点与时序
+
+`GlobalMapMergerNode` 参数：
+
+| 参数 | 默认值 | 约束 / 语义 |
+|------|------:|-------------|
+| `map_frame` | `map` | 所有输入与输出的唯一坐标系 |
+| `source_topics` | launch 生成 | 非空、解析后绝对且唯一 |
+| `output_topic` | `global_map` | 根命名空间下解析为 `/global_map` |
+| `diagnostics_topic` | `global_map_diagnostics` | 标准诊断输出 |
+| `resolution` | `0.1` | `>0` 且 finite；必须等于来源 resolution |
+| `merge_rate` | `1.0 Hz` | `>0` 且 finite；限制全图处理/发布频率 |
+| `source_stale_timeout` | `5.0 s` | 只影响诊断，不删除地图贡献 |
+| 三项资源上限 | 见上表 | 必须为正值 |
+
+QoS：
+
+- 每个来源：reliable + transient-local + keep-last(1)
+- `/global_map`：reliable + transient-local + keep-last(1)
+- `/global_map_diagnostics`：reliable + transient-local + keep-last(1)
+
+回调只做廉价 envelope 校验并锁存每个来源最新 `SharedPtr`：
+
+- `received_count` 统计所有到达消息
+- 较新消息覆盖尚未处理的 pending 时递增 `coalesced_count`，不计为 rejected
+- 非递增 stamp、frame/binary/大小错误在回调阶段拒绝
+- timer 按解析后的绝对 topic 名稳定排序处理每来源至多一个最新 pending
+- 在锁内取走 pending，在锁外反序列化和调用 ROS-free merger
+
+来源健康分别记录：
+
+- `last_received_steady`：最后到达消息，用于区分链路是否仍有流量
+- `last_accepted_steady`：最后合法快照，只用它判定 stale
+- 持续发送非法消息不得掩盖已有地图已经 stale
+- stale 来源贡献继续保留；只有显式 `removeSource()` 或合法空快照才清除
+
+一次 timer 批次只要处理了至少一个合法新快照，最多发布一次 full `/global_map`；没有合法处理
+则不发布。输出 `header.stamp` 取所有当前已接受来源 observation stamp 的最大值，含义是
+“全局快照包含的最新观测时间”；该规则依赖本项目各机共享 ROS 时钟。即使内容不变，合法
+新 observation 也允许刷新消息 stamp，但不得增加 `global_revision`。
+
+### 诊断
+
+`/global_map_diagnostics` 中 `DiagnosticStatus.name` 固定为 `global_map_merger`，测试按 name
+查找，不依赖数组位置。至少包含：
+
+- expected / received / missing / stale source 数量及来源列表
+- received / coalesced / accepted / unchanged / rejected update 计数
+- source revision / global revision
+- known / free / occupied / per-source voxel 数
+- 三项资源上限、利用率、最近一次与最大 merge duration
+- 最近一次拒绝来源和分类原因：envelope、deserialize、tree type、resolution、resource limit
+
+未收到任何合法来源时为 WARN；存在 invalid/stale 来源时为 WARN；全部来源合法且资源利用率
+低于预警线时为 OK。诊断异常不得自动改变地图内容。
+
+### Launch / RViz
+
+- 在 `multi_drone_exploration.launch.py` 中增加根命名空间 `global_map_merger`
+- 根据 `num_drones` 生成绝对 `source_topics=[/drone_0/octomap, ...]`
+- 新增 `enable_global_map:=true`、`global_map.merge_rate`、stale timeout 和三项资源上限参数
+- 3-7 explorer 的 `octomap` 订阅保持不变，禁止改接 `/global_map`
+- `swarm_exploration.rviz` 新增 `/global_map` 的 OctoMap OccupancyGrid 显示并默认开启
+- 三个本机 OctoMap 显示保留但默认关闭，避免重叠颜色被误判为 ghosting
+- 3-10 再提供最终 `swarm.launch.xml`；3-8 不提前扩展一键总入口
+
+### 测试
+
+**gtest：`TestOctoMapMerger`（算法权威层）**
+
+- 独有区域并集、相同状态重叠、occupied/free 冲突、unknown 不覆盖 known
+- 来源顺序变化和重复同源快照：状态、计数和序列化语义保持幂等
+- 来源快照替换：删除旧独有 key、保留其他来源共享 key、支持 free/occupied 翻转
+- 合法空快照和 `removeSource()` 正确清除贡献；最后一个已知 key 删除后物理 OcTree 为零叶树，
+  不保留可查询或可序列化的 root leaf
+- 来源变化被其他来源遮蔽时，仅 source revision 增长
+- 派生状态变化时 global revision 精确增长一次
+- pruned free/occupied leaf 覆盖的全部 max-depth key 正确，不是中心抽样
+- 非法 config/source id/resolution、展开乘法溢出、每源/全局上限失败均原子拒绝
+- added/removed/flipped、known/free/occupied/source 统计准确
+
+**launch_testing（ROS 接线层）**
+
+- 三机 `/drone_i/octomap` 保持正常，`/global_map` 为 `map` / `OcTree` / `binary=false` / 非空
+- `global_map_merger` 诊断最终看到三个 accepted sources，无资源拒绝
+- 测试触发后才创建订阅的 C++ probe 能够收到 transient-local `/global_map`，通过官方
+  `msgToMap()` 反序列化为 `OcTree` 并核验叶节点数
+- 受控消息验证错误 frame、binary、stamp 和数据大小被拒，旧合法图保持不变
+- 受控高频输入验证 pending 覆盖计入 coalesced，不计 rejected
+- 非法新消息不刷新 `last_accepted_steady`；stale 告警不删除地图
+- launch 测试只证明消息/QoS/诊断接线，不使用非确定三机轨迹证明融合算法
+
+**回归与目检**
+
+- 运行 `swarm_controller` 全部既有 gtest 和 launch_testing
+- 确认 3-7 motion goal、peer 状态和本机规划输入不因 merger 改变
+- RViz 对照 `/cave/points` 只检查形状合理性和显示层，不作为自动正确性证据
+- 三机 0.1 m 场景中无资源上限拒绝、无 OOM；merge duration 的绝大多数样本低于 1 s 周期
+
+### 文件清单
+
+```text
+ws/src/swarm_controller/
+├── include/swarm_controller/
+│   └── OctoMapMerger.hpp
+├── src/
+│   ├── OctoMapMerger.cpp
+│   └── GlobalMapMergerNode.cpp
+├── launch/
+│   └── multi_drone_exploration.launch.py
+├── config/
+│   └── swarm_exploration.rviz
+├── test/
+│   ├── GlobalMapLateSubscriberProbe.cpp
+│   ├── TestOctoMapMerger.cpp
+│   └── test_global_map_merger_integration.py
+├── CMakeLists.txt
+└── package.xml
+
+docs/
+├── phases/
+│   └── phase-03-swarm.md
+└── xenomorph-scanner-plan.md
+```
+
+`OctoMapMerger.cpp` 加入现有 `swarm_octomap`；`global_map_merger` executable 链接该库并使用
+`rclcpp`、`octomap_msgs`、`diagnostic_msgs`。沿用当前 C++17、静态库 export 和安装方式。
+
+### 实施顺序
+
+1. `OctoMapMerger`、资源预检和确定性 gtest
+2. 薄 `GlobalMapMergerNode`、QoS、coalescing、诊断和受控 launch test
+3. 接入 `multi_drone_exploration.launch.py` 与 RViz
+4. 容器内构建、包级全量 gtest / launch_testing 和性能诊断
+5. RViz 目检 `/global_map`，确认 3-7 行为回归不变
+6. 指定代码审核模型复核，修复后等待用户验收与提交授权
 
 ### 验收（里程碑 M2 / 主路径达标）
 
-- `/global_map` 随探索增长
-- RViz 可看；与 `/cave/points` 对照形状合理（仅目检）
-- ghosting 可接受或参数可调
+- 确定性双来源测试证明各自独有区域都进入全局图，occupied/free 冲突符合保守规则
+- 同一完整快照重复输入不增加概率权重，不改变 global revision
+- 同源合法替换能够删除或翻转旧贡献，不产生永久 ghosting
+- 三机运行中 `/global_map` 持续发布且 late subscriber 可获取完整快照
+- `/global_map` 只依赖各机 OctoMap；零洞穴真值输入、零隐式重采样
+- stale 来源不自动删图；非法或超限更新不破坏最后合法全局图
+- explorer 继续使用本机图；3-8 不引入全局调度、规划或动态避碰耦合
+- 资源使用受三项上限约束，当前三机 0.1 m 场景无超限或 OOM
+- RViz 全局图与 `/cave/points` 形状对应合理，仅作为人工目检证据
+
+对当前 3-3 单调构图来源，正常探索时 global known 集合应总体增长；merger 本身不强制
+known 单调锁存，必须忠实反映来源合法快照的删除、重置与状态翻转。
+
+### 审核与实施结果
+
+- **方案与代码审核模型：** GPT-5.6 Terra High（`gpt-5.6-terra`，reasoning effort `high`）
+- **审核结论：** 最终复核未发现置信度不低于 80% 的待修问题；完整快照替换、occupied 优先、
+  pruned leaf 展开、source/global 双 revision、资源上限、QoS 与本机规划隔离符合本步契约
+- **审核修复：** 深层非法高时间戳不再永久抬高来源接收 watermark；诊断发布每个绝对来源
+  topic 的 voxel 数、三类当前使用量与利用率；全局贡献降为零时显式清空 OctoMap root；
+  受控 C++ probe 覆盖合法空 OcTree 的清除、重新发布、transient-local 重放和官方反序列化
+- **自动验证：** `swarm_controller` 构建通过；8 个 gtest 与 7 个 launch test 共 15/15 通过
+- **当前状态：** Step 3-8 实现、自动验收和人工目检完成，可进入后续步骤与提交流程
 
 ---
 
@@ -1729,7 +2041,7 @@ ros2 launch swarm_controller swarm.launch.xml num_drones:=3
 ## 硬验收判据
 
 1. **零真值依赖：** 规划 / 调度不使用洞穴拓扑真值  
-2. **覆盖单调：** 探索过程中 known 体积总体不降  
+2. **覆盖演进：** 当前单调本地图输入下 known 体积总体增长；融合器允许合法来源快照删除、重置或翻转
 3. **不穿已知墙：** 不进入 OctoMap occupied  
 4. **前视有效：** 默认 `ring_pitch≠0` 时斜前方有观测  
 5. **多机互补：** 全局覆盖明显优于单机同时长  
@@ -1755,7 +2067,7 @@ ros2 launch swarm_controller swarm.launch.xml num_drones:=3
 [x] 3-5  单机闭环 + 最小避障          ← M1
 [x] 3-6  多机 launch
 [x] 3-7  多机探索分散
-[ ] 3-8  /global_map                   ← M2
+[x] 3-8  /global_map                   ← M2
 [ ] 3-9  更强路径规划（按需）
 [ ] 3-10 一键验收 + 文档
 ```

@@ -195,7 +195,7 @@ ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 
 ---
 
-### Phase 3：多机未知探索与地图融合 — **进行中（3-1～3-7 已完成；下一步 3-8）**
+### Phase 3：多机未知探索与地图融合 — **进行中（3-1～3-8 已完成）**
 
 **分支：** `phase/3-swarm-controller`
 
@@ -212,7 +212,7 @@ ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 | 3-5 | 单机探索闭环 + 最小避障（M1） | ✅ |
 | 3-6 | 多机 launch（`num_drones:=3`）感知栈 | ✅ |
 | 3-7 | 多机探索分散（peer 启发式 + 简化前向局部规划） | ✅ |
-| 3-8 | `/global_map` 融合 | ⬜ |
+| 3-8 | `/global_map` 融合 | ✅ |
 | 3-9 | 更强路径规划（按需） | ⬜ |
 | 3-10 | 一键 swarm + 测试验收 | ⬜ |
 
@@ -496,8 +496,8 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 [ ] 5. （可选）ros2 bag 录制 + README 演示 GIF
 ```
 
-**当前进度：** Phase 1、Phase 2 已完成；Phase 3 已完成 3-1～3-7，下一步为
-3-8 `/global_map`（见
+**当前进度：** Phase 1、Phase 2 已完成；Phase 3 的 3-1～3-8 已完成，后续为 3-9 按需
+路径规划与 3-10 一键验收（见
 [`docs/phases/phase-03-swarm.md`](phases/phase-03-swarm.md)）。
 
 ---
@@ -525,5 +525,5 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 | 字段 | 值 |
 |------|-----|
 | 创建日期 | 2026-07-06 |
-| 最后更新 | 2026-07-14 |
-| 状态 | Phase 1–2 已完成；Phase 3 进行中（3-1～3-7 已完成，下一步 3-8）；分步细节见 `docs/phases/` |
+| 最后更新 | 2026-07-15 |
+| 状态 | Phase 1–2 已完成；Phase 3 进行中（3-1～3-8 已完成）；分步细节见 `docs/phases/` |

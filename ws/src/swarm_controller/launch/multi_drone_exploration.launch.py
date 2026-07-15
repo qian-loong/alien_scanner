@@ -1,7 +1,8 @@
-"""Multi-drone exploration with peer dispersion.
+"""Multi-drone exploration with peer dispersion and a fused global map.
 
 Reuses 3-6 sensing + per-drone OctoMap, then mounts N SingleDroneExplorer nodes
-with peer_namespaces for soft/hard dispersion.
+with peer_namespaces for soft/hard dispersion. The global map remains an output;
+each explorer continues planning against its own OctoMap.
 """
 
 from launch import LaunchDescription
@@ -47,6 +48,8 @@ def _launch_setup(context, *args, **kwargs):
     show_rviz = LaunchConfiguration('show_rviz').perform(context).lower() in (
         'true', '1', 'yes',
     )
+    enable_global_map = LaunchConfiguration('enable_global_map').perform(
+        context).lower() in ('true', '1', 'yes')
     altitude_min_clearance = _vertical_clearance(context)
 
     sensing_launch = PathJoinSubstitution([
@@ -179,6 +182,37 @@ def _launch_setup(context, *args, **kwargs):
             )
         )
 
+    if enable_global_map:
+        actions.append(
+            Node(
+                package='swarm_controller',
+                executable='global_map_merger',
+                name='global_map_merger',
+                output='screen',
+                emulate_tty=True,
+                parameters=[{
+                    'map_frame': 'map',
+                    'source_topics': [
+                        f'/drone_{i}/octomap' for i in range(num_drones)
+                    ],
+                    'output_topic': 'global_map',
+                    'diagnostics_topic': 'global_map_diagnostics',
+                    'resolution': float(
+                        LaunchConfiguration('resolution').perform(context)),
+                    'merge_rate': float(LaunchConfiguration(
+                        'global_map.merge_rate').perform(context)),
+                    'source_stale_timeout': float(LaunchConfiguration(
+                        'global_map.source_stale_timeout').perform(context)),
+                    'max_serialized_bytes_per_source': int(LaunchConfiguration(
+                        'global_map.max_serialized_bytes_per_source').perform(context)),
+                    'max_voxels_per_source': int(LaunchConfiguration(
+                        'global_map.max_voxels_per_source').perform(context)),
+                    'max_global_voxels': int(LaunchConfiguration(
+                        'global_map.max_global_voxels').perform(context)),
+                }],
+            )
+        )
+
     if LaunchConfiguration('enable_truth_audit').perform(context).lower() == 'true':
         audit_parameters = {
             'odom_topics': [f'/drone_{i}/odom' for i in range(num_drones)],
@@ -251,6 +285,17 @@ def generate_launch_description():
         DeclareLaunchArgument('show_rviz', default_value='true'),
         DeclareLaunchArgument('show_cave_truth', default_value='false'),
         DeclareLaunchArgument('enable_truth_audit', default_value='false'),
+        DeclareLaunchArgument('enable_global_map', default_value='true'),
+        DeclareLaunchArgument('global_map.merge_rate', default_value='1.0'),
+        DeclareLaunchArgument(
+            'global_map.source_stale_timeout', default_value='5.0'),
+        DeclareLaunchArgument(
+            'global_map.max_serialized_bytes_per_source',
+            default_value='67108864'),
+        DeclareLaunchArgument(
+            'global_map.max_voxels_per_source', default_value='5000000'),
+        DeclareLaunchArgument(
+            'global_map.max_global_voxels', default_value='10000000'),
         DeclareLaunchArgument('resolution', default_value='0.1'),
         DeclareLaunchArgument('max_range', default_value='30.0'),
         DeclareLaunchArgument('ring_pitch_rad', default_value='0.35'),

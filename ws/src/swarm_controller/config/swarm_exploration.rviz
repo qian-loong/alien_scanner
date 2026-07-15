@@ -45,6 +45,23 @@ Visualization Manager:
       Max. Height Display: 3.4028234663852886e+38
       Max. Octree Depth: 16
       Min. Height Display: -3.4028234663852886e+38
+      Name: GlobalMap
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_map
+      Value: true
+      Voxel Alpha: 0.70
+      Voxel Coloring: Z-Axis
+      Voxel Rendering: Occupied Voxels
+    - Class: octomap_rviz_plugins/OccupancyGrid
+      Enabled: false
+      Max. Height Display: 3.4028234663852886e+38
+      Max. Octree Depth: 16
+      Min. Height Display: -3.4028234663852886e+38
       Name: OctoMap0
       Topic:
         Depth: 5
@@ -53,12 +70,12 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /drone_0/octomap
-      Value: true
+      Value: false
       Voxel Alpha: 0.55
       Voxel Coloring: Z-Axis
       Voxel Rendering: Occupied Voxels
     - Class: octomap_rviz_plugins/OccupancyGrid
-      Enabled: true
+      Enabled: false
       Max. Height Display: 3.4028234663852886e+38
       Max. Octree Depth: 16
       Min. Height Display: -3.4028234663852886e+38
@@ -70,12 +87,12 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /drone_1/octomap
-      Value: true
+      Value: false
       Voxel Alpha: 0.55
       Voxel Coloring: Z-Axis
       Voxel Rendering: Occupied Voxels
     - Class: octomap_rviz_plugins/OccupancyGrid
-      Enabled: true
+      Enabled: false
       Max. Height Display: 3.4028234663852886e+38
       Max. Octree Depth: 16
       Min. Height Display: -3.4028234663852886e+38
@@ -87,7 +104,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /drone_2/octomap
-      Value: true
+      Value: false
       Voxel Alpha: 0.55
       Voxel Coloring: Z-Axis
       Voxel Rendering: Occupied Voxels
