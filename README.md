@@ -56,5 +56,5 @@ ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 
 - **未知探索**（规划不读洞穴真值）；**俯仰垂直环**；**OctoMap**；多机任务调度；`/global_map`
 - 当前入口：`ros2 launch swarm_controller multi_drone_exploration.launch.py`
-- 当前状态：3-8 `/global_map` 融合已完成；后续为 3-9 按需路径规划与 3-10 一键验收
+- 当前状态：3-8 `/global_map` 融合已完成；下一步为 3-9 全局 frontier 多机任务分配
 - 分步与验收：[`docs/phases/phase-03-swarm.md`](docs/phases/phase-03-swarm.md)

@@ -22,6 +22,9 @@ namespace SwarmController {
         float heading_weight {0.25F};
         /// Soft penalty weight: utility -= w * Σ 1/(1+d_xy) over peers/goals.
         float dispersion_weight {0.35F};
+        float task_progress_weight {1.0F};
+        float task_min_progress {0.15F};
+        float task_max_heading_error {1.05F};
         /// Hard filter radius (m, XY) against active peer goals only.
         float min_peer_goal_separation {0.8F};
     };

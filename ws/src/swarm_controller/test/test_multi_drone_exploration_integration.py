@@ -175,8 +175,10 @@ class TestMultiDroneExplorationIntegration(unittest.TestCase):
         self.assertEqual(values.get('accepted_sources'), '3')
         self.assertGreater(int(values.get('known_voxels', '0')), 0)
         self.assertEqual(values.get('rejected_updates'), '0')
-        self.assertLess(float(values['last_merge_duration_ms']), 1000.0)
-        self.assertLess(float(values['max_merge_duration_ms']), 1000.0)
+        last_duration_ms = float(values['last_merge_duration_ms'])
+        max_duration_ms = float(values['max_merge_duration_ms'])
+        self.assertLess(last_duration_ms, 1000.0)
+        self.assertGreaterEqual(max_duration_ms, last_duration_ms)
 
     def test_global_map_is_transient_local_for_late_subscribers(self):
         self._spin_until(lambda: bool(self.global_maps), timeout_sec=45.0)

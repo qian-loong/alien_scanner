@@ -15,6 +15,7 @@ find_package(diagnostic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(swarm_controller_interfaces REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -35,10 +36,13 @@ target_link_libraries(swarm_octomap PUBLIC ${OCTOMAP_LIBRARIES})
 target_compile_features(swarm_octomap PUBLIC cxx_std_17)
 
 add_library(swarm_exploration STATIC
+        src/GlobalFrontierDetector.cpp
+        src/GlobalTaskAllocator.cpp
         src/FrontierExplorationStrategy.cpp
         src/KnownFreePathChecker.cpp
         src/PeerStateTracker.cpp
         src/PlanningSnapshotGuard.cpp
+        src/TaskLeaseTracker.cpp
         src/SingleDroneExplorer.cpp
 )
 target_include_directories(swarm_exploration PUBLIC
@@ -63,6 +67,10 @@ install(
         include/swarm_controller/PeerStateTracker.hpp
         include/swarm_controller/PlanningSnapshotGuard.hpp
         include/swarm_controller/ExplorationDiagnostics.hpp
+        include/swarm_controller/ExplorationTask.hpp
+        include/swarm_controller/GlobalFrontierDetector.hpp
+        include/swarm_controller/GlobalTaskAllocator.hpp
+        include/swarm_controller/TaskLeaseTracker.hpp
         include/swarm_controller/SingleDroneExplorer.hpp
         include/swarm_controller/SingleDroneExplorerNode.hpp
         DESTINATION include/swarm_controller
@@ -107,11 +115,25 @@ target_link_libraries(single_drone_explorer swarm_exploration)
 ament_target_dependencies(
         single_drone_explorer
         rclcpp diagnostic_msgs geometry_msgs nav_msgs octomap_msgs tf2 tf2_geometry_msgs tf2_ros
-        visualization_msgs
+        visualization_msgs swarm_controller_interfaces
+)
+
+add_executable(global_task_allocator
+        src/GlobalTaskAllocatorNode.cpp
+)
+target_include_directories(global_task_allocator PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(global_task_allocator swarm_exploration)
+ament_target_dependencies(
+        global_task_allocator
+        rclcpp diagnostic_msgs geometry_msgs nav_msgs octomap_msgs tf2 tf2_geometry_msgs tf2_ros
+        visualization_msgs swarm_controller_interfaces
 )
 
 install(
-        TARGETS octomap_builder global_map_merger single_drone_explorer
+        TARGETS octomap_builder global_map_merger single_drone_explorer global_task_allocator
         DESTINATION lib/${PROJECT_NAME}
 )
 install(
@@ -134,6 +156,20 @@ if(BUILD_TESTING)
     )
     install(
             TARGETS global_map_late_subscriber_probe
+            DESTINATION lib/${PROJECT_NAME}
+    )
+
+    add_executable(
+            global_task_allocator_integration_probe
+            test/GlobalTaskAllocatorIntegrationProbe.cpp
+    )
+    target_link_libraries(global_task_allocator_integration_probe swarm_exploration)
+    ament_target_dependencies(
+            global_task_allocator_integration_probe
+            rclcpp diagnostic_msgs nav_msgs octomap_msgs std_msgs
+    )
+    install(
+            TARGETS global_task_allocator_integration_probe
             DESTINATION lib/${PROJECT_NAME}
     )
 
@@ -188,6 +224,30 @@ if(BUILD_TESTING)
         )
     endif()
 
+    ament_add_gtest(TestTaskLeaseTracker test/TestTaskLeaseTracker.cpp)
+    if(TARGET TestTaskLeaseTracker)
+        target_link_libraries(TestTaskLeaseTracker swarm_exploration)
+        target_include_directories(TestTaskLeaseTracker PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
+    ament_add_gtest(TestGlobalFrontierDetector test/TestGlobalFrontierDetector.cpp)
+    if(TARGET TestGlobalFrontierDetector)
+        target_link_libraries(TestGlobalFrontierDetector swarm_exploration)
+        target_include_directories(TestGlobalFrontierDetector PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
+    ament_add_gtest(TestGlobalTaskAllocator test/TestGlobalTaskAllocator.cpp)
+    if(TARGET TestGlobalTaskAllocator)
+        target_link_libraries(TestGlobalTaskAllocator swarm_exploration)
+        target_include_directories(TestGlobalTaskAllocator PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
     ament_add_gtest(TestSingleDroneExplorer test/TestSingleDroneExplorer.cpp)
     if(TARGET TestSingleDroneExplorer)
         target_link_libraries(TestSingleDroneExplorer swarm_exploration)
@@ -235,6 +295,16 @@ if(BUILD_TESTING)
     )
     add_launch_test(
             test/test_global_map_merger_integration.py
+            RUNNER "${RUNNER}"
+            TIMEOUT 120
+    )
+    add_launch_test(
+            test/test_global_task_allocator_integration.py
+            RUNNER "${RUNNER}"
+            TIMEOUT 120
+    )
+    add_launch_test(
+            test/test_global_task_allocator_stale_replay.py
             RUNNER "${RUNNER}"
             TIMEOUT 120
     )

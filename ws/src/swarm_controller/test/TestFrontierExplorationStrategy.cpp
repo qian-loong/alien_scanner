@@ -252,6 +252,78 @@ namespace SwarmController {
         EXPECT_LT(twice.goal->utility, once.goal->utility);
     }
 
+    TEST(FrontierExplorationStrategyTest, AssignedTaskGuidesHopAndDisablesPeerGoalHardFilter)
+    {
+        octomap::OcTree tree(0.1);
+        fillFreeBox(tree, {-1.0F, -2.0F, -1.0F}, {3.0F, 2.0F, 1.0F});
+        FrontierExplorationConfig config = compactConfig();
+        config.task_progress_weight = 10.0F;
+        config.dispersion_weight = 0.0F;
+        config.min_peer_goal_separation = 10.0F;
+        GoalSelectionRequest request {originPose(), {}};
+        request.active_peer_goals = {{2.0F, 1.0F, 0.0F}};
+        request.task_guidance = TaskGuidance {
+                true, ExplorationTaskMode::Assigned, 1U, 2U, 7U,
+                Point3f {3.0F, 1.0F, 0.0F}};
+        ExplorationDiagnostics diagnostics;
+
+        const auto result = FrontierExplorationStrategy(config).selectGoal(
+                request, tree, &diagnostics);
+
+        ASSERT_EQ(result.status, GoalSelectionStatus::Success);
+        ASSERT_TRUE(result.goal.has_value());
+        EXPECT_GT(result.goal->position.y, 0.5F);
+        EXPECT_EQ(diagnostics.peer_goal_filtered_count, 0U);
+    }
+
+    TEST(FrontierExplorationStrategyTest, AssignedHopMayPassNearbyTargetAlongTaskDirection)
+    {
+        octomap::OcTree tree(0.1);
+        fillFreeBox(tree, {-1.0F, -1.0F, -1.0F}, {3.0F, 1.0F, 1.0F});
+        GoalSelectionRequest request {originPose(), {}};
+        request.task_guidance = TaskGuidance {
+                true, ExplorationTaskMode::Assigned, 1U, 2U, 7U,
+                Point3f {0.3F, 0.0F, 0.0F}};
+
+        const auto result = FrontierExplorationStrategy(compactConfig()).selectGoal(
+                request, tree);
+
+        ASSERT_EQ(result.status, GoalSelectionStatus::Success);
+        ASSERT_TRUE(result.goal.has_value());
+        EXPECT_GT(result.goal->position.x, request.task_guidance->target.x);
+    }
+
+    TEST(FrontierExplorationStrategyTest, ReportsUnavailableWhenEveryHopOpposesAssignedTask)
+    {
+        octomap::OcTree tree(0.1);
+        fillFreeBox(tree, {-1.0F, -2.0F, -1.0F}, {3.0F, 2.0F, 1.0F});
+        GoalSelectionRequest request {originPose(), {}};
+        request.task_guidance = TaskGuidance {
+                true, ExplorationTaskMode::Assigned, 1U, 2U, 7U,
+                Point3f {-3.0F, 0.0F, 0.0F}};
+        ExplorationDiagnostics diagnostics;
+
+        const auto result = FrontierExplorationStrategy(compactConfig()).selectGoal(
+                request, tree, &diagnostics);
+
+        EXPECT_EQ(result.status, GoalSelectionStatus::TaskGuidanceUnavailable);
+        EXPECT_GT(diagnostics.task_filtered_count, 0U);
+    }
+
+
+    TEST(FrontierExplorationStrategyTest, AssignedUnknownHopsReportTaskUnavailable)
+    {
+        octomap::OcTree tree(0.1);
+        fillFreeBox(tree, {-0.2F, -0.2F, -0.2F}, {0.2F, 0.2F, 0.2F});
+        GoalSelectionRequest request {originPose(), {}};
+        request.task_guidance = TaskGuidance {
+                true, ExplorationTaskMode::Assigned, 1U, 2U, 7U,
+                Point3f {3.0F, 0.0F, 0.0F}};
+        const auto result =
+                FrontierExplorationStrategy(compactConfig()).selectGoal(request, tree);
+
+        EXPECT_EQ(result.status, GoalSelectionStatus::TaskGuidanceUnavailable);
+    }
     TEST(FrontierExplorationStrategyTest, RejectsInvalidInputAndConfiguration)
     {
         FrontierExplorationConfig invalid = compactConfig();

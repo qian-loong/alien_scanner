@@ -1,4 +1,4 @@
-"""Multi-drone exploration with peer dispersion and a fused global map.
+"""Multi-drone exploration with local safety and global frontier task ownership.
 
 Reuses 3-6 sensing + per-drone OctoMap, then mounts N SingleDroneExplorer nodes
 with peer_namespaces for soft/hard dispersion. The global map remains an output;
@@ -50,6 +50,10 @@ def _launch_setup(context, *args, **kwargs):
     )
     enable_global_map = LaunchConfiguration('enable_global_map').perform(
         context).lower() in ('true', '1', 'yes')
+    enable_task_allocation = LaunchConfiguration('task_allocation.enabled').perform(
+        context).lower() in ('true', '1', 'yes')
+    if enable_task_allocation and not enable_global_map:
+        raise RuntimeError('task allocation requires enable_global_map:=true')
     altitude_min_clearance = _vertical_clearance(context)
 
     sensing_launch = PathJoinSubstitution([
@@ -160,6 +164,20 @@ def _launch_setup(context, *args, **kwargs):
                     'peer.position_timeout': float(peer_position_timeout),
                     'peer.goal_timeout': float(peer_goal_timeout),
                     'peer.retry_interval': float(peer_retry_interval),
+                    'task.receive_watchdog': float(LaunchConfiguration(
+                        'task.receive_watchdog').perform(context)),
+                    'task.retry_interval': float(LaunchConfiguration(
+                        'task.retry_interval').perform(context)),
+                    'task.rescan_max_steps': int(LaunchConfiguration(
+                        'task.rescan_max_steps').perform(context)),
+                    'task.rescan_step_timeout': float(LaunchConfiguration(
+                        'task.rescan_step_timeout').perform(context)),
+                    'task.min_progress': float(LaunchConfiguration(
+                        'task.min_progress').perform(context)),
+                    'task.max_heading_error': float(LaunchConfiguration(
+                        'task.max_heading_error').perform(context)),
+                    'frontier.task_progress_weight': float(LaunchConfiguration(
+                        'frontier.task_progress_weight').perform(context)),
                     'motion.travel_heading_update_distance': float(
                         travel_heading_update_distance),
                     'body.robot_half_height': float(
@@ -209,6 +227,80 @@ def _launch_setup(context, *args, **kwargs):
                         'global_map.max_voxels_per_source').perform(context)),
                     'max_global_voxels': int(LaunchConfiguration(
                         'global_map.max_global_voxels').perform(context)),
+                }],
+            )
+        )
+
+    if enable_task_allocation:
+        actions.append(
+            Node(
+                package='swarm_controller',
+                executable='global_task_allocator',
+                name='global_task_allocator',
+                output='screen',
+                emulate_tty=True,
+                parameters=[{
+                    'map_frame': 'map',
+                    'drone_namespaces': [
+                        f'drone_{i}' for i in range(num_drones)
+                    ],
+                    'task_allocation.rate': float(LaunchConfiguration(
+                        'task_allocation.rate').perform(context)),
+                    'task.lease': float(LaunchConfiguration(
+                        'task.lease').perform(context)),
+                    'resolution': float(LaunchConfiguration(
+                        'resolution').perform(context)),
+                    'frontier.column_stride_voxels': int(LaunchConfiguration(
+                        'frontier.column_stride_voxels').perform(context)),
+                    'frontier.max_scanned_free_voxels': int(LaunchConfiguration(
+                        'frontier.max_scanned_free_voxels').perform(context)),
+                    'frontier.max_support_samples_per_column': int(LaunchConfiguration(
+                        'frontier.max_support_samples_per_column').perform(context)),
+                    'frontier.min_z_layers': int(LaunchConfiguration(
+                        'frontier.min_z_layers').perform(context)),
+                    'frontier.min_z_span': float(LaunchConfiguration(
+                        'frontier.min_z_span').perform(context)),
+                    'frontier.support_depth': float(LaunchConfiguration(
+                        'frontier.support_depth').perform(context)),
+                    'frontier.support_width': float(LaunchConfiguration(
+                        'frontier.support_width').perform(context)),
+                    'frontier.min_columns': int(LaunchConfiguration(
+                        'frontier.min_columns').perform(context)),
+                    'frontier.min_area': float(LaunchConfiguration(
+                        'frontier.min_area').perform(context)),
+                    'frontier.min_span': float(LaunchConfiguration(
+                        'frontier.min_span').perform(context)),
+                    'frontier.min_direction_consistency': float(
+                        LaunchConfiguration(
+                            'frontier.min_direction_consistency').perform(context)),
+                    'frontier.min_persistence_updates': int(
+                        LaunchConfiguration(
+                            'frontier.min_persistence_updates').perform(context)),
+                    'frontier.min_persistence_time': float(LaunchConfiguration(
+                        'frontier.min_persistence_time').perform(context)),
+                    'frontier.missed_update_grace': int(LaunchConfiguration(
+                        'frontier.missed_update_grace').perform(context)),
+                    'allocation.max_assignment_distance': float(
+                        LaunchConfiguration(
+                            'allocation.max_assignment_distance').perform(context)),
+                    'allocation.first_hop_distance': float(LaunchConfiguration(
+                        'allocation.first_hop_distance').perform(context)),
+                    'allocation.no_progress_timeout': float(LaunchConfiguration(
+                        'allocation.no_progress_timeout').perform(context)),
+                    'allocation.min_owner_progress': float(LaunchConfiguration(
+                        'allocation.min_owner_progress').perform(context)),
+                    'motion.timeout': 20.0,
+                    'hold.timeout': 2.0,
+                    'task.rescan_max_steps': int(LaunchConfiguration(
+                        'task.rescan_max_steps').perform(context)),
+                    'task.rescan_step_timeout': float(LaunchConfiguration(
+                        'task.rescan_step_timeout').perform(context)),
+                    'body.robot_half_height': float(LaunchConfiguration(
+                        'body.robot_half_height').perform(context)),
+                    'body.robot_radius': float(LaunchConfiguration(
+                        'body.robot_radius').perform(context)),
+                    'body.vertical_margin': float(LaunchConfiguration(
+                        'body.vertical_margin').perform(context)),
                 }],
             )
         )
@@ -286,6 +378,15 @@ def generate_launch_description():
         DeclareLaunchArgument('show_cave_truth', default_value='false'),
         DeclareLaunchArgument('enable_truth_audit', default_value='false'),
         DeclareLaunchArgument('enable_global_map', default_value='true'),
+        DeclareLaunchArgument('task_allocation.enabled', default_value='true'),
+        DeclareLaunchArgument('task_allocation.rate', default_value='1.0'),
+        DeclareLaunchArgument('task.lease', default_value='3.0'),
+        DeclareLaunchArgument('task.receive_watchdog', default_value='3.5'),
+        DeclareLaunchArgument('task.retry_interval', default_value='1.0'),
+        DeclareLaunchArgument('task.rescan_max_steps', default_value='4'),
+        DeclareLaunchArgument('task.rescan_step_timeout', default_value='2.5'),
+        DeclareLaunchArgument('task.min_progress', default_value='0.15'),
+        DeclareLaunchArgument('task.max_heading_error', default_value='1.05'),
         DeclareLaunchArgument('global_map.merge_rate', default_value='1.0'),
         DeclareLaunchArgument(
             'global_map.source_stale_timeout', default_value='5.0'),
@@ -316,7 +417,35 @@ def generate_launch_description():
         DeclareLaunchArgument('frontier.forward_distance_samples', default_value='4'),
         DeclareLaunchArgument('frontier.forward_lateral_samples', default_value='5'),
         DeclareLaunchArgument('frontier.dispersion_weight', default_value='0.35'),
+        DeclareLaunchArgument('frontier.task_progress_weight', default_value='1.0'),
         DeclareLaunchArgument('frontier.min_peer_goal_separation', default_value='0.8'),
+        DeclareLaunchArgument('frontier.column_stride_voxels', default_value='2'),
+        DeclareLaunchArgument(
+            'frontier.max_scanned_free_voxels', default_value='2000000'),
+        DeclareLaunchArgument(
+            'frontier.max_support_samples_per_column', default_value='10000'),
+        DeclareLaunchArgument('frontier.min_z_layers', default_value='5'),
+        DeclareLaunchArgument('frontier.min_z_span', default_value='0.4'),
+        DeclareLaunchArgument('frontier.support_depth', default_value='0.8'),
+        DeclareLaunchArgument('frontier.support_width', default_value='1.0'),
+        DeclareLaunchArgument('frontier.min_columns', default_value='12'),
+        DeclareLaunchArgument('frontier.min_area', default_value='0.48'),
+        DeclareLaunchArgument('frontier.min_span', default_value='0.6'),
+        DeclareLaunchArgument(
+            'frontier.min_direction_consistency', default_value='0.65'),
+        DeclareLaunchArgument(
+            'frontier.min_persistence_updates', default_value='3'),
+        DeclareLaunchArgument(
+            'frontier.min_persistence_time', default_value='2.0'),
+        DeclareLaunchArgument('frontier.missed_update_grace', default_value='2'),
+        DeclareLaunchArgument(
+            'allocation.max_assignment_distance', default_value='8.0'),
+        DeclareLaunchArgument(
+            'allocation.first_hop_distance', default_value='1.0'),
+        DeclareLaunchArgument(
+            'allocation.no_progress_timeout', default_value='35.0'),
+        DeclareLaunchArgument(
+            'allocation.min_owner_progress', default_value='0.30'),
         DeclareLaunchArgument('peer.position_timeout', default_value='2.0'),
         DeclareLaunchArgument('peer.goal_timeout', default_value='25.0'),
         DeclareLaunchArgument('peer.retry_interval', default_value='1.0'),

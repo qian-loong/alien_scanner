@@ -360,6 +360,18 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /drone_2/exploration_markers
       Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: GlobalTaskMarkers
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_task_markers
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 24; 26; 30

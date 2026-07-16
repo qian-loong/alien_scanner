@@ -87,12 +87,18 @@ namespace SwarmController {
                         [](const Point3f & point) { return isFinite(point); });
             };
             return points_are_finite(request.peer_positions)
-                   && points_are_finite(request.active_peer_goals);
+                   && points_are_finite(request.active_peer_goals)
+                   && (!request.task_guidance.has_value()
+                       || (request.task_guidance->valid
+                           && request.task_guidance->mode
+                                      == ExplorationTaskMode::Assigned
+                           && request.task_guidance->task_id != 0U
+                           && isFinite(request.task_guidance->target)));
         }
 
         void validateConfig(const FrontierExplorationConfig & config)
         {
-            const std::array<float, 12> values {
+            const std::array<float, 15> values {
                     config.forward_lookahead_min,
                     config.forward_lookahead_max,
                     config.forward_lateral_limit,
@@ -103,6 +109,9 @@ namespace SwarmController {
                     config.lateral_weight,
                     config.heading_weight,
                     config.dispersion_weight,
+                    config.task_progress_weight,
+                    config.task_min_progress,
+                    config.task_max_heading_error,
                     config.min_peer_goal_separation,
                     static_cast<float>(config.forward_distance_samples),
             };
@@ -118,6 +127,10 @@ namespace SwarmController {
                || config.safety_margin < 0.0F || config.vertical_margin < 0.0F
                || config.lateral_weight < 0.0F || config.heading_weight < 0.0F
                || config.dispersion_weight < 0.0F
+               || config.task_progress_weight < 0.0F
+               || config.task_min_progress <= 0.0F
+               || config.task_max_heading_error <= 0.0F
+               || config.task_max_heading_error > 3.14159265358979323846F
                || config.min_peer_goal_separation < 0.0F)
             {
                 throw std::invalid_argument("invalid forward local exploration config");
@@ -161,7 +174,10 @@ namespace SwarmController {
                 const Point3f & candidate, const GoalSelectionRequest & request,
                 const float minimum_separation)
         {
-            if(minimum_separation <= 0.0F) {
+            if(minimum_separation <= 0.0F
+               || (request.task_guidance.has_value()
+                   && request.task_guidance->mode == ExplorationTaskMode::Assigned))
+            {
                 return false;
             }
             return std::any_of(
@@ -261,6 +277,9 @@ namespace SwarmController {
                             case GoalSelectionStatus::NoSafeCandidate:
                                 diagnostics->last_goal_status = "NoSafeCandidate";
                                 break;
+                            case GoalSelectionStatus::TaskGuidanceUnavailable:
+                                diagnostics->last_goal_status = "TaskGuidanceUnavailable";
+                                break;
                             case GoalSelectionStatus::StartBodyConflict:
                                 diagnostics->last_goal_status = "StartBodyConflict";
                                 break;
@@ -305,6 +324,29 @@ namespace SwarmController {
         std::map<octomap::OcTreeKey, Candidate, KeyLess> unique_candidates;
         std::size_t pre_peer_candidate_count  = 0U;
         std::size_t post_peer_candidate_count = 0U;
+        std::size_t task_filtered_count = 0U;
+        const bool assigned = request.task_guidance.has_value();
+        const float current_task_distance = assigned
+                                                    ? xyDistance(
+                                                              request.pose.position,
+                                                              request.task_guidance->target)
+                                                    : 0.0F;
+        if(assigned && current_task_distance <= SCORE_EPSILON) {
+            return finish(GoalSelectionStatus::TaskGuidanceUnavailable, std::nullopt);
+        }
+        const float task_direction_x = assigned
+                                               ? (request.task_guidance->target.x
+                                                  - request.pose.position.x)
+                                                         / current_task_distance
+                                               : 0.0F;
+        const float task_direction_y = assigned
+                                               ? (request.task_guidance->target.y
+                                                  - request.pose.position.y)
+                                                         / current_task_distance
+                                               : 0.0F;
+        const float task_heading = assigned
+                                           ? std::atan2(task_direction_y, task_direction_x)
+                                           : 0.0F;
         for(std::size_t distance_index = 0U;
             distance_index < config_.forward_distance_samples; ++distance_index)
         {
@@ -350,6 +392,27 @@ namespace SwarmController {
                 }
                 ++post_peer_candidate_count;
 
+                float task_progress = 0.0F;
+                if(assigned) {
+                    task_progress =
+                            (candidate.x - request.pose.position.x) * task_direction_x
+                            + (candidate.y - request.pose.position.y) * task_direction_y;
+                    const float candidate_heading = std::atan2(
+                            candidate.y - request.pose.position.y,
+                            candidate.x - request.pose.position.x);
+                    const float heading_error = std::fabs(std::atan2(
+                            std::sin(candidate_heading - task_heading),
+                            std::cos(candidate_heading - task_heading)));
+                    const float required_progress = std::min(
+                            config_.task_min_progress, current_task_distance);
+                    if(task_progress + SCORE_EPSILON < required_progress
+                       || heading_error > config_.task_max_heading_error)
+                    {
+                        ++task_filtered_count;
+                        continue;
+                    }
+                }
+
                 const PathCheckResult body = path_checker_.checkBody(tree, candidate);
                 if(!body.safe()) {
                     continue;
@@ -363,7 +426,8 @@ namespace SwarmController {
                                       - config_.lateral_weight * std::fabs(lateral)
                                       - config_.heading_weight * heading_change
                                       - config_.dispersion_weight
-                                                * peerDispersionPenalty(candidate, request);
+                                                * peerDispersionPenalty(candidate, request)
+                                      + config_.task_progress_weight * task_progress;
                 const Candidate draft {
                         candidate,
                         key,
@@ -384,6 +448,7 @@ namespace SwarmController {
         if(diagnostics != nullptr) {
             diagnostics->pre_peer_candidate_count  = pre_peer_candidate_count;
             diagnostics->post_peer_candidate_count = post_peer_candidate_count;
+            diagnostics->task_filtered_count = task_filtered_count;
             diagnostics->unique_candidate_count = unique_candidates.size();
             for(const auto & [key, candidate] : unique_candidates) {
                 (void) key;
@@ -397,6 +462,9 @@ namespace SwarmController {
         }
 
         if(unique_candidates.empty()) {
+            if(assigned) {
+                return finish(GoalSelectionStatus::TaskGuidanceUnavailable, std::nullopt);
+            }
             if(pre_peer_candidate_count > 0U && post_peer_candidate_count == 0U) {
                 return finish(GoalSelectionStatus::PeerGoalConflict, std::nullopt);
             }
@@ -436,7 +504,10 @@ namespace SwarmController {
                             0.0F,
                     });
         }
-        return finish(GoalSelectionStatus::NoSafeCandidate, std::nullopt);
+        return finish(
+                assigned ? GoalSelectionStatus::TaskGuidanceUnavailable
+                         : GoalSelectionStatus::NoSafeCandidate,
+                std::nullopt);
     }
 
 }// namespace SwarmController

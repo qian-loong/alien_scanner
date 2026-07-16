@@ -213,7 +213,7 @@ ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 | 3-6 | 多机 launch（`num_drones:=3`）感知栈 | ✅ |
 | 3-7 | 多机探索分散（peer 启发式 + 简化前向局部规划） | ✅ |
 | 3-8 | `/global_map` 融合 | ✅ |
-| 3-9 | 更强路径规划（按需） | ⬜ |
+| 3-9 | 全局 frontier 多机任务分配（非全局路径规划） | ⬜ |
 | 3-10 | 一键 swarm + 测试验收 | ⬜ |
 
 **单机探索闭环摘要：** 感知→OctoMap→固定规模前向短段目标→执行→再选；候选点机体包络
@@ -227,9 +227,13 @@ ROS-free `PeerStateTracker` 管理独立 position/goal 时效；全候选被 pee
 进入 `WaitingForPeer`；标准诊断可观测接线与过滤原因。默认局部规划收缩为基于 OctoMap
 的固定规模前向短段安全推进，不保存回退位姿、不发布向后恢复目标，也不执行随 frontier
 数量增长的候选邻域展开；无安全前向目标时有限 yaw 重扫后 Hold。分叉所有权、全局地图与
-更强规划留给 3-8/3-9。3-7 实现与自动测试已完成；无 `/global_map`；launch
+全局地图与任务分配留给 3-8/3-9。3-7 实现与自动测试已完成；无 `/global_map`；launch
 `multi_drone_exploration.launch.py`。当前 peer position 仅软惩罚、active goal 仅做目标点
 硬分离，不提供机体、路径或时间维度的动态避碰保证；该能力必须作为独立安全层后续设计。
+
+**3-9 目标：** 在 `/global_map` 上提取经单环多次观测支撑的稳定 2.5D frontier 区域，结合
+各机本机 OctoMap 的 first-hop 可执行性做唯一任务所有权分配；入口或证据不足时保持 3-7
+本地探索。任务只引导本机 known-free 短跳，不引入长距离 A*，也不把全局图当作本机安全图。
 
 **跨 Phase 契约（摘要）：**
 
@@ -496,8 +500,8 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 [ ] 5. （可选）ros2 bag 录制 + README 演示 GIF
 ```
 
-**当前进度：** Phase 1、Phase 2 已完成；Phase 3 的 3-1～3-8 已完成，后续为 3-9 按需
-路径规划与 3-10 一键验收（见
+**当前进度：** Phase 1、Phase 2 已完成；Phase 3 的 3-1～3-8 已完成，下一步为 3-9
+全局 frontier 多机任务分配，随后执行 3-10 一键验收（见
 [`docs/phases/phase-03-swarm.md`](phases/phase-03-swarm.md)）。
 
 ---

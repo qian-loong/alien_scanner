@@ -4,6 +4,7 @@
 #include "swarm_controller/Point3f.hpp"
 #include "swarm_controller/Pose3D.hpp"
 #include "swarm_controller/ExplorationDiagnostics.hpp"
+#include "swarm_controller/ExplorationTask.hpp"
 
 #include <optional>
 #include <utility>
@@ -21,6 +22,7 @@ namespace SwarmController {
         NoKnownFree,
         NoFrontier,
         NoSafeCandidate,
+        TaskGuidanceUnavailable,
         /// 当前位姿的 swept-body 包络已被 unknown/occupied 阻塞。
         /// 该状态必须进入净空恢复，不能用普通 yaw 重扫处理。
         StartBodyConflict,
@@ -60,6 +62,7 @@ namespace SwarmController {
         std::vector<Point3f>                      peer_positions;
         /// Other drones' active exploration goals in map frame (XY hard separation).
         std::vector<Point3f>                      active_peer_goals;
+        std::optional<TaskGuidance>               task_guidance;
     };
 
     struct ExplorationGoal {

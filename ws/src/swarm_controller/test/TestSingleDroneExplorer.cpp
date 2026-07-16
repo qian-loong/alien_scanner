@@ -193,6 +193,319 @@ namespace SwarmController {
         EXPECT_EQ(strategy->requests.size(), 2U);
     }
 
+    TEST(SingleDroneExplorerTest, StandbyTaskHoldsWithoutCallingLocalStrategy)
+    {
+        octomap::OcTree tree(0.1);
+        fillFree(tree);
+        auto strategy = std::make_shared<SequenceStrategy>();
+        SingleDroneExplorer explorer(strategy);
+        ExplorerInput value = input(tree);
+        value.task_guidance = TaskGuidance {
+                true, ExplorationTaskMode::Standby, 2U, 4U, 0U, {}};
+
+        const auto result = explorer.tick(value);
+
+        EXPECT_EQ(result.state, ExplorerState::WaitingForTask);
+        EXPECT_EQ(result.command.type, MotionCommandType::Hold);
+        EXPECT_TRUE(strategy->requests.empty());
+    }
+
+    TEST(SingleDroneExplorerTest, AssignedGuidanceExhaustsBoundedRescanThenWaits)
+    {
+        octomap::OcTree tree(0.1);
+        fillFree(tree);
+        auto strategy = std::make_shared<SequenceStrategy>();
+        strategy->results.push_back(
+                {GoalSelectionStatus::TaskGuidanceUnavailable, std::nullopt});
+        strategy->results.push_back(
+                {GoalSelectionStatus::TaskGuidanceUnavailable, std::nullopt});
+        strategy->results.push_back(
+                {GoalSelectionStatus::TaskGuidanceUnavailable, std::nullopt});
+        strategy->results.push_back(
+                {GoalSelectionStatus::TaskGuidanceUnavailable, std::nullopt});
+        strategy->results.push_back(
+                {GoalSelectionStatus::NoSafeCandidate, std::nullopt});
+        strategy->results.push_back(
+                {GoalSelectionStatus::NoSafeCandidate, std::nullopt});
+        strategy->results.push_back(
+                {GoalSelectionStatus::TaskGuidanceUnavailable, std::nullopt});
+        SingleDroneExplorerConfig config;
+        config.task_rescan_max_steps = 1U;
+        config.rescan_max_steps = 1U;
+        config.map_stale_timeout_seconds = 10.0;
+        SingleDroneExplorer explorer(strategy, config);
+        ExplorerInput value = input(tree);
+        value.task_guidance = TaskGuidance {
+                true, ExplorationTaskMode::Assigned, 2U, 4U, 9U,
+                Point3f {5.0F, 0.0F, 0.0F}};
+
+        const auto rescan = explorer.tick(value);
+        ASSERT_EQ(rescan.state, ExplorerState::Rescanning);
+        ASSERT_EQ(rescan.command.type, MotionCommandType::MoveTo);
+
+        value.pose = rescan.command.goal;
+        value.odom_stamp_ns = 200;
+        value.monotonic_time_seconds = 0.5;
+        explorer.tick(value);
+        value.observation_epoch = 2U;
+        value.observation_stamp_ns = 201;
+        value.monotonic_time_seconds = 0.6;
+        EXPECT_EQ(explorer.tick(value).state, ExplorerState::Selecting);
+        value.monotonic_time_seconds = 0.7;
+        const auto waiting = explorer.tick(value);
+        EXPECT_EQ(waiting.state, ExplorerState::WaitingForTask);
+        EXPECT_EQ(waiting.command.type, MotionCommandType::Hold);
+
+        value.pose = waiting.command.goal;
+        value.observation_epoch = 3U;
+        value.observation_stamp_ns = 301;
+        value.monotonic_time_seconds = 0.8;
+        EXPECT_EQ(explorer.tick(value).state, ExplorerState::Selecting);
+        value.monotonic_time_seconds = 0.9;
+        const auto same_task_new_map = explorer.tick(value);
+        EXPECT_EQ(same_task_new_map.state, ExplorerState::WaitingForTask);
+        EXPECT_EQ(same_task_new_map.command.type, MotionCommandType::Hold);
+
+        value.pose = same_task_new_map.command.goal;
+        value.monotonic_time_seconds = 2.0;
+        EXPECT_EQ(explorer.tick(value).state, ExplorerState::Selecting);
+        value.monotonic_time_seconds = 2.1;
+        const auto same_task_retry = explorer.tick(value);
+        EXPECT_EQ(same_task_retry.state, ExplorerState::WaitingForTask);
+        EXPECT_EQ(same_task_retry.command.type, MotionCommandType::Hold);
+
+        value.pose = same_task_retry.command.goal;
+        value.monotonic_time_seconds = 3.2;
+        EXPECT_EQ(explorer.tick(value).state, ExplorerState::Selecting);
+        value.monotonic_time_seconds = 3.3;
+        const auto local_rescan = explorer.tick(value);
+        ASSERT_EQ(local_rescan.state, ExplorerState::Rescanning);
+        ASSERT_EQ(local_rescan.command.type, MotionCommandType::MoveTo);
+        value.pose = local_rescan.command.goal;
+        value.odom_stamp_ns = 400;
+        value.monotonic_time_seconds = 3.4;
+        explorer.tick(value);
+        value.observation_epoch = 4U;
+        value.observation_stamp_ns = 401;
+        value.monotonic_time_seconds = 3.5;
+        EXPECT_EQ(explorer.tick(value).state, ExplorerState::Selecting);
+        value.monotonic_time_seconds = 3.6;
+        const auto stalled = explorer.tick(value);
+        ASSERT_EQ(stalled.state, ExplorerState::ExplorationStalled);
+        ASSERT_EQ(stalled.command.type, MotionCommandType::Hold);
+        value.pose = stalled.command.goal;
+        value.monotonic_time_seconds = 3.7;
+        EXPECT_EQ(explorer.tick(value).state, ExplorerState::Selecting);
+        value.monotonic_time_seconds = 3.8;
+        const auto after_stall = explorer.tick(value);
+        EXPECT_EQ(after_stall.state, ExplorerState::WaitingForTask);
+        EXPECT_EQ(after_stall.command.type, MotionCommandType::Hold);
+    }
+
+    TEST(SingleDroneExplorerTest, ChangedTaskGetsIndependentRescanBudget)
+    {
+        octomap::OcTree tree(0.1);
+        fillFree(tree);
+        auto strategy = std::make_shared<SequenceStrategy>();
+        for(int index = 0; index < 4; ++index) {
+            strategy->results.push_back(
+                    {GoalSelectionStatus::TaskGuidanceUnavailable, std::nullopt});
+        }
+        SingleDroneExplorerConfig config;
+        config.task_rescan_max_steps = 2U;
+        SingleDroneExplorer explorer(strategy, config);
+        ExplorerInput value = input(tree);
+        value.task_guidance = TaskGuidance {
+                true, ExplorationTaskMode::Assigned, 2U, 4U, 9U,
+                Point3f {5.0F, 0.0F, 0.0F}};
+
+        const auto old_rescan_one = explorer.tick(value);
+        ASSERT_EQ(old_rescan_one.state, ExplorerState::Rescanning);
+        value.pose = old_rescan_one.command.goal;
+        value.odom_stamp_ns = 200;
+        value.monotonic_time_seconds = 0.1;
+        explorer.tick(value);
+        value.observation_epoch = 2U;
+        value.observation_stamp_ns = 201;
+        value.monotonic_time_seconds = 0.2;
+        EXPECT_EQ(explorer.tick(value).state, ExplorerState::Selecting);
+        value.monotonic_time_seconds = 0.3;
+        const auto old_rescan_two = explorer.tick(value);
+        ASSERT_EQ(old_rescan_two.state, ExplorerState::Rescanning);
+
+        value.task_guidance.revision = 5U;
+        value.task_guidance.task_id = 10U;
+        value.task_guidance.target = Point3f {0.0F, 5.0F, 0.0F};
+        value.monotonic_time_seconds = 0.4;
+        const auto stopping = explorer.tick(value);
+        ASSERT_EQ(stopping.state, ExplorerState::Stopping);
+        ASSERT_EQ(stopping.command.type, MotionCommandType::Hold);
+        value.pose = stopping.command.goal;
+        value.monotonic_time_seconds = 0.5;
+        EXPECT_EQ(explorer.tick(value).state, ExplorerState::Selecting);
+
+        value.monotonic_time_seconds = 0.6;
+        const auto new_rescan_one = explorer.tick(value);
+        ASSERT_EQ(new_rescan_one.state, ExplorerState::Rescanning);
+        value.pose = new_rescan_one.command.goal;
+        value.odom_stamp_ns = 300;
+        value.monotonic_time_seconds = 0.7;
+        explorer.tick(value);
+        value.observation_epoch = 3U;
+        value.observation_stamp_ns = 301;
+        value.monotonic_time_seconds = 0.8;
+        EXPECT_EQ(explorer.tick(value).state, ExplorerState::Selecting);
+        value.monotonic_time_seconds = 0.9;
+        const auto new_rescan_two = explorer.tick(value);
+        EXPECT_EQ(new_rescan_two.state, ExplorerState::Rescanning);
+        EXPECT_EQ(new_rescan_two.command.type, MotionCommandType::MoveTo);
+    }
+
+    TEST(SingleDroneExplorerTest, SuccessfulAssignedHopRestoresTaskRescanBudget)
+    {
+        octomap::OcTree tree(0.1);
+        fillFree(tree);
+        auto strategy = std::make_shared<SequenceStrategy>();
+        strategy->results.push_back(
+                {GoalSelectionStatus::TaskGuidanceUnavailable, std::nullopt});
+        strategy->results.push_back(
+                {GoalSelectionStatus::TaskGuidanceUnavailable, std::nullopt});
+        strategy->results.push_back(goal(1.0F, 0.0F, 1U));
+        strategy->results.push_back(
+                {GoalSelectionStatus::TaskGuidanceUnavailable, std::nullopt});
+        SingleDroneExplorerConfig config;
+        config.task_rescan_max_steps = 1U;
+        config.map_stale_timeout_seconds = 10.0;
+        SingleDroneExplorer explorer(strategy, config);
+        ExplorerInput value = input(tree);
+        value.task_guidance = TaskGuidance {
+                true, ExplorationTaskMode::Assigned, 2U, 4U, 9U,
+                Point3f {5.0F, 0.0F, 0.0F}};
+
+        const auto rescan = explorer.tick(value);
+        ASSERT_EQ(rescan.state, ExplorerState::Rescanning);
+        value.pose = rescan.command.goal;
+        value.odom_stamp_ns = 200;
+        value.monotonic_time_seconds = 0.1;
+        explorer.tick(value);
+        value.observation_epoch = 2U;
+        value.observation_stamp_ns = 201;
+        value.monotonic_time_seconds = 0.2;
+        EXPECT_EQ(explorer.tick(value).state, ExplorerState::Selecting);
+        value.monotonic_time_seconds = 0.3;
+        const auto waiting = explorer.tick(value);
+        ASSERT_EQ(waiting.state, ExplorerState::WaitingForTask);
+
+        value.pose = waiting.command.goal;
+        value.monotonic_time_seconds = 1.4;
+        EXPECT_EQ(explorer.tick(value).state, ExplorerState::Selecting);
+        value.monotonic_time_seconds = 1.5;
+        const auto moving = explorer.tick(value);
+        ASSERT_EQ(moving.state, ExplorerState::Moving);
+        ASSERT_EQ(moving.command.type, MotionCommandType::MoveTo);
+
+        value.pose = moving.command.goal;
+        value.odom_stamp_ns = 300;
+        value.monotonic_time_seconds = 1.6;
+        EXPECT_EQ(explorer.tick(value).state, ExplorerState::AwaitingFreshObservation);
+        value.observation_epoch = 3U;
+        value.observation_stamp_ns = 301;
+        value.monotonic_time_seconds = 1.7;
+        EXPECT_EQ(explorer.tick(value).state, ExplorerState::Selecting);
+        value.monotonic_time_seconds = 1.8;
+        const auto restored_rescan = explorer.tick(value);
+        EXPECT_EQ(restored_rescan.state, ExplorerState::Rescanning);
+        EXPECT_EQ(restored_rescan.command.type, MotionCommandType::MoveTo);
+    }
+    TEST(SingleDroneExplorerTest, TaskRevisionWakesWaitingForTask)
+    {
+        octomap::OcTree tree(0.1);
+        fillFree(tree);
+        auto strategy = std::make_shared<SequenceStrategy>();
+        SingleDroneExplorer explorer(strategy);
+        ExplorerInput value = input(tree);
+        value.task_guidance = TaskGuidance {
+                true, ExplorationTaskMode::Standby, 2U, 4U, 0U, {}};
+        ASSERT_EQ(explorer.tick(value).state, ExplorerState::WaitingForTask);
+
+        value.task_guidance.revision = 5U;
+        value.task_guidance.mode = ExplorationTaskMode::Assigned;
+        value.task_guidance.task_id = 9U;
+        value.task_guidance.target = Point3f {5.0F, 0.0F, 0.0F};
+        value.monotonic_time_seconds = 0.1;
+        EXPECT_EQ(explorer.tick(value).state, ExplorerState::Selecting);
+    }
+
+    TEST(SingleDroneExplorerTest, AssignedTaskExpiryStopsCurrentLocalHop)
+    {
+        octomap::OcTree tree(0.1);
+        fillFree(tree);
+        auto strategy = std::make_shared<SequenceStrategy>();
+        strategy->results.push_back(goal(1.0F, 0.0F, 1U));
+        SingleDroneExplorer explorer(strategy);
+        ExplorerInput value = input(tree);
+        value.task_guidance = TaskGuidance {
+                true, ExplorationTaskMode::Assigned, 2U, 4U, 9U,
+                Point3f {5.0F, 0.0F, 0.0F}};
+        ASSERT_EQ(explorer.tick(value).state, ExplorerState::Moving);
+
+        value.task_guidance = {};
+        value.monotonic_time_seconds = 0.1;
+        const auto stopping = explorer.tick(value);
+
+        EXPECT_EQ(stopping.state, ExplorerState::Stopping);
+        EXPECT_EQ(stopping.command.type, MotionCommandType::Hold);
+    }
+
+
+    TEST(SingleDroneExplorerTest, AssignedRescanTimeoutWaitsForTask)
+    {
+        octomap::OcTree tree(0.1);
+        fillFree(tree);
+        auto strategy = std::make_shared<SequenceStrategy>();
+        strategy->results.push_back(
+                {GoalSelectionStatus::TaskGuidanceUnavailable, std::nullopt});
+        SingleDroneExplorerConfig config;
+        config.task_rescan_step_timeout_seconds = 0.1;
+        SingleDroneExplorer explorer(strategy, config);
+        ExplorerInput value = input(tree);
+        value.task_guidance = TaskGuidance {
+                true, ExplorationTaskMode::Assigned, 2U, 4U, 9U,
+                Point3f {5.0F, 0.0F, 0.0F}};
+
+        const auto rescan = explorer.tick(value);
+        ASSERT_EQ(rescan.state, ExplorerState::Rescanning);
+
+        value.monotonic_time_seconds = 0.2;
+        const auto waiting = explorer.tick(value);
+
+        EXPECT_EQ(waiting.state, ExplorerState::WaitingForTask);
+        EXPECT_EQ(waiting.command.type, MotionCommandType::Hold);
+        EXPECT_NE(explorer.state(), ExplorerState::HoveringFailure);
+    }
+
+    TEST(SingleDroneExplorerTest, AssignedRescanTurnsTowardTaskFromCurrentYaw)
+    {
+        octomap::OcTree tree(0.1);
+        fillFree(tree);
+        auto strategy = std::make_shared<SequenceStrategy>();
+        strategy->results.push_back(
+                {GoalSelectionStatus::TaskGuidanceUnavailable, std::nullopt});
+        SingleDroneExplorerConfig config;
+        SingleDroneExplorer explorer(strategy, config);
+        ExplorerInput value = input(tree);
+        value.task_guidance = TaskGuidance {
+                true, ExplorationTaskMode::Assigned, 2U, 4U, 9U,
+                Point3f {0.0F, -5.0F, 0.0F}};
+
+        const auto rescan = explorer.tick(value);
+
+        ASSERT_EQ(rescan.state, ExplorerState::Rescanning);
+        ASSERT_EQ(strategy->requests.size(), 1U);
+        ASSERT_TRUE(strategy->requests.front().preferred_travel_yaw.has_value());
+        EXPECT_NEAR(*strategy->requests.front().preferred_travel_yaw, 0.0F, 1.0e-5F);
+        EXPECT_NEAR(rescan.command.goal.yaw, -config.rescan_yaw_step, 1.0e-5F);
+    }
     TEST(SingleDroneExplorerTest, RejectsUnsafeClusterAndSelectsNextGoal)
     {
         octomap::OcTree tree(0.1);
@@ -474,6 +787,34 @@ namespace SwarmController {
         EXPECT_FALSE(explorer.revalidatePendingResult(blocked, pending));
     }
 
+    TEST(SingleDroneExplorerTest, RevalidationRejectsRevokedAssignedMoveAndRescan)
+    {
+        octomap::OcTree tree(0.1);
+        fillFree(tree);
+
+        auto moving_strategy = std::make_shared<SequenceStrategy>();
+        moving_strategy->results.push_back(goal(1.0F, 0.0F, 1U));
+        SingleDroneExplorer moving(moving_strategy);
+        ExplorerInput assigned = input(tree);
+        assigned.task_guidance = TaskGuidance {
+                true, ExplorationTaskMode::Assigned, 2U, 4U, 9U,
+                Point3f {5.0F, 0.0F, 0.0F}};
+        ExplorerTickResult pending_move = moving.tick(assigned);
+        ASSERT_EQ(pending_move.command.type, MotionCommandType::MoveTo);
+        ExplorerInput revoked = assigned;
+        revoked.task_guidance = {};
+        revoked.observation_epoch = 2U;
+        EXPECT_FALSE(moving.revalidatePendingResult(revoked, pending_move));
+
+        auto rescan_strategy = std::make_shared<SequenceStrategy>();
+        rescan_strategy->results.push_back(
+                {GoalSelectionStatus::TaskGuidanceUnavailable, std::nullopt});
+        SingleDroneExplorer rescanning(rescan_strategy);
+        ExplorerTickResult pending_rescan = rescanning.tick(assigned);
+        ASSERT_EQ(pending_rescan.state, ExplorerState::Rescanning);
+        EXPECT_FALSE(rescanning.revalidatePendingResult(revoked, pending_rescan));
+    }
+
     TEST(SingleDroneExplorerTest, RescanAlsoUsesPostReachFreshGate)
     {
         octomap::OcTree tree(0.1);
@@ -546,6 +887,37 @@ namespace SwarmController {
                 input(tree, stalled.command.goal, 4U, 400, 1.0));
         ASSERT_EQ(resumed.state, ExplorerState::Moving);
         EXPECT_FLOAT_EQ(resumed.command.goal.position.x, 1.0F);
+    }
+
+    TEST(SingleDroneExplorerTest, AssignedTaskWakesExplorationStalledWithoutMapChange)
+    {
+        octomap::OcTree tree(0.1);
+        fillFree(tree);
+        auto strategy = std::make_shared<SequenceStrategy>();
+        strategy->results.push_back(
+                {GoalSelectionStatus::NoSafeCandidate, std::nullopt});
+        strategy->results.push_back(
+                {GoalSelectionStatus::NoSafeCandidate, std::nullopt});
+        strategy->results.push_back(goal(1.0F, 0.0F, 3U));
+        SingleDroneExplorerConfig config;
+        config.rescan_max_steps = 1U;
+        SingleDroneExplorer explorer(strategy, config);
+
+        const auto rescan = explorer.tick(input(tree));
+        ExplorerInput reached = input(tree, rescan.command.goal, 1U, 100, 0.1);
+        reached.odom_stamp_ns = 200;
+        explorer.tick(reached);
+        explorer.tick(input(tree, rescan.command.goal, 2U, 201, 0.2));
+        const auto stalled = explorer.tick(
+                input(tree, rescan.command.goal, 2U, 201, 0.3));
+        ASSERT_EQ(stalled.state, ExplorerState::ExplorationStalled);
+
+        ExplorerInput assigned = input(tree, stalled.command.goal, 2U, 201, 0.4);
+        assigned.task_guidance = TaskGuidance {
+                true, ExplorationTaskMode::Assigned, 4U, 8U, 12U,
+                Point3f {5.0F, 0.0F, 0.0F}};
+        EXPECT_EQ(explorer.tick(assigned).state, ExplorerState::Selecting);
+        EXPECT_EQ(explorer.tick(assigned).state, ExplorerState::Moving);
     }
 
     TEST(SingleDroneExplorerTest, ExhaustedRescanNeverCommandsHistoricalBackwardMove)

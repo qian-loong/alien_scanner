@@ -17,6 +17,12 @@ namespace SwarmController {
             value.map_stamp_ns           = 100;
             value.monotonic_time_seconds = 10.0;
             value.active_peer_goals      = {Point3f {5.0F, 6.0F, 1.0F}};
+            value.task_valid             = true;
+            value.task_mode              = ExplorationTaskMode::Assigned;
+            value.task_allocator_epoch   = 3U;
+            value.task_revision          = 7U;
+            value.task_id                = 11U;
+            value.task_target            = Point3f {8.0F, 1.0F, 1.5F};
             return value;
         }
 
@@ -55,6 +61,10 @@ namespace SwarmController {
         changed = before;
         changed.active_peer_goals.front().y += 0.1F;
         EXPECT_TRUE(guard.assess(before, changed).active_peer_goals_changed);
+
+        changed = before;
+        changed.task_revision += 1U;
+        EXPECT_TRUE(guard.assess(before, changed).task_changed);
 
         changed = before;
         changed.monotonic_time_seconds += 1.01;

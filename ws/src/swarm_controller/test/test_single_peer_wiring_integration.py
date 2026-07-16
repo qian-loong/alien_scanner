@@ -11,6 +11,7 @@ from diagnostic_msgs.msg import DiagnosticArray
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from swarm_controller_interfaces.msg import ExplorationTask
 
 
 def generate_test_description():
@@ -70,6 +71,8 @@ class TestSinglePeerWiringIntegration(unittest.TestCase):
         )
         self.peer_goal_pub = self.node.create_publisher(
             PoseStamped, '/peer/motion_goal', transient_qos)
+        self.task_pub = self.node.create_publisher(
+            ExplorationTask, '/subject/exploration_task', transient_qos)
         self.diagnostics = []
         self.node.create_subscription(
             DiagnosticArray,
@@ -97,6 +100,19 @@ class TestSinglePeerWiringIntegration(unittest.TestCase):
         message.pose.orientation.w = 1.0
         return message
 
+    def _task(self, frame):
+        message = ExplorationTask()
+        message.header.frame_id = frame
+        message.header.stamp = self.node.get_clock().now().to_msg()
+        message.allocator_epoch = 1
+        message.revision = 1
+        message.task_id = 1
+        message.mode = ExplorationTask.MODE_ASSIGNED
+        message.target.position.x = 2.0
+        message.target.orientation.w = 1.0
+        message.lease.sec = 2
+        return message
+
     def _latest_values(self):
         if not self.diagnostics or not self.diagnostics[-1].status:
             return {}
@@ -115,6 +131,18 @@ class TestSinglePeerWiringIntegration(unittest.TestCase):
             if predicate(self._latest_values()):
                 return True
         return False
+
+    def test_task_frame_contract(self):
+        self.task_pub.publish(self._task('peer/odom'))
+        self.assertTrue(
+            self._drive_until(
+                lambda values: values.get('task_update_status')
+                == 'RejectedInvalidFrame',
+                timeout_sec=1.0,
+            ),
+            f'non-map task must be rejected: {self._latest_values()}',
+        )
+        self.assertEqual(self._latest_values().get('task_valid'), '0')
 
     def test_tf_recovery_and_independent_peer_expiry(self):
         self.peer_goal_pub.publish(self._goal(2.0))

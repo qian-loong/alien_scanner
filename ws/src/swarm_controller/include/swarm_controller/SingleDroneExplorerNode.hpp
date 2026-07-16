@@ -5,6 +5,7 @@
 #include "swarm_controller/PeerStateTracker.hpp"
 #include "swarm_controller/PlanningSnapshotGuard.hpp"
 #include "swarm_controller/SingleDroneExplorer.hpp"
+#include "swarm_controller/TaskLeaseTracker.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -21,6 +22,7 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <visualization_msgs/msg/marker_array.hpp>
+#include <swarm_controller_interfaces/msg/exploration_task.hpp>
 
 namespace SwarmController {
 
@@ -52,6 +54,8 @@ namespace SwarmController {
         void onPeerOdometry(std::size_t peer_index, const nav_msgs::msg::Odometry::SharedPtr msg);
         void onPeerMotionGoal(
                 std::size_t peer_index, const geometry_msgs::msg::PoseStamped::SharedPtr msg);
+        void onExplorationTask(
+                const swarm_controller_interfaces::msg::ExplorationTask::SharedPtr msg);
         void onControlTimer();
         bool makeExplorerInput(
                 ExplorerInput & input, std::shared_ptr<octomap::OcTree> & map_snapshot,
@@ -88,6 +92,10 @@ namespace SwarmController {
         std::mutex                peer_mutex_;
         std::vector<PeerTrack>    peers_;
         std::unique_ptr<PeerStateTracker> peer_tracker_;
+        std::unique_ptr<TaskLeaseTracker> task_tracker_;
+        std::mutex                        task_mutex_;
+        TaskGuidance                      task_guidance_ {};
+        std::string                       task_update_status_ {"NoTask"};
         PeerDispersionSnapshot          peer_snapshot_;
         std::size_t                     tf_pending_count_ {0U};
         std::size_t                     tf_rejected_count_ {0U};
@@ -103,6 +111,8 @@ namespace SwarmController {
 
         rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr    odom_subscription_;
         rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr map_subscription_;
+        rclcpp::Subscription<swarm_controller_interfaces::msg::ExplorationTask>::SharedPtr
+                task_subscription_;
         rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr goal_publisher_;
         rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_publisher_;
         rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr

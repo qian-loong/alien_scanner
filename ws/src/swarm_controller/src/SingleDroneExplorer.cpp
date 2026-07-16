@@ -31,7 +31,14 @@ namespace SwarmController {
                    && std::isfinite(input.angular_velocity_z)
                    && std::isfinite(input.monotonic_time_seconds)
                    && points_finite(input.peer_positions)
-                   && points_finite(input.active_peer_goals);
+                   && points_finite(input.active_peer_goals)
+                   && (!input.task_guidance.valid
+                       || (input.task_guidance.mode
+                                      != ExplorationTaskMode::Assigned
+                           || (input.task_guidance.task_id != 0U
+                               && std::isfinite(input.task_guidance.target.x)
+                               && std::isfinite(input.task_guidance.target.y)
+                               && std::isfinite(input.task_guidance.target.z))));
         }
 
         bool samePoints(const std::vector<Point3f> & lhs, const std::vector<Point3f> & rhs)
@@ -64,6 +71,8 @@ namespace SwarmController {
                     return "Selecting";
                 case ExplorerState::WaitingForPeer:
                     return "WaitingForPeer";
+                case ExplorerState::WaitingForTask:
+                    return "WaitingForTask";
                 case ExplorerState::ExplorationStalled:
                     return "ExplorationStalled";
                 case ExplorerState::RecoveringClearance:
@@ -101,6 +110,8 @@ namespace SwarmController {
                              && std::isfinite(config_.stopped_angular_speed_max)
                             && std::isfinite(config_.map_stale_timeout_seconds)
                             && std::isfinite(config_.peer_retry_interval_seconds)
+                            && std::isfinite(config_.task_retry_interval_seconds)
+                            && std::isfinite(config_.task_rescan_step_timeout_seconds)
                             && std::isfinite(config_.travel_heading_update_distance)
                             && std::isfinite(config_.clearance_recovery_timeout_seconds)
                             && std::isfinite(config_.rescan_yaw_step)
@@ -111,10 +122,13 @@ namespace SwarmController {
            || config_.stopped_angular_speed_max < 0.0F
            || config_.map_stale_timeout_seconds <= 0.0
            || config_.peer_retry_interval_seconds <= 0.0
+           || config_.task_retry_interval_seconds <= 0.0
+           || config_.task_rescan_step_timeout_seconds <= 0.0
            || config_.travel_heading_update_distance <= 0.0F
            || config_.clearance_recovery_timeout_seconds <= 0.0
            || config_.rescan_yaw_step <= 0.0F
-           || config_.rescan_max_steps == 0U || config_.max_rejections_per_epoch == 0U
+           || config_.rescan_max_steps == 0U || config_.task_rescan_max_steps == 0U
+           || config_.max_rejections_per_epoch == 0U
            || config_.entry_backward_margin < 0.0F)
         {
             throw std::invalid_argument("invalid single-drone explorer config");
@@ -133,6 +147,7 @@ namespace SwarmController {
             return {state_, {}};
         }
 
+        synchronizeTaskRescanBudget(input);
         adoptObservation(input);
         if(!entry_pose_.has_value() && input.map != nullptr && current_epoch_ > 0U) {
             entry_pose_ = input.pose;
@@ -165,6 +180,11 @@ namespace SwarmController {
             if(!isStopped(input)) {
                 return {state_, {}};
             }
+            if(input.task_guidance.valid
+               && input.task_guidance.mode == ExplorationTaskMode::Standby)
+            {
+                return beginWaitingForTask(input);
+            }
             return selectAndCommand(input);
         }
 
@@ -192,6 +212,34 @@ namespace SwarmController {
             return {state_, {}};
         }
 
+        if(state_ == ExplorerState::WaitingForTask) {
+            if(isMapStale(input)) {
+                return beginStopping(
+                        input, StopDestination::Failure,
+                        "map stale while waiting for task");
+            }
+            if(!isStopped(input) || !hold_pose_.has_value()
+               || !isReached(input.pose, *hold_pose_))
+            {
+                return {state_, {}};
+            }
+            const bool task_changed = !input.task_guidance.valid
+                                      || input.task_guidance.allocator_epoch
+                                                 != waiting_task_epoch_
+                                      || input.task_guidance.revision
+                                                 != waiting_task_revision_
+                                      || input.task_guidance.task_id != waiting_task_id_;
+            const bool map_changed = current_epoch_ > event_epoch_;
+            const bool retry_due = effectiveNow(input) - state_start_time_
+                                   >= config_.task_retry_interval_seconds;
+            if(task_changed || map_changed || retry_due) {
+                diagnostics_.failure_reason.clear();
+                setState(ExplorerState::Selecting);
+                state_start_time_ = effectiveNow(input);
+            }
+            return {state_, {}};
+        }
+
         if(state_ == ExplorerState::ExplorationStalled) {
             if(isMapStale(input)) {
                 return beginStopping(
@@ -201,6 +249,20 @@ namespace SwarmController {
             if(!isStopped(input) || !hold_pose_.has_value()
                || !isReached(input.pose, *hold_pose_))
             {
+                return {state_, {}};
+            }
+            if(input.task_guidance.valid
+               && input.task_guidance.mode == ExplorationTaskMode::Standby)
+            {
+                return beginWaitingForTask(input);
+            }
+            if(input.task_guidance.valid
+               && input.task_guidance.mode == ExplorationTaskMode::Assigned)
+            {
+                completed_rescan_steps_ = 0U;
+                diagnostics_.failure_reason.clear();
+                setState(ExplorerState::Selecting);
+                state_start_time_ = effectiveNow(input);
                 return {state_, {}};
             }
             if(input.map != nullptr && input.map->size() != stalled_map_node_count_) {
@@ -255,6 +317,26 @@ namespace SwarmController {
         }
 
         if(state_ == ExplorerState::Moving) {
+            const bool assigned_now = input.task_guidance.valid
+                                      && input.task_guidance.mode
+                                                 == ExplorationTaskMode::Assigned;
+            const bool standby_now = input.task_guidance.valid
+                                     && input.task_guidance.mode
+                                                == ExplorationTaskMode::Standby;
+            const bool task_changed = standby_now
+                                      || assigned_now != (active_task_id_ != 0U)
+                                      || (assigned_now
+                                          && (input.task_guidance.allocator_epoch
+                                                      != active_task_epoch_
+                                              || input.task_guidance.revision
+                                                         != active_task_revision_
+                                              || input.task_guidance.task_id
+                                                         != active_task_id_));
+            if(task_changed) {
+                return beginStopping(
+                        input, StopDestination::Selecting,
+                        "assigned task changed while moving");
+            }
             if(isMapStale(input)) {
                 return beginStopping(input, StopDestination::Failure, "map stale while moving");
             }
@@ -327,10 +409,28 @@ namespace SwarmController {
         }
 
         if(state_ == ExplorerState::Rescanning) {
+            if(task_rescan_active_
+               && (!input.task_guidance.valid
+                   || input.task_guidance.mode != ExplorationTaskMode::Assigned
+                   || input.task_guidance.allocator_epoch != active_task_epoch_
+                   || input.task_guidance.revision != active_task_revision_
+                   || input.task_guidance.task_id != active_task_id_))
+            {
+                return beginStopping(
+                        input, StopDestination::Selecting,
+                        "assigned task changed while rescanning");
+            }
             if(isMapStale(input)) {
                 return beginStopping(input, StopDestination::Failure, "map stale while rescanning");
             }
-            if(effectiveNow(input) - state_start_time_ > config_.motion_timeout_seconds) {
+            const double rescan_timeout = task_rescan_active_
+                                                  ? config_.task_rescan_step_timeout_seconds
+                                                  : config_.motion_timeout_seconds;
+            if(effectiveNow(input) - state_start_time_ > rescan_timeout) {
+                if(task_rescan_active_) {
+                    ++task_rescan_steps_;
+                    return beginWaitingForTask(input);
+                }
                 return beginStopping(input, StopDestination::Failure, "yaw rescan timeout");
             }
 
@@ -344,7 +444,11 @@ namespace SwarmController {
             if(rescan_reached_ && current_epoch_ > event_epoch_
                && input.observation_stamp_ns > event_odom_stamp_ns_)
             {
-                ++completed_rescan_steps_;
+                if(task_rescan_active_) {
+                    ++task_rescan_steps_;
+                } else {
+                    ++completed_rescan_steps_;
+                }
                 rescan_reached_ = false;
                 setState(ExplorerState::Selecting);
                 state_start_time_ = effectiveNow(input);
@@ -404,6 +508,12 @@ namespace SwarmController {
             request.fixed_altitude = FixedAltitudeConstraint {input.pose.position.z};
             request.peer_positions     = input.peer_positions;
             request.active_peer_goals  = input.active_peer_goals;
+            if(input.task_guidance.valid
+               && input.task_guidance.mode == ExplorationTaskMode::Assigned)
+            {
+                request.task_guidance = input.task_guidance;
+                request.preferred_travel_yaw = input.pose.yaw;
+            }
             if(config_.enforce_entry_forward_half_space && entry_pose_.has_value()) {
                 Point3f forward_plane_origin = entry_pose_->position;
                 forward_plane_origin.x +=
@@ -424,6 +534,12 @@ namespace SwarmController {
             }
             if(selection.status == GoalSelectionStatus::PeerGoalConflict) {
                 return beginWaitingForPeer(input);
+            }
+            if(selection.status == GoalSelectionStatus::TaskGuidanceUnavailable) {
+                if(task_rescan_steps_ >= config_.task_rescan_max_steps) {
+                    return beginWaitingForTask(input);
+                }
+                return beginRescan(input, true);
             }
             if(selection.status == GoalSelectionStatus::StartBodyConflict) {
                 const PathCheckResult body =
@@ -471,6 +587,16 @@ namespace SwarmController {
             active_goal_               = goal;
             active_goal_origin_        = input.pose.position;
             active_cluster_id_         = selection.goal->cluster_id;
+            active_task_epoch_ = request.task_guidance.has_value()
+                                         ? request.task_guidance->allocator_epoch
+                                         : 0U;
+            active_task_revision_ = request.task_guidance.has_value()
+                                            ? request.task_guidance->revision
+                                            : 0U;
+            active_task_id_ = request.task_guidance.has_value()
+                                      ? request.task_guidance->task_id
+                                      : 0U;
+            task_rescan_steps_ = 0U;
             last_checked_path_epoch_   = current_epoch_;
             state_start_time_          = effectiveNow(input);
             diagnostics_.selected_goal = goal.position;
@@ -480,17 +606,28 @@ namespace SwarmController {
         return beginRescan(input);
     }
 
-    ExplorerTickResult SingleDroneExplorer::beginRescan(const ExplorerInput & input)
+    ExplorerTickResult SingleDroneExplorer::beginRescan(
+            const ExplorerInput & input, const bool for_task)
     {
-        if(completed_rescan_steps_ >= config_.rescan_max_steps) {
+        if(!for_task && completed_rescan_steps_ >= config_.rescan_max_steps) {
             return beginExplorationStalled(input);
         }
         Pose3D goal = input.pose;
-        goal.yaw    = normalizedYaw(input.pose.yaw + config_.rescan_yaw_step);
+        goal.yaw    = nextRescanYaw(input, for_task);
         active_goal_       = goal;
         active_goal_origin_.reset();
         active_cluster_id_.reset();
         rescan_reached_    = false;
+        task_rescan_active_ = for_task;
+        if(for_task) {
+            active_task_epoch_ = input.task_guidance.allocator_epoch;
+            active_task_revision_ = input.task_guidance.revision;
+            active_task_id_ = input.task_guidance.task_id;
+        } else {
+            active_task_epoch_ = 0U;
+            active_task_revision_ = 0U;
+            active_task_id_ = 0U;
+        }
         state_start_time_  = effectiveNow(input);
         setState(ExplorerState::Rescanning);
         return {state_, MotionCommand {MotionCommandType::MoveTo, goal}};
@@ -507,6 +644,36 @@ namespace SwarmController {
         state_start_time_           = effectiveNow(input);
         diagnostics_.failure_reason = "all candidates blocked by peer goals";
         setState(ExplorerState::WaitingForPeer);
+        return {state_, MotionCommand {MotionCommandType::Hold, *hold_pose_}};
+    }
+
+    ExplorerTickResult SingleDroneExplorer::beginWaitingForTask(
+            const ExplorerInput & input)
+    {
+        hold_pose_                  = input.pose;
+        active_goal_.reset();
+        active_goal_origin_.reset();
+        active_cluster_id_.reset();
+        active_task_epoch_          = 0U;
+        active_task_revision_       = 0U;
+        active_task_id_             = 0U;
+        waiting_task_epoch_ = input.task_guidance.valid
+                                      ? input.task_guidance.allocator_epoch
+                                      : 0U;
+        waiting_task_revision_ = input.task_guidance.valid
+                                         ? input.task_guidance.revision
+                                         : 0U;
+        waiting_task_id_ = input.task_guidance.valid
+                                   ? input.task_guidance.task_id
+                                   : 0U;
+        event_epoch_                = current_epoch_;
+        state_start_time_           = effectiveNow(input);
+        diagnostics_.failure_reason =
+                input.task_guidance.valid
+                        && input.task_guidance.mode == ExplorationTaskMode::Standby
+                ? "global task allocator requested standby"
+                : "assigned task has no locally executable guidance";
+        setState(ExplorerState::WaitingForTask);
         return {state_, MotionCommand {MotionCommandType::Hold, *hold_pose_}};
     }
 
@@ -564,6 +731,7 @@ namespace SwarmController {
         if(!isFinite(input) || input.map == nullptr || result.command.type == MotionCommandType::None) {
             return false;
         }
+        synchronizeTaskRescanBudget(input);
         adoptObservation(input);
 
         if(result.command.type == MotionCommandType::Hold) {
@@ -575,11 +743,25 @@ namespace SwarmController {
                 event_epoch_        = current_epoch_;
             } else if(state_ == ExplorerState::ExplorationStalled) {
                 stalled_map_node_count_ = input.map->size();
+            } else if(state_ == ExplorerState::WaitingForTask) {
+                waiting_task_epoch_ = input.task_guidance.valid
+                                              ? input.task_guidance.allocator_epoch
+                                              : 0U;
+                waiting_task_revision_ = input.task_guidance.valid
+                                                 ? input.task_guidance.revision
+                                                 : 0U;
+                waiting_task_id_ = input.task_guidance.valid
+                                           ? input.task_guidance.task_id
+                                           : 0U;
+                event_epoch_ = current_epoch_;
             }
             return true;
         }
 
         if(state_ == ExplorerState::Moving && active_goal_.has_value()) {
+            if(!activeTaskMatches(input)) {
+                return false;
+            }
             Pose3D goal = *active_goal_;
             goal.position.z = input.pose.position.z;
             goal.yaw = std::atan2(
@@ -606,6 +788,9 @@ namespace SwarmController {
         }
 
         if(state_ == ExplorerState::Rescanning) {
+            if(!activeTaskMatches(input)) {
+                return false;
+            }
             const PathCheckResult body =
                     path_checker_.checkBody(*input.map, input.pose.position);
             diagnostics_.current_body_status = pathCheckStatusName(body.status);
@@ -613,7 +798,7 @@ namespace SwarmController {
                 return false;
             }
             Pose3D goal = input.pose;
-            goal.yaw    = normalizedYaw(input.pose.yaw + config_.rescan_yaw_step);
+            goal.yaw    = nextRescanYaw(input, task_rescan_active_);
             active_goal_             = goal;
             last_checked_path_epoch_ = current_epoch_;
             state_start_time_        = effectiveNow(input);
@@ -652,6 +837,57 @@ namespace SwarmController {
         return current_epoch_ > 0U
                && effectiveNow(input) - last_observation_time_
                           > config_.map_stale_timeout_seconds;
+    }
+
+    void SingleDroneExplorer::synchronizeTaskRescanBudget(const ExplorerInput & input)
+    {
+        const bool assigned = input.task_guidance.valid
+                              && input.task_guidance.mode == ExplorationTaskMode::Assigned;
+        const std::uint64_t epoch = assigned ? input.task_guidance.allocator_epoch : 0U;
+        const std::uint64_t revision = assigned ? input.task_guidance.revision : 0U;
+        const std::uint64_t id = assigned ? input.task_guidance.task_id : 0U;
+        if(epoch != task_rescan_epoch_ || revision != task_rescan_revision_
+           || id != task_rescan_id_)
+        {
+            task_rescan_steps_ = 0U;
+            task_rescan_epoch_ = epoch;
+            task_rescan_revision_ = revision;
+            task_rescan_id_ = id;
+        }
+    }
+
+    bool SingleDroneExplorer::activeTaskMatches(const ExplorerInput & input) const
+    {
+        if(active_task_id_ == 0U) {
+            return !input.task_guidance.valid
+                   || input.task_guidance.mode == ExplorationTaskMode::LocalFallback;
+        }
+        return input.task_guidance.valid
+               && input.task_guidance.mode == ExplorationTaskMode::Assigned
+               && input.task_guidance.allocator_epoch == active_task_epoch_
+               && input.task_guidance.revision == active_task_revision_
+               && input.task_guidance.task_id == active_task_id_;
+    }
+
+    float SingleDroneExplorer::nextRescanYaw(
+            const ExplorerInput & input, const bool for_task) const
+    {
+        if(for_task && input.task_guidance.valid
+           && input.task_guidance.mode == ExplorationTaskMode::Assigned)
+        {
+            const float target_yaw = std::atan2(
+                    input.task_guidance.target.y - input.pose.position.y,
+                    input.task_guidance.target.x - input.pose.position.x);
+            const float error = shortestYawDistance(target_yaw, input.pose.yaw);
+            if(std::fabs(error) > config_.yaw_tolerance) {
+                return normalizedYaw(
+                        input.pose.yaw
+                        + std::clamp(
+                                  error, -config_.rescan_yaw_step,
+                                  config_.rescan_yaw_step));
+            }
+        }
+        return normalizedYaw(input.pose.yaw + config_.rescan_yaw_step);
     }
 
     void SingleDroneExplorer::updateTravelHeading(const Pose3D & pose)

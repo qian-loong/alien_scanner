@@ -98,6 +98,8 @@ namespace SwarmController {
         }
         strategy_ = std::make_shared<FrontierExplorationStrategy>(strategy_config);
         explorer_ = std::make_unique<SingleDroneExplorer>(strategy_, explorer_config);
+        task_tracker_ = std::make_unique<TaskLeaseTracker>(TaskLeaseTrackerConfig {
+                get_parameter("task.receive_watchdog").as_double()});
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
         sensor_callback_group_ = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
@@ -136,6 +138,12 @@ namespace SwarmController {
                 [this](const octomap_msgs::msg::Octomap::SharedPtr msg) {
                     onOctomap(msg);
                 }, sensor_options);
+        task_subscription_ = create_subscription<
+                swarm_controller_interfaces::msg::ExplorationTask>(
+                "exploration_task", rclcpp::QoS(1).reliable().transient_local(),
+                [this](const swarm_controller_interfaces::msg::ExplorationTask::SharedPtr msg) {
+                    onExplorationTask(msg);
+                }, sensor_options);
         goal_publisher_ = create_publisher<geometry_msgs::msg::PoseStamped>(
                 "motion_goal", rclcpp::QoS(1).reliable().transient_local());
         marker_publisher_ = create_publisher<visualization_msgs::msg::MarkerArray>(
@@ -169,6 +177,10 @@ namespace SwarmController {
         declare_parameter("peer.position_timeout", 2.0);
         declare_parameter("peer.goal_timeout", 25.0);
         declare_parameter("peer.retry_interval", 1.0);
+        declare_parameter("task.receive_watchdog", 3.5);
+        declare_parameter("task.retry_interval", 1.0);
+        declare_parameter("task.rescan_max_steps", 4);
+        declare_parameter("task.rescan_step_timeout", 2.5);
         declare_parameter("motion.travel_heading_update_distance", 0.35);
         declare_parameter("recovery.timeout", 8.0);
         declare_parameter("planning.max_snapshot_age", 1.0);
@@ -197,6 +209,9 @@ namespace SwarmController {
         declare_parameter("frontier.lateral_weight", 0.60);
         declare_parameter("frontier.heading_weight", 0.25);
         declare_parameter("frontier.dispersion_weight", 0.35);
+        declare_parameter("frontier.task_progress_weight", 1.0);
+        declare_parameter("task.min_progress", 0.15);
+        declare_parameter("task.max_heading_error", 1.05);
         declare_parameter("frontier.min_peer_goal_separation", 0.8);
     }
 
@@ -224,6 +239,12 @@ namespace SwarmController {
                 static_cast<float>(get_parameter("frontier.heading_weight").as_double());
         config.dispersion_weight =
                 static_cast<float>(get_parameter("frontier.dispersion_weight").as_double());
+        config.task_progress_weight = static_cast<float>(
+                get_parameter("frontier.task_progress_weight").as_double());
+        config.task_min_progress = static_cast<float>(
+                get_parameter("task.min_progress").as_double());
+        config.task_max_heading_error = static_cast<float>(
+                get_parameter("task.max_heading_error").as_double());
         config.min_peer_goal_separation = static_cast<float>(
                 get_parameter("frontier.min_peer_goal_separation").as_double());
         config.robot_radius =
@@ -241,10 +262,12 @@ namespace SwarmController {
     {
         SingleDroneExplorerConfig config;
         const auto rescan_max_steps = get_parameter("rescan.max_steps").as_int();
+        const auto task_rescan_max_steps =
+                get_parameter("task.rescan_max_steps").as_int();
         const auto max_rejections = get_parameter("max_rejections_per_epoch").as_int();
         const auto max_debug_faces = get_parameter("max_debug_faces").as_int();
         const auto max_debug_candidates = get_parameter("max_debug_candidates").as_int();
-        if(rescan_max_steps <= 0 || max_rejections <= 0
+        if(rescan_max_steps <= 0 || task_rescan_max_steps <= 0 || max_rejections <= 0
            || max_debug_faces < 0 || max_debug_candidates < 0)
         {
             throw std::invalid_argument("invalid non-negative explorer count parameter");
@@ -262,6 +285,10 @@ namespace SwarmController {
         config.map_stale_timeout_seconds = get_parameter("map.stale_timeout").as_double();
         config.peer_retry_interval_seconds =
                 get_parameter("peer.retry_interval").as_double();
+        config.task_retry_interval_seconds =
+                get_parameter("task.retry_interval").as_double();
+        config.task_rescan_step_timeout_seconds =
+                get_parameter("task.rescan_step_timeout").as_double();
         config.travel_heading_update_distance = static_cast<float>(
                 get_parameter("motion.travel_heading_update_distance").as_double());
         config.clearance_recovery_timeout_seconds =
@@ -269,6 +296,8 @@ namespace SwarmController {
         config.rescan_yaw_step =
                 static_cast<float>(get_parameter("rescan.yaw_step").as_double());
         config.rescan_max_steps = static_cast<std::size_t>(rescan_max_steps);
+        config.task_rescan_max_steps =
+                static_cast<std::size_t>(task_rescan_max_steps);
         config.max_rejections_per_epoch = static_cast<std::size_t>(max_rejections);
         config.enforce_entry_forward_half_space =
                 get_parameter("entry.enforce_forward_half_space").as_bool();
@@ -367,6 +396,64 @@ namespace SwarmController {
         peers_[peer_index].goal              = *msg;
         peers_[peer_index].goal_receive_time = monotonicNow();
         peers_[peer_index].has_goal          = true;
+    }
+
+    void SingleDroneExplorerNode::onExplorationTask(
+            const swarm_controller_interfaces::msg::ExplorationTask::SharedPtr msg)
+    {
+        if(msg->header.frame_id != map_frame_) {
+            std::lock_guard<std::mutex> lock(task_mutex_);
+            task_update_status_ = "RejectedInvalidFrame";
+            return;
+        }
+        ExplorationTaskMode mode;
+        switch(msg->mode) {
+            case swarm_controller_interfaces::msg::ExplorationTask::MODE_LOCAL_FALLBACK:
+                mode = ExplorationTaskMode::LocalFallback;
+                break;
+            case swarm_controller_interfaces::msg::ExplorationTask::MODE_ASSIGNED:
+                mode = ExplorationTaskMode::Assigned;
+                break;
+            case swarm_controller_interfaces::msg::ExplorationTask::MODE_STANDBY:
+                mode = ExplorationTaskMode::Standby;
+                break;
+            default:
+                std::lock_guard<std::mutex> lock(task_mutex_);
+                task_update_status_ = "RejectedInvalidMode";
+                return;
+        }
+        const std::int64_t lease_ns =
+                static_cast<std::int64_t>(msg->lease.sec) * 1'000'000'000LL
+                + static_cast<std::int64_t>(msg->lease.nanosec);
+        ExplorationTaskControl control;
+        control.issued_time_ns = rclcpp::Time(msg->header.stamp).nanoseconds();
+        control.lease_duration_ns = lease_ns;
+        control.allocator_epoch = msg->allocator_epoch;
+        control.revision = msg->revision;
+        control.task_id = msg->task_id;
+        control.mode = mode;
+        control.target = Point3f {
+                static_cast<float>(msg->target.position.x),
+                static_cast<float>(msg->target.position.y),
+                static_cast<float>(msg->target.position.z)};
+
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        const TaskUpdateResult result = task_tracker_->update(
+                control, get_clock()->now().nanoseconds(), monotonicNow());
+        switch(result.status) {
+            case TaskUpdateStatus::AcceptedNew:
+                task_update_status_ = "AcceptedNew";
+                break;
+            case TaskUpdateStatus::AcceptedRenewal:
+                task_update_status_ = "AcceptedRenewal";
+                break;
+            case TaskUpdateStatus::RejectedInvalid:
+                task_update_status_ = "RejectedInvalid:" + result.reason;
+                break;
+            case TaskUpdateStatus::RejectedStale:
+                task_update_status_ = "RejectedStale:" + result.reason;
+                break;
+        }
     }
 
     bool SingleDroneExplorerNode::transformPoseToMap(
@@ -587,18 +674,39 @@ namespace SwarmController {
         input.monotonic_time_seconds = now_seconds;
         input.peer_positions         = peer_snapshot_.peer_positions;
         input.active_peer_goals      = peer_snapshot_.active_peer_goals;
+        {
+            std::lock_guard<std::mutex> lock(task_mutex_);
+            const ExplorationTaskSnapshot snapshot = task_tracker_->snapshot(
+                    get_clock()->now().nanoseconds(), now_seconds);
+            task_guidance_ = {};
+            if(snapshot.valid) {
+                task_guidance_.valid = true;
+                task_guidance_.mode = snapshot.control.mode;
+                task_guidance_.allocator_epoch = snapshot.control.allocator_epoch;
+                task_guidance_.revision = snapshot.control.revision;
+                task_guidance_.task_id = snapshot.control.task_id;
+                task_guidance_.target = snapshot.control.target;
+            }
+            input.task_guidance = task_guidance_;
+        }
         return true;
     }
 
     PlanningSnapshot SingleDroneExplorerNode::planningSnapshot(const ExplorerInput & input)
     {
-        return PlanningSnapshot {
-                input.pose,
-                input.observation_epoch,
-                input.observation_stamp_ns,
-                input.monotonic_time_seconds,
-                input.active_peer_goals,
-        };
+        PlanningSnapshot snapshot;
+        snapshot.pose = input.pose;
+        snapshot.map_epoch = input.observation_epoch;
+        snapshot.map_stamp_ns = input.observation_stamp_ns;
+        snapshot.monotonic_time_seconds = input.monotonic_time_seconds;
+        snapshot.active_peer_goals = input.active_peer_goals;
+        snapshot.task_valid = input.task_guidance.valid;
+        snapshot.task_mode = input.task_guidance.mode;
+        snapshot.task_allocator_epoch = input.task_guidance.allocator_epoch;
+        snapshot.task_revision = input.task_guidance.revision;
+        snapshot.task_id = input.task_guidance.task_id;
+        snapshot.task_target = input.task_guidance.target;
+        return snapshot;
     }
 
     void SingleDroneExplorerNode::onControlTimer()
@@ -810,6 +918,23 @@ namespace SwarmController {
                          << tf_pending_count_ << '/' << tf_rejected_count_;
             text.text += peer_details.str();
         }
+        {
+            TaskGuidance task_snapshot;
+            {
+                std::lock_guard<std::mutex> lock(task_mutex_);
+                task_snapshot = task_guidance_;
+            }
+            std::ostringstream task;
+            task << "\ntask=";
+            if(!task_snapshot.valid) {
+                task << "LocalFallback(expired/unavailable)";
+            } else {
+                task << static_cast<int>(task_snapshot.mode)
+                     << " id=" << task_snapshot.task_id
+                     << " rev=" << task_snapshot.revision;
+            }
+            text.text += task.str();
+        }
         if(diagnostics.raw_candidate_count > 0U
            || diagnostics.unique_candidate_count > 0U
            || diagnostics.forward_filtered_count > 0U
@@ -820,6 +945,7 @@ namespace SwarmController {
                     << diagnostics.unique_candidate_count
                     << " forward_filtered=" << diagnostics.forward_filtered_count
                     << " peer_filtered=" << diagnostics.peer_goal_filtered_count
+                    << " task_filtered=" << diagnostics.task_filtered_count
                     << " segment_checks=" << diagnostics.segment_check_count
                     << " select=" << std::fixed << std::setprecision(3)
                     << diagnostics.selection_elapsed_seconds << 's';
@@ -877,6 +1003,7 @@ namespace SwarmController {
         } else if(explorer_->state() == ExplorerState::HoveringFailure) {
             status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
         } else if(explorer_->state() == ExplorerState::WaitingForPeer
+                  || explorer_->state() == ExplorerState::WaitingForTask
                   || explorer_->state() == ExplorerState::ExplorationStalled
                   || explorer_->state() == ExplorerState::RecoveringClearance
                   || tf_pending_count_ > 0U || peer_snapshot_.stale_positions > 0U
@@ -914,6 +1041,7 @@ namespace SwarmController {
         add_value("pre_peer_candidates", exploration.pre_peer_candidate_count);
         add_value("peer_goal_filtered", exploration.peer_goal_filtered_count);
         add_value("post_peer_candidates", exploration.post_peer_candidate_count);
+        add_value("task_filtered", exploration.task_filtered_count);
         add_value("raw_candidates", exploration.raw_candidate_count);
         add_value("unique_candidates", exploration.unique_candidate_count);
         add_value("forward_filtered", exploration.forward_filtered_count);
@@ -934,6 +1062,16 @@ namespace SwarmController {
         }
         add_value("tf_pending", tf_pending_count_);
         add_value("tf_rejected", tf_rejected_count_);
+        {
+            std::lock_guard<std::mutex> lock(task_mutex_);
+            add_text("task_update_status", task_update_status_);
+            add_value("task_valid", task_guidance_.valid ? 1 : 0);
+            add_value("task_mode", static_cast<int>(task_guidance_.mode));
+            add_value("task_allocator_epoch", task_guidance_.allocator_epoch);
+            add_value("task_revision", task_guidance_.revision);
+            add_value("task_id", task_guidance_.task_id);
+            add_value("task_rejected", task_tracker_->rejectedCount());
+        }
         message.status.push_back(std::move(status));
         diagnostics_publisher_->publish(message);
     }

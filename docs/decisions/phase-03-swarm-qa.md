@@ -16,7 +16,8 @@
 | 本机 unknown / free / occupied 形成 | Step 3-3 | 由雷达射线写入本机 OctoMap |
 | 多机 peer 状态可视化 | Step 3-7 | 每台 explorer 的 MarkerArray 包含自身状态和本机看到的 peer 输入 |
 | 多来源体素混合 | Step 3-8 | 完整快照替换、occupied 优先、无隐式重采样 |
-| 全局图显示 | Step 3-8 | `/global_map` 当前用于融合结果观察，不接入 3-7 本机规划 |
+| 全局图使用边界 | Step 3-8/3-9 | `/global_map` 用于全局任务区域检测，不替代本机运动安全图 |
+| 全局 frontier 任务分配 | Step 3-9 | 接口与自动测试完成；真实单环地图运行仍未形成可分配 region |
 
 ## 2. Step 3-3：本机体素状态
 
@@ -179,17 +180,184 @@ width = 2^level
 
 - 全局融合是确定性的三态集合合并，不是概率融合。
 - occupied 优先是安全契约。
-- `/global_map` 当前用于共享地图展示和后续能力预留，3-7 explorer 仍使用各自本机 OctoMap。
-- 当前不做全局 frontier 分配、全局路径规划或 stale 自动删图。
+- `/global_map` 由 3-9 allocator 用于全局 frontier 区域检测；3-7/3-9 explorer 的运动安全检查
+  仍只使用各自本机 OctoMap。
+- 3-8 本身不承担任务分配、全局路径规划或 stale 自动删图。
 
-## 5. 当前阶段边界
+## 5. Step 3-9：全局 frontier 与任务分配诊断
+
+### Q：如何在 RViz 中证明正在执行 3-9，而不是 3-7 自由探索？
+
+飞行路线彼此分开不能证明任务分配生效，因为 3-7 的 peer 分散也可能产生类似结果。应同时
+检查任务模式、全局 Marker 和 allocator diagnostics：
+
+| explorer 文本 | 含义 |
+|---------------|------|
+| `task=0 id=0` | `LocalFallback`，执行 3-7 本地探索 |
+| `task=1 id=N` | `Assigned`，接受非零全局任务 ID |
+| `task=2 id=0` | `Standby`，有可执行边但区域已分配给其他无人机 |
+| `LocalFallback(expired/unavailable)` | allocator 不可用或任务租约失效 |
+
+`/global_task_markers` 中：
+
+- `global_frontier_regions` 的绿色球体表示已经成熟的稳定 region；
+- `global_task_assignments` 的蓝色连线表示无人机到所属任务目标的所有权关系，不是实际飞行路径。
+
+只有 `status.message=Coordinated`、至少两台无人机 `task=1`、非零且不重复的 task ID，以及蓝色
+owner 连线相互一致，才能作为人工任务分配证据。入口只有零或一个稳定区域时保持
+`LocalFallback` 是设计内行为。
+
+### Q：为什么 GlobalTaskMarkers 显示 Ok，却没有绿色球体和蓝色连线？
+
+allocator 每周期都会发布两个 Marker namespace，即使其中的点列表为空。RViz 的 `Status: Ok`
+只表示收到过格式合法的 MarkerArray，不表示当前存在 stable region、Assigned task，或发布节点
+仍然存活。
+
+绿色球体为空表示没有可显示的稳定 region；所有 explorer 为 `task=0 id=0` 时，蓝色连线按定义
+必然为空。RViz 还会保留发布者退出前的最后一帧，因此 launch 结束后 Marker 仍可能显示 Ok。
+
+### Q：本次 rosbag 实测得到什么结论？
+
+验证数据位于本地 `rosbags/swarm_3_9_20260716_091008`，有效录制 222.3 秒、50372 条消息。
+三台无人机各收到 166 条任务消息，全部为：
+
+```text
+mode=0, task_id=0, revision=1
+```
+
+`Coordinated` 样本为 0，`detected_regions`、`tracked_regions`、`eligible_edges` 和
+`matching_cardinality` 全程为 0，因此本轮运动全部来自 3-7 本地探索。真值审计 18297 条均为
+`Clear`，没有真实穿墙。
+
+### Q：OctoMap leaf、voxel 和 detector column 分别是什么？
+
+- voxel 是几何空间中的立方体；
+- leaf 是 OctoMap 八叉树中不再细分的终端节点，保存 free/occupied 概率状态；
+- unknown 通常表示对应节点不存在，不是一种显式 leaf；
+- merger 将来源 leaf 规范化为 0.1 m max-depth key；
+- column 是 detector 创建的二维聚合单元，不是 OctoMap 原生节点。
+
+默认 `column_stride_voxels=2`，所以一个 column 的 XY 底面为 0.2 m × 0.2 m；同一 XY 范围内
+不同 Z 高度的 free leaf 被聚合到同一 column。当前 `raw_frontier_columns` 实际统计所有包含
+free leaf 的 sampled column，名称不能解释为“真正的 frontier 数量”，后续诊断应更名并增加
+`frontier_candidate_columns`。
+
+### Q：垂直检测主要检查什么？
+
+垂直检测检查 free/unknown 边界是否具有足够高度，而不是判断无人机上下方碰撞或实际路径安全。
+同一个 column、同一个水平 unknown 方向必须满足：
+
+```text
+不同 Z key 数量 >= 5
+Z 跨度 >= 0.4 m
+```
+
+该条件用于过滤单帧倾斜环形成的薄扫描边缘。前倾环会使不同 Z 证据同时发生 XY 偏移，因此
+单帧证据可能分散到相邻 column；但移动、yaw 重扫和三机融合会在累计地图中补充垂直层。
+
+本次最终样本中，8127 个具有 unknown 邻接的候选 column 里有 6303 个通过垂直阶段，通过率
+约 77.6%。因此倾斜几何确实需要后续邻域校准，但垂直条件不是当前最强瓶颈。
+
+### Q：支撑检测是什么，440 个体素如何产生？
+
+对通过垂直检查的 frontier column，算法根据 unknown 方向向已知 free 内侧检查一个长方体：
+
+```text
+深度 0.8 m：8 层
+宽度 1.0 m：11 个采样点
+高度 0.4 m：5 层
+8 × 11 × 5 = 440 个体素
+```
+
+每个被访问的体素都必须存在且为 free；遇到 unknown、occupied 或越界即拒绝并提前退出。
+该检查用于证明 frontier 内侧存在已观测自由支撑，不检查 unknown 外侧，也不等同于某台无人机
+的本机 first-hop 路径安全检查。
+
+440 个查询体素目前不单独显示。RViz 的 OctoMap 只显示原地图，无法指出某个 support box、
+第一个失败体素或失败类型。完整调试应只发布有界前 N 个 support box/失败点，不能显示全部
+候选，否则会进一步增加 Marker 与处理负担。
+
+### Q：当前真正最大的 detector 瓶颈是什么？
+
+最终样本的检测漏斗为：
+
+```text
+具有 unknown 邻接的候选 column：8127
+通过垂直检测：                  6303
+通过支撑检测：                    27
+形成 region：                       0
+```
+
+支撑阶段拒绝 6276 个，支撑通过率约 0.43%。剩余 27 个 supported column 又无法组成满足列数、
+面积、跨度和方向一致性的连通 component。因此当前首先需要定位 support rejection 的
+unknown/occupied/越界类型和空间分布，不能把 region 为零主要归因于 Z 层数量条件。
+
+### Q：merger 耗时是否导致 allocator 一步错、步步错？
+
+不是状态污染意义上的“一步错、步步错”，而是吞吐与时效契约不匹配。bag 中全局地图消息年龄
+中位数为 3.566 秒、最大 4.701 秒，merger 最大融合耗时为 4.012 秒，而 allocator freshness
+timeout 为 5 秒。allocator 又在单线程 timer 中同步反序列化并扫描最高约 142 万 known voxel，
+导致订阅和 timer 回调积压。
+
+结果表现为同一 update sequence 先短暂 `global_map_fresh=1`，随后又变成 0，并安全退回
+`LocalFallback`。地图没有损坏，也没有资源拒绝，但协调活性无法稳定维持。即使完全修复该
+执行管线，当前 detector 仍会因 region 为零而无法分配，所以二者是独立阻断问题。
+
+### Q：什么是“真实地图语义校准”？
+
+这里的真实地图是当前倾斜环、OctoMap Builder 和 merger 实际生成的 `/global_map`，不是
+`/cave/points`、洞穴中轴线或分支真值。校准目标是让 detector 正确解释运行时体素形态：
+
+```text
+单环扫描薄边       -> 不形成虚假多任务
+持续直廊前沿       -> 可形成一个 region，但不启动多机协调
+成熟双分支         -> 形成两个稳定 region
+unknown/occupied   -> 不成为直接运动目标
+```
+
+全局 detector 只证明“这是值得分配的持续探索区域”；本机 first-hop 继续证明“该无人机当前能
+安全开始朝它前进”。不得通过校准放宽本机 body/segment known-free 安全契约。
+
+### Q：如何利用现有 bag 逐步改进算法？
+
+先补齐诊断，不改变任何选择结果：
+
+- sampled free、unknown-neighbor candidate、垂直 layer/span 通过与拒绝计数；
+- support 的 unknown/occupied/out-of-bounds 原因、首次失败深度/横向/高度分布；
+- component 数量、大小分桶、最大尺寸，以及列数/面积/跨度/方向一致性拒绝计数；
+- leaf scan、vertical、support、component 和总耗时。
+
+然后新增仅在 `BUILD_TESTING` 下构建的 C++ bag analyzer，直接顺序读取 MCAP 中的
+`/global_map`，逐帧调用 ROS-free `GlobalFrontierDetector` 并输出 CSV/JSON。这样不受 ROS timer、
+QoS 和 freshness 抖动影响。生产模式保持首次失败即退出并只保留有界统计；完整 440 体素分布
+只在离线分析中计算。
+
+算法修改按以下顺序一次只改变一个语义：
+
+1. 支撑证据与本机运动安全的职责边界；
+2. supported column 的 component 连通与区域形成；
+3. 倾斜环垂直证据的相邻 column 聚合；
+4. 最后才调整物理参数阈值。
+
+每次修改都用同一 bag 比较，并将最终语义写成合成 OcTree gtest；bag 作为本地分析数据，不作为
+仓库 CI 依赖，也不得把一次运行中的洞穴真值写入算法。
+
+### 决策结论
+
+- Step 3-9 接口、实现和自动测试已完成，但当前真实单环地图运行未形成可分配 region，不能完成验收。
+- 优先补齐 support/component 诊断与离线 bag analyzer，不直接降低阈值。
+- allocator 重型检测需与 ROS 回调解耦，但性能修复不能替代 detector 语义校准。
+- 任务区域证据可以重新设计；本机 first-hop、body 和 segment 安全检查不得放宽。
+
+## 6. 当前阶段边界
 
 当前文档记录的结论不意味着已经实现以下能力：
 
-- 全局地图驱动的任务分配；
-- 多机在全局 frontier 上的唯一所有权；
+- 已通过真实单环地图人工验收的全局任务分配；
 - 动态障碍物时间预测；
 - 3D 全局路径规划；
+- 长距离 A*/Theta* 或全局地图运动安全规划；
 - 将 peer 可视化与自身 MarkerArray 完全拆分。
 
-这些能力属于后续步骤或独立可视化改进，不应与当前体素混合契约混淆。
+3-9 当前只提供全局区域所有权和本机 known-free 短跳引导；实际运行仍处于诊断与校准阶段，
+不能与已完成验收的动态避碰、全局路径规划或复杂 3D 传感能力混淆。

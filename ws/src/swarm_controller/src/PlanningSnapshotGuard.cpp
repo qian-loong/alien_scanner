@@ -56,6 +56,14 @@ namespace SwarmController {
                                          > config_.max_yaw_drift;
         result.active_peer_goals_changed =
                 !samePoints(before.active_peer_goals, after.active_peer_goals);
+        result.task_changed = before.task_valid != after.task_valid
+                              || before.task_mode != after.task_mode
+                              || before.task_allocator_epoch != after.task_allocator_epoch
+                              || before.task_revision != after.task_revision
+                              || before.task_id != after.task_id
+                              || before.task_target.x != after.task_target.x
+                              || before.task_target.y != after.task_target.y
+                              || before.task_target.z != after.task_target.z;
         result.age_seconds = std::max(
                 0.0, after.monotonic_time_seconds - before.monotonic_time_seconds);
         result.age_exceeded = result.age_seconds > config_.max_snapshot_age_seconds;

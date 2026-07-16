@@ -3,6 +3,7 @@
 
 #include "swarm_controller/Point3f.hpp"
 #include "swarm_controller/Pose3D.hpp"
+#include "swarm_controller/ExplorationTask.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -15,6 +16,12 @@ namespace SwarmController {
         std::int64_t         map_stamp_ns {};
         double               monotonic_time_seconds {};
         std::vector<Point3f> active_peer_goals;
+        bool                 task_valid {false};
+        ExplorationTaskMode  task_mode {ExplorationTaskMode::LocalFallback};
+        std::uint64_t        task_allocator_epoch {};
+        std::uint64_t        task_revision {};
+        std::uint64_t        task_id {};
+        Point3f               task_target {};
     };
 
     struct PlanningSnapshotConfig {
@@ -27,12 +34,14 @@ namespace SwarmController {
         bool   map_changed {false};
         bool   pose_changed {false};
         bool   active_peer_goals_changed {false};
+        bool   task_changed {false};
         bool   age_exceeded {false};
         double age_seconds {};
 
         bool requiresRevalidation() const
         {
-            return map_changed || pose_changed || active_peer_goals_changed || age_exceeded;
+            return map_changed || pose_changed || active_peer_goals_changed || task_changed
+                   || age_exceeded;
         }
     };
 

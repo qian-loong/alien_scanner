@@ -2,6 +2,7 @@
 #define SWARM_CONTROLLER_SINGLEDRONEEXPLORER_HPP
 
 #include "swarm_controller/ExplorationDiagnostics.hpp"
+#include "swarm_controller/ExplorationTask.hpp"
 #include "swarm_controller/IExplorationStrategy.hpp"
 #include "swarm_controller/KnownFreePathChecker.hpp"
 
@@ -18,6 +19,7 @@ namespace SwarmController {
         WaitingForMap,
         Selecting,
         WaitingForPeer,
+        WaitingForTask,
         ExplorationStalled,
         RecoveringClearance,
         Moving,
@@ -49,6 +51,7 @@ namespace SwarmController {
         double               monotonic_time_seconds {};
         std::vector<Point3f> peer_positions;
         std::vector<Point3f> active_peer_goals;
+        TaskGuidance         task_guidance {};
     };
 
     struct SingleDroneExplorerConfig {
@@ -60,10 +63,13 @@ namespace SwarmController {
         float  stopped_angular_speed_max {0.03F};
         double map_stale_timeout_seconds {2.0};
         double peer_retry_interval_seconds {1.0};
+        double task_retry_interval_seconds {1.0};
+        double task_rescan_step_timeout_seconds {2.5};
         float  travel_heading_update_distance {0.35F};
         double clearance_recovery_timeout_seconds {8.0};
         float  rescan_yaw_step {0.78539816339F};
         std::size_t rescan_max_steps {8U};
+        std::size_t task_rescan_max_steps {4U};
         std::size_t max_rejections_per_epoch {16U};
         bool        enforce_entry_forward_half_space {true};
         float       entry_backward_margin {0.10F};
@@ -106,17 +112,21 @@ namespace SwarmController {
         double effectiveNow(const ExplorerInput & input) const;
         ExplorerTickResult selectAndCommand(const ExplorerInput & input);
         ExplorerTickResult beginWaitingForPeer(const ExplorerInput & input);
+        ExplorerTickResult beginWaitingForTask(const ExplorerInput & input);
         ExplorerTickResult beginExplorationStalled(const ExplorerInput & input);
         ExplorerTickResult beginClearanceRecovery(
                 const ExplorerInput & input, const PathCheckResult & conflict,
                 const std::string & reason);
-        ExplorerTickResult beginRescan(const ExplorerInput & input);
+        ExplorerTickResult beginRescan(const ExplorerInput & input, bool for_task = false);
         ExplorerTickResult beginStopping(
                 const ExplorerInput & input, StopDestination destination,
                 const std::string & reason);
         bool isReached(const Pose3D & pose, const Pose3D & goal) const;
         bool isStopped(const ExplorerInput & input) const;
         bool isMapStale(const ExplorerInput & input) const;
+        bool activeTaskMatches(const ExplorerInput & input) const;
+        void synchronizeTaskRescanBudget(const ExplorerInput & input);
+        float nextRescanYaw(const ExplorerInput & input, bool for_task) const;
         void updateTravelHeading(const Pose3D & pose);
         void adoptObservation(const ExplorerInput & input);
         void setState(ExplorerState state);
@@ -132,10 +142,16 @@ namespace SwarmController {
         std::optional<Pose3D>                 active_goal_;
         std::optional<Point3f>                active_goal_origin_;
         std::optional<FrontierClusterId>       active_cluster_id_;
+        std::uint64_t                         active_task_epoch_ {};
+        std::uint64_t                         active_task_revision_ {};
+        std::uint64_t                         active_task_id_ {};
         std::optional<float>                  preferred_travel_yaw_;
         std::optional<Pose3D>                 hold_pose_;
         std::size_t                           stalled_map_node_count_ {0U};
         std::vector<Point3f>                  waiting_peer_goals_;
+        std::uint64_t                         waiting_task_epoch_ {};
+        std::uint64_t                         waiting_task_revision_ {};
+        std::uint64_t                         waiting_task_id_ {};
         StopDestination                       stop_destination_ {StopDestination::Selecting};
         std::uint64_t                         current_epoch_ {0U};
         std::uint64_t                         last_checked_path_epoch_ {0U};
@@ -144,7 +160,12 @@ namespace SwarmController {
         double                                last_observation_time_ {};
         double                                state_start_time_ {};
         std::size_t                           completed_rescan_steps_ {0U};
+        std::size_t                           task_rescan_steps_ {0U};
+        std::uint64_t                         task_rescan_epoch_ {};
+        std::uint64_t                         task_rescan_revision_ {};
+        std::uint64_t                         task_rescan_id_ {};
         bool                                  rescan_reached_ {false};
+        bool                                  task_rescan_active_ {false};
         std::chrono::steady_clock::time_point tick_wall_start_ {};
     };
 

@@ -36,6 +36,7 @@ namespace SwarmController {
         std::size_t pre_peer_candidate_count {};
         std::size_t peer_goal_filtered_count {};
         std::size_t post_peer_candidate_count {};
+        std::size_t task_filtered_count {};
         std::size_t segment_check_count {};
         double      selection_elapsed_seconds {};
 
@@ -61,6 +62,7 @@ namespace SwarmController {
             pre_peer_candidate_count    = 0U;
             peer_goal_filtered_count    = 0U;
             post_peer_candidate_count   = 0U;
+            task_filtered_count         = 0U;
             segment_check_count         = 0U;
             selection_elapsed_seconds   = 0.0;
             frontier_faces.clear();
