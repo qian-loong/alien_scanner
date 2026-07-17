@@ -273,6 +273,9 @@ def _launch_setup(context, *args, **kwargs):
                     'frontier.min_direction_consistency': float(
                         LaunchConfiguration(
                             'frontier.min_direction_consistency').perform(context)),
+                    'frontier.collect_stage_timings': LaunchConfiguration(
+                        'frontier.collect_stage_timings').perform(
+                            context).lower() in ('true', '1', 'yes'),
                     'frontier.min_persistence_updates': int(
                         LaunchConfiguration(
                             'frontier.min_persistence_updates').perform(context)),
@@ -433,6 +436,8 @@ def generate_launch_description():
         DeclareLaunchArgument('frontier.min_span', default_value='0.6'),
         DeclareLaunchArgument(
             'frontier.min_direction_consistency', default_value='0.65'),
+        DeclareLaunchArgument(
+            'frontier.collect_stage_timings', default_value='false'),
         DeclareLaunchArgument(
             'frontier.min_persistence_updates', default_value='3'),
         DeclareLaunchArgument(

@@ -80,6 +80,7 @@ install(
 )
 install(
         TARGETS drone_lidar
+        EXPORT export_${PROJECT_NAME}
         ARCHIVE DESTINATION lib
         LIBRARY DESTINATION lib
 )
@@ -206,5 +207,9 @@ if(BUILD_TESTING)
     add_ros_isolated_launch_test(test/test_cloud_map_integration.py)
     add_ros_isolated_launch_test(test/test_stop_scan_integration.py)
 endif()
+
+ament_export_include_directories(include)
+ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
+ament_export_dependencies(cave_world)
 
 ament_package()

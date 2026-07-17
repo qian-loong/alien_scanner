@@ -21,11 +21,11 @@
   <depend>visualization_msgs</depend>
   <depend>octomap</depend>
   <depend>octomap_msgs</depend>
+  <depend>drone_scanner</depend>
+  <depend>cave_world</depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
-  <exec_depend>drone_scanner</exec_depend>
-  <exec_depend>cave_world</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>octomap_rviz_plugins</exec_depend>
 
@@ -34,6 +34,9 @@
   <test_depend>launch_testing</test_depend>
   <test_depend>launch_testing_ament_cmake</test_depend>
   <test_depend>rclpy</test_depend>
+  <test_depend>rosbag2_cpp</test_depend>
+  <test_depend>rosbag2_storage</test_depend>
+  <test_depend>rosbag2_storage_mcap</test_depend>
   <test_depend>sensor_msgs_py</test_depend>
   <test_depend>std_msgs</test_depend>
 

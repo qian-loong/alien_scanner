@@ -192,6 +192,7 @@ namespace SwarmController {
             declare_parameter("frontier.max_frontier_columns", 250000);
             declare_parameter("frontier.max_columns_per_region", 50000);
             declare_parameter("frontier.max_regions", 64);
+            declare_parameter("frontier.collect_stage_timings", false);
             declare_parameter("frontier.min_persistence_updates", 3);
             declare_parameter("frontier.min_persistence_time", 2.0);
             declare_parameter("frontier.missed_update_grace", 2);
@@ -299,6 +300,8 @@ namespace SwarmController {
             detector_config_.max_regions = positiveSize(
                     get_parameter("frontier.max_regions").as_int(),
                     "frontier.max_regions");
+            detector_config_.collect_stage_timings =
+                    get_parameter("frontier.collect_stage_timings").as_bool();
 
             allocator_config_.min_persistence_updates = positiveSize(
                     get_parameter("frontier.min_persistence_updates").as_int(),
@@ -511,9 +514,14 @@ namespace SwarmController {
                 auto map = decodeMap(*global, map_frame_, detector_config_.resolution, reason);
                 if(map) {
                     const FrontierDetectionResult detection = detector_->detect(*map);
+                    detector_status_ = detection.status;
+                    detector_diagnostics_ = detection.diagnostics;
                     vertical_rejected_columns_ = detection.vertical_rejected_columns;
                     scanned_free_voxels_ = detection.scanned_free_voxels;
                     support_rejected_columns_ = detection.support_rejected_columns;
+                    raw_frontier_columns_ = detection.raw_columns;
+                    supported_frontier_columns_ = detection.supported_columns;
+                    detected_region_count_ = detection.regions.size();
                     if(detection.accepted()) {
                         global_map_ = std::move(map);
                         global_map_stamp_ns_ = rclcpp::Time(global->header.stamp).nanoseconds();
@@ -521,12 +529,18 @@ namespace SwarmController {
                         ++global_update_sequence_;
                         global_map_receive_seconds_ = now_seconds;
                         detector_reason_.clear();
-                        raw_frontier_columns_ = detection.raw_columns;
-                        supported_frontier_columns_ = detection.supported_columns;
                     } else {
                         detector_reason_ = detection.reason;
                     }
                 } else {
+                    detector_status_ = FrontierDetectionStatus::Invalid;
+                    detector_diagnostics_ = {};
+                    raw_frontier_columns_ = 0U;
+                    scanned_free_voxels_ = 0U;
+                    supported_frontier_columns_ = 0U;
+                    vertical_rejected_columns_ = 0U;
+                    support_rejected_columns_ = 0U;
+                    detected_region_count_ = 0U;
                     detector_reason_ = reason;
                 }
             }
@@ -665,6 +679,20 @@ namespace SwarmController {
             status.values.push_back(numericValue("raw_frontier_columns", raw_frontier_columns_));
             status.values.push_back(numericValue("scanned_free_voxels", scanned_free_voxels_));
             status.values.push_back(numericValue(
+                    "detector_status", static_cast<int>(detector_status_)));
+            status.values.push_back(numericValue(
+                    "detector_diagnostics_complete",
+                    detector_diagnostics_.complete ? 1 : 0));
+            status.values.push_back(numericValue(
+                    "sampled_free_columns",
+                    detector_diagnostics_.sampled_free_columns));
+            status.values.push_back(numericValue(
+                    "unknown_neighbor_candidate_columns",
+                    detector_diagnostics_.unknown_neighbor_candidate_columns));
+            status.values.push_back(numericValue(
+                    "vertical_passed_columns",
+                    detector_diagnostics_.vertical_passed_columns));
+            status.values.push_back(numericValue(
                     "max_support_samples_per_column",
                     detector_config_.max_support_samples_per_column));
             status.values.push_back(numericValue(
@@ -673,7 +701,89 @@ namespace SwarmController {
                     "vertical_rejected_columns", vertical_rejected_columns_));
             status.values.push_back(numericValue(
                     "support_rejected_columns", support_rejected_columns_));
-            status.values.push_back(numericValue("detected_regions", regions_.size()));
+            status.values.push_back(numericValue(
+                    "support_passed_columns",
+                    detector_diagnostics_.support_passed_columns));
+            status.values.push_back(numericValue(
+                    "support_rejected_unknown",
+                    detector_diagnostics_.support_rejected_unknown));
+            status.values.push_back(numericValue(
+                    "support_rejected_occupied",
+                    detector_diagnostics_.support_rejected_occupied));
+            status.values.push_back(numericValue(
+                    "support_rejected_out_of_bounds",
+                    detector_diagnostics_.support_rejected_out_of_bounds));
+            status.values.push_back(numericValue(
+                    "support_samples_attempted",
+                    detector_diagnostics_.support_samples_attempted));
+            status.values.push_back(numericValue(
+                    "support_failure_position_unavailable",
+                    detector_diagnostics_.support_failure_position_unavailable));
+            for(std::size_t index = 0U;
+                index < detector_diagnostics_.support_failure_depth_octiles.size();
+                ++index)
+            {
+                status.values.push_back(numericValue(
+                        "support_failure_depth_octile_" + std::to_string(index),
+                        detector_diagnostics_.support_failure_depth_octiles[index]));
+            }
+            for(std::size_t index = 0U;
+                index < detector_diagnostics_.support_failure_lateral_bins.size();
+                ++index)
+            {
+                status.values.push_back(numericValue(
+                        "support_failure_lateral_bin_" + std::to_string(index),
+                        detector_diagnostics_.support_failure_lateral_bins[index]));
+            }
+            for(std::size_t index = 0U;
+                index < detector_diagnostics_.support_failure_vertical_bins.size();
+                ++index)
+            {
+                status.values.push_back(numericValue(
+                        "support_failure_vertical_bin_" + std::to_string(index),
+                        detector_diagnostics_.support_failure_vertical_bins[index]));
+            }
+            status.values.push_back(numericValue(
+                    "components_built", detector_diagnostics_.components_built));
+            for(std::size_t index = 0U;
+                index < detector_diagnostics_.component_size_buckets.size();
+                ++index)
+            {
+                status.values.push_back(numericValue(
+                        "component_size_bucket_" + std::to_string(index),
+                        detector_diagnostics_.component_size_buckets[index]));
+            }
+            status.values.push_back(numericValue(
+                    "component_primary_rejected_columns",
+                    detector_diagnostics_.component_primary_rejected_columns));
+            status.values.push_back(numericValue(
+                    "component_primary_rejected_area",
+                    detector_diagnostics_.component_primary_rejected_area));
+            status.values.push_back(numericValue(
+                    "component_primary_rejected_span",
+                    detector_diagnostics_.component_primary_rejected_span));
+            status.values.push_back(numericValue(
+                    "component_primary_rejected_direction",
+                    detector_diagnostics_.component_primary_rejected_direction));
+            status.values.push_back(numericValue(
+                    "components_accepted", detector_diagnostics_.components_accepted));
+            status.values.push_back(numericValue(
+                    "detector_leaf_scan_seconds",
+                    detector_diagnostics_.timings.leaf_scan_seconds));
+            status.values.push_back(numericValue(
+                    "detector_vertical_seconds",
+                    detector_diagnostics_.timings.vertical_seconds));
+            status.values.push_back(numericValue(
+                    "detector_support_seconds",
+                    detector_diagnostics_.timings.support_seconds));
+            status.values.push_back(numericValue(
+                    "detector_component_seconds",
+                    detector_diagnostics_.timings.component_seconds));
+            status.values.push_back(numericValue(
+                    "detector_total_seconds",
+                    detector_diagnostics_.timings.total_seconds));
+            status.values.push_back(numericValue(
+                    "detected_regions", detected_region_count_));
             status.values.push_back(numericValue("tracked_regions", last_result_.tracks.size()));
             status.values.push_back(numericValue("eligible_edges", last_result_.eligible_edges));
             status.values.push_back(numericValue(
@@ -784,6 +894,9 @@ namespace SwarmController {
         std::size_t supported_frontier_columns_ {};
         std::size_t vertical_rejected_columns_ {};
         std::size_t support_rejected_columns_ {};
+        std::size_t detected_region_count_ {};
+        FrontierDetectionStatus detector_status_ {FrontierDetectionStatus::Invalid};
+        FrontierDetectionDiagnostics detector_diagnostics_;
         std::string detector_reason_;
         GlobalAllocationResult last_result_;
         rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr global_map_subscription_;

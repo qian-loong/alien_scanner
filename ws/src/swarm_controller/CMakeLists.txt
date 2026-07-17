@@ -22,6 +22,8 @@ find_package(tf2_ros REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(octomap REQUIRED)
 find_package(octomap_msgs REQUIRED)
+find_package(drone_scanner REQUIRED)
+find_package(cave_world REQUIRED)
 
 add_library(swarm_octomap STATIC
         src/OctoMapBuilder.cpp
@@ -53,6 +55,21 @@ target_include_directories(swarm_exploration PUBLIC
 target_link_libraries(swarm_exploration PUBLIC ${OCTOMAP_LIBRARIES})
 target_compile_features(swarm_exploration PUBLIC cxx_std_17)
 
+add_library(swarm_geometry_demo STATIC
+        src/FrontierGeometryDemo.cpp
+)
+target_include_directories(swarm_geometry_demo PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(
+        swarm_geometry_demo PUBLIC
+        swarm_exploration
+        swarm_octomap
+        drone_scanner::drone_lidar
+)
+target_compile_features(swarm_geometry_demo PUBLIC cxx_std_17)
+
 install(
         FILES
         include/swarm_controller/Point3f.hpp
@@ -73,10 +90,11 @@ install(
         include/swarm_controller/TaskLeaseTracker.hpp
         include/swarm_controller/SingleDroneExplorer.hpp
         include/swarm_controller/SingleDroneExplorerNode.hpp
+        include/swarm_controller/FrontierGeometryDemo.hpp
         DESTINATION include/swarm_controller
 )
 install(
-        TARGETS swarm_octomap swarm_exploration
+        TARGETS swarm_octomap swarm_exploration swarm_geometry_demo
         EXPORT export_${PROJECT_NAME}
         ARCHIVE DESTINATION lib
         LIBRARY DESTINATION lib
@@ -132,8 +150,22 @@ ament_target_dependencies(
         visualization_msgs swarm_controller_interfaces
 )
 
+add_executable(frontier_geometry_demo
+        src/FrontierGeometryDemoNode.cpp
+)
+target_include_directories(frontier_geometry_demo PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(frontier_geometry_demo swarm_geometry_demo)
+ament_target_dependencies(
+        frontier_geometry_demo
+        rclcpp geometry_msgs visualization_msgs
+)
+
 install(
         TARGETS octomap_builder global_map_merger single_drone_explorer global_task_allocator
+                frontier_geometry_demo
         DESTINATION lib/${PROJECT_NAME}
 )
 install(
@@ -143,7 +175,32 @@ install(
 
 if(BUILD_TESTING)
     find_package(ament_cmake_gtest REQUIRED)
+    find_package(rosbag2_cpp REQUIRED)
+    find_package(rosbag2_storage REQUIRED)
     find_package(std_msgs REQUIRED)
+
+    add_library(
+            global_frontier_bag_analyzer_support STATIC
+            test/GlobalFrontierBagAnalyzer.cpp
+    )
+    target_include_directories(
+            global_frontier_bag_analyzer_support PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/test
+    )
+    target_link_libraries(global_frontier_bag_analyzer_support swarm_exploration)
+    ament_target_dependencies(
+            global_frontier_bag_analyzer_support
+            rclcpp octomap_msgs rosbag2_cpp rosbag2_storage
+    )
+
+    add_executable(
+            global_frontier_bag_analyzer
+            test/GlobalFrontierBagAnalyzerMain.cpp
+    )
+    target_link_libraries(
+            global_frontier_bag_analyzer
+            global_frontier_bag_analyzer_support
+    )
 
     add_executable(
             global_map_late_subscriber_probe
@@ -240,6 +297,29 @@ if(BUILD_TESTING)
         )
     endif()
 
+    ament_add_gtest(TestFrontierGeometryDemo test/TestFrontierGeometryDemo.cpp)
+    if(TARGET TestFrontierGeometryDemo)
+        target_link_libraries(TestFrontierGeometryDemo swarm_geometry_demo)
+        target_include_directories(TestFrontierGeometryDemo PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
+    ament_add_gtest(
+            TestGlobalFrontierBagAnalyzer
+            test/TestGlobalFrontierBagAnalyzer.cpp
+    )
+    if(TARGET TestGlobalFrontierBagAnalyzer)
+        target_link_libraries(
+                TestGlobalFrontierBagAnalyzer
+                global_frontier_bag_analyzer_support
+        )
+        ament_target_dependencies(
+                TestGlobalFrontierBagAnalyzer
+                rclcpp octomap_msgs rosbag2_cpp rosbag2_storage std_msgs
+        )
+    endif()
+
     ament_add_gtest(TestGlobalTaskAllocator test/TestGlobalTaskAllocator.cpp)
     if(TARGET TestGlobalTaskAllocator)
         target_link_libraries(TestGlobalTaskAllocator swarm_exploration)
@@ -270,6 +350,11 @@ if(BUILD_TESTING)
     add_launch_test(test/test_octomap_builder_integration.py RUNNER "${RUNNER}" TIMEOUT 120)
     add_launch_test(
             test/test_octomap_observation_stamp_integration.py
+            RUNNER "${RUNNER}"
+            TIMEOUT 120
+    )
+    add_launch_test(
+            test/test_frontier_geometry_demo_integration.py
             RUNNER "${RUNNER}"
             TIMEOUT 120
     )
@@ -311,7 +396,7 @@ if(BUILD_TESTING)
 endif()
 
 ament_export_include_directories(include)
-ament_export_dependencies(octomap diagnostic_msgs)
+ament_export_dependencies(octomap diagnostic_msgs drone_scanner cave_world)
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 
 ament_package()
