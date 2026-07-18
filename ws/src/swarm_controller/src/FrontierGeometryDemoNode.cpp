@@ -130,11 +130,6 @@ namespace SwarmController {
             declare_parameter("frontier.min_z_layers", 5);
             declare_parameter("frontier.min_z_span", 0.4);
             declare_parameter("frontier.support_depth", 0.8);
-            declare_parameter("frontier.support_width", 1.0);
-            declare_parameter("fixture.support_height", 0.4);
-            declare_parameter("fixture.support_depth_samples", 8);
-            declare_parameter("fixture.support_lateral_samples", 5);
-            declare_parameter("fixture.support_vertical_samples", 5);
             declare_parameter("fixture.min_component_columns", 12);
             declare_parameter("frontier.max_trace_candidates", 10000);
             declare_parameter("frontier.max_trace_support_samples", 100000);
@@ -201,21 +196,7 @@ namespace SwarmController {
                     "frontier.min_z_layers");
             config_.min_z_span = static_cast<float>(
                     get_parameter("frontier.min_z_span").as_double());
-            config_.support_depth = static_cast<float>(
-                    get_parameter("frontier.support_depth").as_double());
-            config_.support_width = static_cast<float>(
-                    get_parameter("frontier.support_width").as_double());
-            config_.support_height = static_cast<float>(
-                    get_parameter("fixture.support_height").as_double());
-            config_.support_depth_samples = positiveSize(
-                    get_parameter("fixture.support_depth_samples").as_int(),
-                    "fixture.support_depth_samples");
-            config_.support_lateral_samples = positiveSize(
-                    get_parameter("fixture.support_lateral_samples").as_int(),
-                    "fixture.support_lateral_samples");
-            config_.support_vertical_samples = positiveSize(
-                    get_parameter("fixture.support_vertical_samples").as_int(),
-                    "fixture.support_vertical_samples");
+            config_.support_depth = get_parameter("frontier.support_depth").as_double();
             config_.min_component_columns = positiveSize(
                     get_parameter("fixture.min_component_columns").as_int(),
                     "fixture.min_component_columns");

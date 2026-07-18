@@ -49,14 +49,6 @@ def generate_launch_description():
             'frontier.min_z_layers': LaunchConfiguration('min_z_layers'),
             'frontier.min_z_span': LaunchConfiguration('min_z_span'),
             'frontier.support_depth': LaunchConfiguration('support_depth'),
-            'frontier.support_width': LaunchConfiguration('support_width'),
-            'fixture.support_height': LaunchConfiguration('support_height'),
-            'fixture.support_depth_samples': LaunchConfiguration(
-                'support_depth_samples'),
-            'fixture.support_lateral_samples': LaunchConfiguration(
-                'support_lateral_samples'),
-            'fixture.support_vertical_samples': LaunchConfiguration(
-                'support_vertical_samples'),
             'fixture.min_component_columns': LaunchConfiguration(
                 'min_component_columns'),
             'frontier.max_trace_candidates': LaunchConfiguration(
@@ -112,11 +104,6 @@ def generate_launch_description():
         DeclareLaunchArgument('min_z_layers', default_value='5'),
         DeclareLaunchArgument('min_z_span', default_value='0.4'),
         DeclareLaunchArgument('support_depth', default_value='0.8'),
-        DeclareLaunchArgument('support_width', default_value='1.0'),
-        DeclareLaunchArgument('support_height', default_value='0.4'),
-        DeclareLaunchArgument('support_depth_samples', default_value='8'),
-        DeclareLaunchArgument('support_lateral_samples', default_value='5'),
-        DeclareLaunchArgument('support_vertical_samples', default_value='5'),
         DeclareLaunchArgument('min_component_columns', default_value='12'),
         DeclareLaunchArgument('max_trace_candidates', default_value='10000'),
         DeclareLaunchArgument(

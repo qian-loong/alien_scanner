@@ -1,4 +1,5 @@
 #include "swarm_controller/GlobalFrontierDetector.hpp"
+#include "swarm_controller/KnownFreePathChecker.hpp"
 
 #include <gtest/gtest.h>
 
@@ -8,6 +9,7 @@
 #include <cstdint>
 #include <numeric>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace SwarmController {
@@ -70,8 +72,7 @@ namespace SwarmController {
             config.min_area = 0.05F;
             config.min_span = 0.3F;
             config.min_direction_consistency = 0.3F;
-            config.support_depth = 0.2F;
-            config.support_width = 0.1F;
+            config.support_depth = 0.2;
             config.max_frontier_columns = 10'000U;
             return config;
         }
@@ -147,24 +148,17 @@ namespace SwarmController {
             }
         }
 
-        void addKeySupportEnvelope(
+        void addKeySupportRay(
                 octomap::OcTree & tree, const octomap::key_type candidate_x,
                 const octomap::key_type y, const octomap::key_type z_center)
         {
             for(int depth = 1; depth <= 2; ++depth) {
-                for(int lateral = -1; lateral <= 1; ++lateral) {
-                    for(int vertical = -2; vertical <= 2; ++vertical) {
-                        tree.updateNode(
-                                octomap::OcTreeKey {
-                                        static_cast<octomap::key_type>(
-                                                static_cast<int>(candidate_x) - depth),
-                                        static_cast<octomap::key_type>(
-                                                static_cast<int>(y) + lateral),
-                                        static_cast<octomap::key_type>(
-                                                static_cast<int>(z_center) + vertical)},
-                                false, true);
-                    }
-                }
+                tree.updateNode(
+                        octomap::OcTreeKey {
+                                static_cast<octomap::key_type>(
+                                        static_cast<int>(candidate_x) - depth),
+                                y, z_center},
+                        false, true);
             }
         }
 
@@ -222,12 +216,6 @@ namespace SwarmController {
             EXPECT_EQ(
                     left.support_failure_depth_octiles,
                     right.support_failure_depth_octiles);
-            EXPECT_EQ(
-                    left.support_failure_lateral_bins,
-                    right.support_failure_lateral_bins);
-            EXPECT_EQ(
-                    left.support_failure_vertical_bins,
-                    right.support_failure_vertical_bins);
             EXPECT_EQ(left.components_built, right.components_built);
             EXPECT_EQ(left.component_size_buckets, right.component_size_buckets);
             EXPECT_EQ(
@@ -273,14 +261,68 @@ namespace SwarmController {
         EXPECT_THROW({ GlobalFrontierDetector detector {config}; }, std::invalid_argument);
     }
 
-    TEST(GlobalFrontierDetectorTest, RejectsSupportEnvelopeAboveConfiguredSampleLimit)
+    TEST(GlobalFrontierDetectorTest, RejectsSupportRayAboveConfiguredSampleLimit)
     {
         auto config = testConfig();
-        config.max_support_samples_per_column = 29U;
+        config.max_support_samples_per_column = 1U;
         EXPECT_THROW({ GlobalFrontierDetector detector {config}; }, std::invalid_argument);
     }
 
-    TEST(GlobalFrontierDetectorTest, SingleThinObservationDoesNotBecomeSupportedRegion)
+    TEST(GlobalFrontierDetectorTest, UsesOneCheckedSupportSampleCountAtPrecisionBoundary)
+    {
+        auto config = testConfig();
+        config.resolution = 0.032432430982589723;
+        config.support_depth = 0.162162155F;
+        config.max_support_samples_per_column = 5U;
+        config.min_z_layers = 5U;
+        config.min_z_span = static_cast<float>(4.0 * config.resolution);
+
+        octomap::OcTree tree(config.resolution);
+        const octomap::OcTreeKey anchor_key = tree.coordToKey(0.0, 0.0, 0.0);
+        for(int z_offset = -2; z_offset <= 2; ++z_offset) {
+            tree.updateNode(
+                    octomap::OcTreeKey {
+                            anchor_key[0], anchor_key[1],
+                            static_cast<octomap::key_type>(
+                                    static_cast<int>(anchor_key[2]) + z_offset)},
+                    false, true);
+        }
+        for(int depth = 1; depth <= 5; ++depth) {
+            tree.updateNode(
+                    octomap::OcTreeKey {
+                            static_cast<octomap::key_type>(
+                                    static_cast<int>(anchor_key[0]) - depth),
+                            anchor_key[1], anchor_key[2]},
+                    false, true);
+        }
+        tree.updateInnerOccupancy();
+
+        const TracedFrontierDetectionResult traced =
+                GlobalFrontierDetector(config).detectWithTrace(tree);
+        const FrontierColumnKey expected_key {
+                static_cast<std::int64_t>(anchor_key[0]),
+                static_cast<std::int64_t>(anchor_key[1])};
+        const auto candidate = std::find_if(
+                traced.trace.candidates.begin(), traced.trace.candidates.end(),
+                [&](const FrontierCandidateTrace & value) {
+                    return value.key == expected_key;
+                });
+        ASSERT_NE(candidate, traced.trace.candidates.end());
+        const auto selected = std::find_if(
+                candidate->support_attempts.begin(), candidate->support_attempts.end(),
+                [](const FrontierSupportAttemptTrace & attempt) {
+                    return attempt.selected;
+                });
+        ASSERT_NE(selected, candidate->support_attempts.end());
+        ASSERT_EQ(selected->samples.size(), 5U);
+        EXPECT_TRUE(std::all_of(
+                selected->samples.begin(), selected->samples.end(),
+                [](const FrontierSupportSampleTrace & sample) {
+                    return sample.state == FrontierTraceSampleState::Free;
+                }));
+    }
+
+    TEST(GlobalFrontierDetectorTest, SingleThinObservationDoesNotBecomeRegion)
     {
         octomap::OcTree tree(0.1);
         for(int y = -20; y <= 20; ++y) {
@@ -293,9 +335,22 @@ namespace SwarmController {
         EXPECT_TRUE(result.accepted());
         EXPECT_TRUE(result.regions.empty());
         EXPECT_GT(result.raw_columns, 0U);
-        EXPECT_EQ(result.supported_columns, 0U);
         expectCompleteConservation(result);
         EXPECT_GT(result.diagnostics.support_rejected_unknown, 0U);
+        EXPECT_EQ(result.diagnostics.components_accepted, 0U);
+    }
+
+    TEST(GlobalFrontierDetectorTest, EmptyTreeHasNoFrontierEvidence)
+    {
+        octomap::OcTree tree(0.1);
+
+        const auto result = GlobalFrontierDetector(testConfig()).detect(tree);
+
+        EXPECT_EQ(result.status, FrontierDetectionStatus::Empty);
+        EXPECT_TRUE(result.regions.empty());
+        expectCompleteConservation(result);
+        EXPECT_EQ(result.diagnostics.scanned_free_voxels, 0U);
+        EXPECT_EQ(result.diagnostics.unknown_neighbor_candidate_columns, 0U);
     }
 
     TEST(GlobalFrontierDetectorTest, SupportedCorridorFrontierIsDetected)
@@ -332,7 +387,36 @@ namespace SwarmController {
         expectCompleteConservation(result);
     }
 
-    TEST(GlobalFrontierDetectorTest, IncompleteVerticalSupportEnvelopeIsRejected)
+    TEST(GlobalFrontierDetectorTest, TwoSeparatedCorridorFrontiersRemainDistinct)
+    {
+        octomap::OcTree tree(0.1);
+        for(const float center_y : {-2.0F, 2.0F}) {
+            fillKeyBox(
+                    tree, {0.0F, center_y - 0.8F, 0.8F},
+                    {1.0F, center_y + 0.8F, 2.2F}, false);
+            fillKeyBox(
+                    tree, {-0.1F, center_y - 0.9F, 0.7F},
+                    {-0.1F, center_y + 0.9F, 2.3F}, true);
+            fillKeyBox(
+                    tree, {0.0F, center_y - 0.9F, 0.7F},
+                    {1.0F, center_y - 0.9F, 2.3F}, true);
+            fillKeyBox(
+                    tree, {0.0F, center_y + 0.9F, 0.7F},
+                    {1.0F, center_y + 0.9F, 2.3F}, true);
+        }
+
+        const auto result = GlobalFrontierDetector(testConfig()).detect(tree);
+        const std::size_t forward_regions = static_cast<std::size_t>(std::count_if(
+                result.regions.begin(), result.regions.end(),
+                [](const FrontierRegion & region) {
+                    return region.unknown_direction.x > 0.5F;
+                }));
+
+        EXPECT_EQ(forward_regions, 2U);
+        expectCompleteConservation(result);
+    }
+
+    TEST(GlobalFrontierDetectorTest, InwardEvidenceIsIndependentFromBodyClearance)
     {
         octomap::OcTree tree(0.1);
         addCorridor(tree, 0, 10, -6, 6, 12, 18);
@@ -360,9 +444,12 @@ namespace SwarmController {
                     return candidate.unknown_direction.x > 0.5F;
                 });
 
-        EXPECT_EQ(forward, result.regions.end());
-        EXPECT_GT(result.support_rejected_columns, 0U);
+        ASSERT_NE(forward, result.regions.end());
+        EXPECT_GT(result.supported_columns, 0U);
         expectCompleteConservation(result);
+
+        const KnownFreePathChecker checker;
+        EXPECT_FALSE(checker.checkBody(tree, forward->representative).safe());
     }
 
     TEST(GlobalFrontierDetectorTest, DefaultConfigurationAcceptsSupportedTunnelFrontier)
@@ -390,12 +477,11 @@ namespace SwarmController {
         constexpr auto CENTER = static_cast<octomap::key_type>(32'768U);
         constexpr auto CANDIDATE_X = static_cast<octomap::key_type>(32'770U);
         addKeyColumn(tree, CANDIDATE_X, CENTER, CENTER);
-        addKeySupportEnvelope(tree, CANDIDATE_X, CENTER, CENTER);
+        addKeySupportRay(tree, CANDIDATE_X, CENTER, CENTER);
         tree.updateNode(
                 octomap::OcTreeKey {
                         static_cast<octomap::key_type>(CANDIDATE_X - 1U),
-                        static_cast<octomap::key_type>(CENTER + 1U),
-                        static_cast<octomap::key_type>(CENTER - 2U)},
+                        CENTER, CENTER},
                 true, true);
         tree.updateInnerOccupancy();
 
@@ -414,6 +500,52 @@ namespace SwarmController {
                         std::uint64_t {0U})
                         + result.diagnostics.support_failure_position_unavailable,
                 supportRejected(result.diagnostics));
+    }
+
+    TEST(GlobalFrontierDetectorTest, SupportFailureClassifiesUnknownOnRay)
+    {
+        octomap::OcTree tree(0.1);
+        constexpr auto CENTER = static_cast<octomap::key_type>(32'768U);
+        constexpr auto CANDIDATE_X = static_cast<octomap::key_type>(32'770U);
+        addKeyColumn(tree, CANDIDATE_X, CENTER, CENTER);
+        tree.updateNode(
+                octomap::OcTreeKey {
+                        static_cast<octomap::key_type>(CANDIDATE_X - 1U),
+                        CENTER, CENTER},
+                false, true);
+        tree.updateInnerOccupancy();
+
+        auto config = testConfig();
+        config.min_columns = 1U;
+        config.min_area = 0.001F;
+        config.min_span = 0.001F;
+        const auto traced = GlobalFrontierDetector(config).detectWithTrace(tree);
+
+        expectCompleteConservation(traced.result);
+        EXPECT_GT(traced.result.diagnostics.support_rejected_unknown, 0U);
+        const auto candidate = std::find_if(
+                traced.trace.candidates.begin(), traced.trace.candidates.end(),
+                [](const FrontierCandidateTrace & value) {
+                    return std::any_of(
+                            value.support_attempts.begin(), value.support_attempts.end(),
+                            [](const FrontierSupportAttemptTrace & attempt) {
+                                return attempt.unknown_direction.x > 0.5F
+                                       && attempt.failure
+                                                  == FrontierSupportFailure::Unknown;
+                            });
+                });
+        ASSERT_NE(candidate, traced.trace.candidates.end());
+        const auto attempt = std::find_if(
+                candidate->support_attempts.begin(), candidate->support_attempts.end(),
+                [](const FrontierSupportAttemptTrace & value) {
+                    return value.unknown_direction.x > 0.5F
+                           && value.failure == FrontierSupportFailure::Unknown;
+                });
+        ASSERT_NE(attempt, candidate->support_attempts.end());
+        ASSERT_EQ(attempt->samples.size(), 2U);
+        EXPECT_EQ(attempt->samples.front().state, FrontierTraceSampleState::Free);
+        EXPECT_EQ(attempt->samples.back().state, FrontierTraceSampleState::Unknown);
+        EXPECT_TRUE(attempt->has_first_failure_position);
     }
 
     TEST(GlobalFrontierDetectorTest, SupportFailureClassifiesOutOfBoundsFirstFailure)
@@ -646,8 +778,7 @@ namespace SwarmController {
         tree.updateNode(
                 octomap::OcTreeKey {
                         static_cast<octomap::key_type>(CANDIDATE - 1U),
-                        static_cast<octomap::key_type>(CANDIDATE + 1U),
-                        static_cast<octomap::key_type>(CENTER - 2U)},
+                        CANDIDATE, CENTER},
                 true, true);
         tree.updateInnerOccupancy();
 
@@ -684,6 +815,79 @@ namespace SwarmController {
         EXPECT_FALSE(selected.samples.empty());
         EXPECT_NE(rejected.unknown_direction.x, selected.unknown_direction.x);
         EXPECT_NE(rejected.unknown_direction.y, selected.unknown_direction.y);
+    }
+
+    TEST(GlobalFrontierDetectorTest, SupportAnchorUsesUpperMedianZAndLexicographicXY)
+    {
+        octomap::OcTree tree(0.1);
+        constexpr auto CENTER = static_cast<octomap::key_type>(32'768U);
+        constexpr auto LOWER_X = static_cast<octomap::key_type>(32'772U);
+        constexpr auto HIGHER_X = static_cast<octomap::key_type>(32'774U);
+        constexpr auto LOWEST_Y = CENTER;
+        constexpr auto MIDDLE_Y = static_cast<octomap::key_type>(CENTER + 1U);
+        constexpr auto HIGHEST_Y = static_cast<octomap::key_type>(CENTER + 2U);
+        const std::array<std::pair<octomap::key_type, octomap::key_type>, 3U>
+                raw_keys {{{LOWER_X, HIGHEST_Y},
+                           {HIGHER_X, LOWEST_Y},
+                           {LOWER_X, MIDDLE_Y}}};
+        for(const auto & [x, y] : raw_keys) {
+            for(int z_offset = -2; z_offset <= 3; ++z_offset) {
+                tree.updateNode(
+                        octomap::OcTreeKey {
+                                x, y,
+                                static_cast<octomap::key_type>(
+                                        static_cast<int>(CENTER) + z_offset)},
+                        false, true);
+            }
+            addKeySupportRay(
+                    tree, x, y,
+                    static_cast<octomap::key_type>(CENTER + 1U));
+        }
+        tree.updateInnerOccupancy();
+
+        auto config = testConfig();
+        config.column_stride_voxels = 4U;
+        config.min_columns = 1U;
+        config.min_area = 0.001F;
+        config.min_span = 0.001F;
+        const auto traced = GlobalFrontierDetector(config).detectWithTrace(tree);
+
+        const FrontierColumnKey expected_column {
+                static_cast<std::int64_t>(LOWER_X / 4U),
+                static_cast<std::int64_t>(LOWEST_Y / 4U)};
+        const auto candidate = std::find_if(
+                traced.trace.candidates.begin(), traced.trace.candidates.end(),
+                [&](const FrontierCandidateTrace & trace) {
+                    return trace.key == expected_column;
+                });
+        ASSERT_NE(candidate, traced.trace.candidates.end());
+        const auto attempt = std::find_if(
+                candidate->support_attempts.begin(), candidate->support_attempts.end(),
+                [](const FrontierSupportAttemptTrace & value) {
+                    return value.unknown_direction.x > 0.5F;
+                });
+        ASSERT_NE(attempt, candidate->support_attempts.end());
+
+        const octomap::point3d expected_anchor = tree.keyToCoord(
+                octomap::OcTreeKey {
+                        LOWER_X, MIDDLE_Y,
+                        static_cast<octomap::key_type>(CENTER + 1U)});
+        EXPECT_FLOAT_EQ(attempt->anchor.x, expected_anchor.x());
+        EXPECT_FLOAT_EQ(attempt->anchor.y, expected_anchor.y());
+        EXPECT_FLOAT_EQ(attempt->anchor.z, expected_anchor.z());
+        ASSERT_EQ(attempt->samples.size(), 2U);
+        for(std::size_t index = 0U; index < attempt->samples.size(); ++index) {
+            const octomap::point3d expected_sample = tree.keyToCoord(
+                    octomap::OcTreeKey {
+                            static_cast<octomap::key_type>(
+                                    LOWER_X
+                                    - static_cast<octomap::key_type>(index + 1U)),
+                            MIDDLE_Y, static_cast<octomap::key_type>(CENTER + 1U)});
+            EXPECT_EQ(attempt->samples[index].state, FrontierTraceSampleState::Free);
+            EXPECT_FLOAT_EQ(attempt->samples[index].position.x, expected_sample.x());
+            EXPECT_FLOAT_EQ(attempt->samples[index].position.y, expected_sample.y());
+            EXPECT_FLOAT_EQ(attempt->samples[index].position.z, expected_sample.z());
+        }
     }
 
 }// namespace SwarmController

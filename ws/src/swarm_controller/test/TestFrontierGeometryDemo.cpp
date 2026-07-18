@@ -27,6 +27,16 @@ namespace SwarmController {
                     [&](const DemoLine & line) { return line.ns == ns; }));
         }
 
+        std::vector<DemoLine> linesWithNamespace(
+                const DemoScene & scene, const std::string & ns)
+        {
+            std::vector<DemoLine> result;
+            std::copy_if(
+                    scene.lines.begin(), scene.lines.end(), std::back_inserter(result),
+                    [&](const DemoLine & line) { return line.ns == ns; });
+            return result;
+        }
+
         std::size_t sphereCount(const DemoScene & scene, const std::string & ns)
         {
             return static_cast<std::size_t>(std::count_if(
@@ -41,6 +51,18 @@ namespace SwarmController {
                     [&](const DemoText & text) {
                         return text.text.find(content) != std::string::npos;
                     });
+        }
+
+        DemoText firstTextContaining(
+                const DemoScene & scene, const std::string & content)
+        {
+            const auto found = std::find_if(
+                    scene.texts.begin(), scene.texts.end(),
+                    [&](const DemoText & text) {
+                        return text.text.find(content) != std::string::npos;
+                    });
+            EXPECT_NE(found, scene.texts.end());
+            return *found;
         }
 
         DemoLine firstLine(const DemoScene & scene, const std::string & ns)
@@ -139,7 +161,7 @@ namespace SwarmController {
     TEST(FrontierGeometryDemoTest, SupportModeShowsAllThreeOutcomesOnly)
     {
         FrontierGeometryDemoConfig config;
-        config.mode = "support_envelope";
+        config.mode = "support_evidence";
         const DemoScene scene = FrontierGeometryDemo(config).buildScene();
 
         EXPECT_EQ(cubeCount(scene, "support_pass"), 7U);
@@ -150,6 +172,25 @@ namespace SwarmController {
         EXPECT_EQ(sphereCount(scene, "support_anchor"), 3U);
         EXPECT_EQ(cubeCount(scene, "vertical_pass"), 0U);
         EXPECT_EQ(cubeCount(scene, "component_columns"), 0U);
+
+        auto evidence_rays = linesWithNamespace(scene, "support_evidence_ray");
+        ASSERT_EQ(evidence_rays.size(), 3U);
+        std::sort(
+                evidence_rays.begin(), evidence_rays.end(),
+                [](const DemoLine & left, const DemoLine & right) {
+                    return left.start.y < right.start.y;
+                });
+        const std::size_t support_samples = static_cast<std::size_t>(std::ceil(
+                config.support_depth / config.voxel_resolution));
+        EXPECT_NEAR(
+                evidence_rays[0].start.x - evidence_rays[0].end.x,
+                config.voxel_resolution * static_cast<float>(support_samples), 1.0e-6F);
+        EXPECT_NEAR(
+                evidence_rays[1].start.x - evidence_rays[1].end.x,
+                2.0F * config.voxel_resolution, 1.0e-6F);
+        EXPECT_NEAR(
+                evidence_rays[2].start.x - evidence_rays[2].end.x,
+                4.0F * config.voxel_resolution, 1.0e-6F);
     }
 
     TEST(FrontierGeometryDemoTest, ComponentModeBuildsSeventeenColumnsAndElevenComponents)
@@ -204,10 +245,7 @@ namespace SwarmController {
         EXPECT_GT(cubeCount(scene, "frontier_candidate"), 0U);
         EXPECT_GT(lineCount(scene, "analysis_window"), 0U);
         EXPECT_GT(lineCount(scene, "pipeline_connector"), 0U);
-        EXPECT_GT(
-                lineCount(scene, "support_pass_envelope")
-                        + lineCount(scene, "support_reject_envelope"),
-                0U);
+        EXPECT_GT(lineCount(scene, "support_evidence_ray"), 0U);
         EXPECT_EQ(sphereCount(scene, "support_anchor"), 1U);
         EXPECT_GT(cubeCount(scene, "component_columns"), 0U);
         EXPECT_GT(sphereCount(scene, "region_decision"), 0U);
@@ -264,55 +302,23 @@ namespace SwarmController {
                                   * attempt.inward_direction.y,
                 0.0F);
 
-        const std::string envelope_ns = attempt.passed()
-                                                ? "support_pass_envelope"
-                                                : "support_reject_envelope";
-        std::vector<Point3f> envelope_points;
-        for(const DemoLine & line : scene.lines) {
-            if(line.ns == envelope_ns) {
-                envelope_points.push_back(line.start);
-                envelope_points.push_back(line.end);
-            }
-        }
-        ASSERT_EQ(envelope_points.size(), 24U);
-        const Point3f lateral {
-                -attempt.inward_direction.y, attempt.inward_direction.x, 0.0F};
-        float min_depth = std::numeric_limits<float>::max();
-        float max_depth = std::numeric_limits<float>::lowest();
-        float min_lateral = std::numeric_limits<float>::max();
-        float max_lateral = std::numeric_limits<float>::lowest();
-        float min_vertical = std::numeric_limits<float>::max();
-        float max_vertical = std::numeric_limits<float>::lowest();
-        for(const Point3f & envelope_point : envelope_points) {
-            const Point3f relative {
-                    envelope_point.x - attempt.anchor.x,
-                    envelope_point.y - attempt.anchor.y,
-                    envelope_point.z - attempt.anchor.z};
-            const float depth = relative.x * attempt.inward_direction.x
-                                + relative.y * attempt.inward_direction.y;
-            const float lateral_offset = relative.x * lateral.x
-                                         + relative.y * lateral.y;
-            min_depth = std::min(min_depth, depth);
-            max_depth = std::max(max_depth, depth);
-            min_lateral = std::min(min_lateral, lateral_offset);
-            max_lateral = std::max(max_lateral, lateral_offset);
-            min_vertical = std::min(min_vertical, relative.z);
-            max_vertical = std::max(max_vertical, relative.z);
-        }
-        EXPECT_NEAR(min_depth, 0.0F, 1.0e-5F);
-        EXPECT_NEAR(max_depth, FrontierGeometryDemoConfig {}.support_depth, 1.0e-5F);
-        EXPECT_NEAR(
-                min_lateral,
-                -0.5F * FrontierGeometryDemoConfig {}.support_width, 1.0e-5F);
-        EXPECT_NEAR(
-                max_lateral,
-                0.5F * FrontierGeometryDemoConfig {}.support_width, 1.0e-5F);
-        EXPECT_NEAR(
-                min_vertical,
-                -0.5F * FrontierGeometryDemoConfig {}.min_z_span, 1.0e-5F);
-        EXPECT_NEAR(
-                max_vertical,
-                0.5F * FrontierGeometryDemoConfig {}.min_z_span, 1.0e-5F);
+        ASSERT_FALSE(attempt.samples.empty());
+        const DemoLine evidence = firstLine(scene, "support_evidence_ray");
+        EXPECT_FLOAT_EQ(evidence.start.x, attempt.anchor.x);
+        EXPECT_FLOAT_EQ(evidence.start.y, attempt.anchor.y);
+        EXPECT_FLOAT_EQ(evidence.start.z, attempt.anchor.z);
+        EXPECT_FLOAT_EQ(evidence.end.x, attempt.samples.back().position.x);
+        EXPECT_FLOAT_EQ(evidence.end.y, attempt.samples.back().position.y);
+        EXPECT_FLOAT_EQ(evidence.end.z, attempt.samples.back().position.z);
+
+        const DemoText endpoint_label =
+                firstTextContaining(scene, "SELECTED MAX-RANGE ENDPOINT");
+        const DemoText scope_label =
+                firstTextContaining(scene, "LOCAL: FRONTIER CANDIDATE");
+        const DemoText support_label = firstTextContaining(scene, "SUPPORT PASSED");
+        EXPECT_LT(endpoint_label.position.y, scene.pipeline->selected_endpoint.y - 1.0F);
+        EXPECT_LT(scope_label.position.y, scene.pipeline->selected_endpoint.y - 1.0F);
+        EXPECT_GT(support_label.position.y, candidate->center.y + 1.0F);
 
         const std::size_t sample_markers =
                 cubeCount(scene, "support_known_samples")
@@ -388,6 +394,47 @@ namespace SwarmController {
         EXPECT_NE(
                 first_pipeline.selected_endpoint.x,
                 second_pipeline.selected_endpoint.x);
+    }
+
+    TEST(FrontierGeometryDemoTest, StageFourLabelLayoutCoversHitAndSupportRejection)
+    {
+        FrontierGeometryDemoConfig hit_config;
+        hit_config.tunnel_radius = 1.0F;
+        hit_config.selected_phi_degrees = 90.0F;
+        const DemoScene hit_scene = FrontierGeometryDemo(hit_config).buildScene();
+        ASSERT_TRUE(hit_scene.pipeline.has_value());
+        ASSERT_TRUE(hit_scene.pipeline->focused_candidate.has_value());
+        ASSERT_TRUE(hit_scene.pipeline->selected_return_hit);
+        ASSERT_TRUE(hasText(hit_scene, "SELECTED HIT ENDPOINT"));
+        const DemoText hit_endpoint_label =
+                firstTextContaining(hit_scene, "SELECTED HIT ENDPOINT");
+        EXPECT_LT(
+                hit_endpoint_label.position.y,
+                hit_scene.pipeline->selected_endpoint.y - 1.0F);
+
+        FrontierGeometryDemoConfig rejected_config;
+        rejected_config.lidar_max_range = 1.5F;
+        rejected_config.selected_phi_degrees = 90.0F;
+        const DemoScene rejected_scene =
+                FrontierGeometryDemo(rejected_config).buildScene();
+        ASSERT_TRUE(rejected_scene.pipeline.has_value());
+        ASSERT_TRUE(rejected_scene.pipeline->focused_candidate.has_value());
+        const auto rejected_candidate = std::find_if(
+                rejected_scene.pipeline->detection.trace.candidates.begin(),
+                rejected_scene.pipeline->detection.trace.candidates.end(),
+                [&](const FrontierCandidateTrace & candidate) {
+                    return candidate.key
+                           == *rejected_scene.pipeline->focused_candidate;
+                });
+        ASSERT_NE(
+                rejected_candidate,
+                rejected_scene.pipeline->detection.trace.candidates.end());
+        ASSERT_TRUE(rejected_candidate->vertical_passed);
+        ASSERT_FALSE(rejected_candidate->support_passed);
+        ASSERT_TRUE(hasText(rejected_scene, "SUPPORT REJECTED"));
+        const DemoText rejected_label =
+                firstTextContaining(rejected_scene, "SUPPORT REJECTED");
+        EXPECT_GT(rejected_label.position.y, rejected_candidate->center.y + 1.0F);
     }
 
     TEST(FrontierGeometryDemoTest, StageSelectsSnapshotsFromOnePipeline)
@@ -532,9 +579,15 @@ namespace SwarmController {
                 support_candidate,
                 support.pipeline->detection.trace.candidates.end());
         EXPECT_TRUE(support_candidate->vertical_passed);
-        EXPECT_FALSE(support_candidate->support_passed);
+        EXPECT_TRUE(support_candidate->support_passed);
         EXPECT_FALSE(support_candidate->support_attempts.empty());
-        EXPECT_GT(lineCount(support, "support_reject_envelope"), 0U);
+        EXPECT_GT(lineCount(support, "support_evidence_ray"), 0U);
+        EXPECT_TRUE(std::any_of(
+                support.pipeline->detection.trace.candidates.begin(),
+                support.pipeline->detection.trace.candidates.end(),
+                [](const FrontierCandidateTrace & candidate) {
+                    return candidate.vertical_passed && !candidate.support_passed;
+                }));
         EXPECT_TRUE(std::any_of(
                 support.pipeline->detection.trace.components.begin(),
                 support.pipeline->detection.trace.components.end(),

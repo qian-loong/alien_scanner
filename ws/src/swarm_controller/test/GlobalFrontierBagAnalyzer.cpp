@@ -83,18 +83,6 @@ namespace SwarmController::Test {
             {
                 output << ",support_failure_depth_octile_" << index;
             }
-            for(std::size_t index = 0U;
-                index < FrontierDetectionDiagnostics::SUPPORT_LATERAL_BUCKETS;
-                ++index)
-            {
-                output << ",support_failure_lateral_bin_" << index;
-            }
-            for(std::size_t index = 0U;
-                index < FrontierDetectionDiagnostics::SUPPORT_VERTICAL_BUCKETS;
-                ++index)
-            {
-                output << ",support_failure_vertical_bin_" << index;
-            }
             output << ",components_built";
             for(std::size_t index = 0U;
                 index < FrontierDetectionDiagnostics::COMPONENT_SIZE_BUCKETS;
@@ -140,8 +128,6 @@ namespace SwarmController::Test {
                    << diagnostics.support_samples_attempted << ','
                    << diagnostics.support_failure_position_unavailable;
             writeArray(output, diagnostics.support_failure_depth_octiles);
-            writeArray(output, diagnostics.support_failure_lateral_bins);
-            writeArray(output, diagnostics.support_failure_vertical_bins);
             output << ',' << diagnostics.components_built;
             writeArray(output, diagnostics.component_size_buckets);
             output << ',' << diagnostics.component_primary_rejected_columns

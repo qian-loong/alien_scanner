@@ -17,8 +17,10 @@ QA 重点区分：
 
 五阶段旧版 support envelope 的可重放 Marker 基线位于
 [`docs/bags/frontier-geometry-demo-support-envelope-v1`](../bags/frontier-geometry-demo-support-envelope-v1/README.md)。
-该 MCAP 固定 `selected_phi_degrees=0`，每个阶段话题各一条消息；它用于相同相机下的前后并排图，
-不作为 Detector 正确性或真实场景通过条件。
+修改后的 evidence ray 基线位于
+[`docs/bags/frontier-geometry-demo-support-evidence-ray-v2`](../bags/frontier-geometry-demo-support-evidence-ray-v2/README.md)。
+两份 MCAP 都固定 `selected_phi_degrees=0`，每个阶段话题各一条消息；它们用于相同相机下的前后
+并排图，不作为 Detector 正确性或真实场景通过条件。
 
 ## 2. 阶段合成与 RViz 控制
 
@@ -124,12 +126,23 @@ singleton 不会形成 accepted Region。它不代表障碍物、洞壁、可行
 位置已经更新到终点，但 `observation_epochs` 仍为 `1`，且不显示第二轮体素或 Detector 结果；hop
 不安全时位置保持在初始点。
 
-### QA-08：Stage 4 的 support anchor
+### QA-08：Stage 4 的 support evidence ray
 
-`support_anchor` 是当前 selected direction attempt 的实际 anchor，以紫色小球显示。它必须与
-`frontier_unknown_direction`、`support_inward_direction` 和 support envelope 前端面的起点一致，
-并直接映射到 Detector Trace 的 `attempt.anchor`。它不是 selected endpoint、candidate column 的几何
-中心、Region representative 或探索目标；这些位置不同是预期行为。
+当前 Detector 不再检查 `support_depth × support_width × min_z_span` 三维包络。每个 direction attempt
+使用上中位 Z、同 Z 下 `(x,y)` 字典序最小的 raw key 作为 anchor，并沿 unknown 反方向检查固定 Z、
+单体素宽的连续 ray：
+
+- `support_anchor` 以小球明确标出当前 attempt 的唯一 anchor，并与方向箭头和 evidence ray 起点重合；
+- `support_inward_direction` 表示完整要求深度；
+- `support_evidence_ray` 只连接 anchor 和 Trace 中最后一个已记录 sample；
+- `support_known_samples` 为已访问的 free key；
+- unknown/occupied/out-of-bounds sample 表示首个失败，失败后未访问的位置不显示。
+
+ray 外 unknown 或 occupied 不属于全局 Detector support 判据，也不代表可安全通行。Stage 3 和运行期
+allocator 仍通过独立 `KnownFreePathChecker` 检查机体与 first-hop segment。
+
+`support_anchor` 不是 selected endpoint、candidate column 的几何中心、Region representative 或探索
+目标；这些位置不同是预期行为。
 
 ## 4. 完成度与开放项
 
@@ -138,17 +151,19 @@ singleton 不会形成 accepted Region。它不代表障碍物、洞壁、可行
 | 真实观测与 Detector 数据链 | 完成 | 固定 replay、同一 OcTree、一次最终 Detector |
 | Stage 0–4 场景合成 | 完成 | 五个独立 transient-local MarkerArray 话题 |
 | ROS 接线与晚加入缓存 | 完成 | launch integration test 覆盖五话题、QoS 和 Namespace |
-| ROS-free 算法与 Marker 映射 | 完成 | `swarm_controller` CTest `23/23` 通过 |
-| 可重放视觉基线 | 完成 | 五阶段各 1 条 MarkerArray，MCAP 约 156 KiB |
-| 代码审查 | 完成 | Terra 修复后复核无剩余代码 finding |
-| Stage 4 默认视角的标签可读性 | 通过 | 2026-07-17 人工目检确认 |
-| 五阶段最终 GUI 验收 | 通过 | 2026-07-17 人工目检确认阶段、遮挡、颜色和 Namespace 开关可接受 |
+| ROS-free 算法与 Marker 映射 | 完成 | evidence-ray-v2 的 `swarm_controller` CTest `23/23` 通过；包级 199 tests 无失败 |
+| 可重放视觉基线 | 完成 | v1/v2 均为五阶段各 1 条 MarkerArray |
+| 代码审查 | 完成 | `gpt-5.6-sol` 最终窄范围复核无剩余 finding |
+| Stage 4 默认视角的标签可读性 | 完成 | endpoint/scope 与 support 状态分置 analysis window 两侧，固定视角复核通过 |
+| 五阶段最终 GUI 验收 | 完成 | envelope-v1 于 2026-07-17 通过；evidence-ray-v2 于 2026-07-18 通过 |
 
-因此当前 Demo 的功能、数据语义、自动化验证和 RViz 视觉验收均已完成。
+当前 evidence-ray-v2 的功能、完整 CTest、Sol 复核、可重放 bag 和 RViz 目检均已完成。
 
 ## 5. 人工验收清单
 
-验收结果：2026-07-17 全部通过。
+验收结果：envelope-v1 于 2026-07-17 全部通过；evidence-ray-v2 于 2026-07-18 全部通过。v1/v2
+均使用仓库内同一 Orbit 配置和同一窗口尺寸，分别单次播放 bag 后检查稳定帧；Stages 0–3 输出未受
+support-v2 影响，Stage 4 完成前后对照和标签可读性复核。
 
 1. 默认启动后出现五个 Display，且仅 Stage 4 默认打开。
 2. Stage 0 显示标准圆柱、法向/倾斜切面、pitch、环线和共面射线，不包含 voxel 或 pipeline。

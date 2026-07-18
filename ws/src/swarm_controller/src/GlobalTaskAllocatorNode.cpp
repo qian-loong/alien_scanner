@@ -182,7 +182,6 @@ namespace SwarmController {
             declare_parameter("frontier.min_z_layers", 5);
             declare_parameter("frontier.min_z_span", 0.4);
             declare_parameter("frontier.support_depth", 0.8);
-            declare_parameter("frontier.support_width", 1.0);
             declare_parameter("frontier.min_columns", 12);
             declare_parameter("frontier.min_area", 0.48);
             declare_parameter("frontier.min_span", 0.6);
@@ -272,10 +271,8 @@ namespace SwarmController {
                     "frontier.min_z_layers");
             detector_config_.min_z_span = static_cast<float>(
                     get_parameter("frontier.min_z_span").as_double());
-            detector_config_.support_depth = static_cast<float>(
-                    get_parameter("frontier.support_depth").as_double());
-            detector_config_.support_width = static_cast<float>(
-                    get_parameter("frontier.support_width").as_double());
+            detector_config_.support_depth =
+                    get_parameter("frontier.support_depth").as_double();
             detector_config_.min_columns = positiveSize(
                     get_parameter("frontier.min_columns").as_int(),
                     "frontier.min_columns");
@@ -726,22 +723,6 @@ namespace SwarmController {
                 status.values.push_back(numericValue(
                         "support_failure_depth_octile_" + std::to_string(index),
                         detector_diagnostics_.support_failure_depth_octiles[index]));
-            }
-            for(std::size_t index = 0U;
-                index < detector_diagnostics_.support_failure_lateral_bins.size();
-                ++index)
-            {
-                status.values.push_back(numericValue(
-                        "support_failure_lateral_bin_" + std::to_string(index),
-                        detector_diagnostics_.support_failure_lateral_bins[index]));
-            }
-            for(std::size_t index = 0U;
-                index < detector_diagnostics_.support_failure_vertical_bins.size();
-                ++index)
-            {
-                status.values.push_back(numericValue(
-                        "support_failure_vertical_bin_" + std::to_string(index),
-                        detector_diagnostics_.support_failure_vertical_bins[index]));
             }
             status.values.push_back(numericValue(
                     "components_built", detector_diagnostics_.components_built));

@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -111,6 +112,18 @@ namespace SwarmController::Test {
             return output.str();
         }
 
+        std::vector<std::string> nonEmptyLines(const std::string & content)
+        {
+            std::vector<std::string> lines;
+            std::istringstream input(content);
+            for(std::string line; std::getline(input, line);) {
+                if(!line.empty()) {
+                    lines.push_back(std::move(line));
+                }
+            }
+            return lines;
+        }
+
         BagAnalyzerOptions optionsFor(
                 const std::filesystem::path & bag,
                 const std::filesystem::path & statistics)
@@ -144,7 +157,37 @@ namespace SwarmController::Test {
         ASSERT_TRUE(second_result.succeeded()) << second_result.reason;
         EXPECT_EQ(first_result.frames_analyzed, 2U);
         EXPECT_EQ(second_result.frames_analyzed, 2U);
-        EXPECT_EQ(readFile(first.statistics_csv), readFile(second.statistics_csv));
+        const std::string first_statistics = readFile(first.statistics_csv);
+        EXPECT_EQ(first_statistics, readFile(second.statistics_csv));
+        const auto lines = nonEmptyLines(first_statistics);
+        ASSERT_EQ(lines.size(), 3U);
+        const std::string expected_header =
+                "frame_index,bag_timestamp_ns,map_stamp_ns,status,complete,"
+                "scanned_free_voxels,sampled_free_columns,"
+                "unknown_neighbor_candidate_columns,vertical_passed_columns,"
+                "vertical_rejected_columns,support_passed_columns,"
+                "support_rejected_unknown,support_rejected_occupied,"
+                "support_rejected_out_of_bounds,support_samples_attempted,"
+                "support_failure_position_unavailable,"
+                "support_failure_depth_octile_0,support_failure_depth_octile_1,"
+                "support_failure_depth_octile_2,support_failure_depth_octile_3,"
+                "support_failure_depth_octile_4,support_failure_depth_octile_5,"
+                "support_failure_depth_octile_6,support_failure_depth_octile_7,"
+                "components_built,component_size_bucket_0,component_size_bucket_1,"
+                "component_size_bucket_2,component_size_bucket_3,"
+                "component_size_bucket_4,component_size_bucket_5,"
+                "component_primary_rejected_columns,component_primary_rejected_area,"
+                "component_primary_rejected_span,component_primary_rejected_direction,"
+                "components_accepted,detected_regions,reason";
+        EXPECT_EQ(lines.front(), expected_header);
+        const auto expected_commas = static_cast<std::size_t>(
+                std::count(expected_header.begin(), expected_header.end(), ','));
+        for(std::size_t index = 1U; index < lines.size(); ++index) {
+            EXPECT_EQ(
+                    static_cast<std::size_t>(
+                            std::count(lines[index].begin(), lines[index].end(), ',')),
+                    expected_commas);
+        }
         EXPECT_FALSE(readFile(first.timing_csv).empty());
     }
 

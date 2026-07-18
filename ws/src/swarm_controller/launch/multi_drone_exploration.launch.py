@@ -262,8 +262,6 @@ def _launch_setup(context, *args, **kwargs):
                         'frontier.min_z_span').perform(context)),
                     'frontier.support_depth': float(LaunchConfiguration(
                         'frontier.support_depth').perform(context)),
-                    'frontier.support_width': float(LaunchConfiguration(
-                        'frontier.support_width').perform(context)),
                     'frontier.min_columns': int(LaunchConfiguration(
                         'frontier.min_columns').perform(context)),
                     'frontier.min_area': float(LaunchConfiguration(
@@ -430,7 +428,6 @@ def generate_launch_description():
         DeclareLaunchArgument('frontier.min_z_layers', default_value='5'),
         DeclareLaunchArgument('frontier.min_z_span', default_value='0.4'),
         DeclareLaunchArgument('frontier.support_depth', default_value='0.8'),
-        DeclareLaunchArgument('frontier.support_width', default_value='1.0'),
         DeclareLaunchArgument('frontier.min_columns', default_value='12'),
         DeclareLaunchArgument('frontier.min_area', default_value='0.48'),
         DeclareLaunchArgument('frontier.min_span', default_value='0.6'),

@@ -33,8 +33,7 @@ namespace SwarmController {
         std::size_t column_stride_voxels {2U};
         std::size_t min_z_layers {5U};
         float       min_z_span {0.4F};
-        float       support_depth {0.8F};
-        float       support_width {1.0F};
+        double      support_depth {0.8};
         std::size_t min_columns {12U};
         float       min_area {0.48F};
         float       min_span {0.6F};
@@ -79,8 +78,6 @@ namespace SwarmController {
 
     struct FrontierDetectionDiagnostics {
         static constexpr std::size_t SUPPORT_DEPTH_BUCKETS = 8U;
-        static constexpr std::size_t SUPPORT_LATERAL_BUCKETS = 3U;
-        static constexpr std::size_t SUPPORT_VERTICAL_BUCKETS = 3U;
         static constexpr std::size_t COMPONENT_SIZE_BUCKETS = 6U;
 
         bool          complete {};
@@ -96,8 +93,6 @@ namespace SwarmController {
         std::uint64_t support_samples_attempted {};
         std::uint64_t support_failure_position_unavailable {};
         std::array<std::uint64_t, SUPPORT_DEPTH_BUCKETS> support_failure_depth_octiles {};
-        std::array<std::uint64_t, SUPPORT_LATERAL_BUCKETS> support_failure_lateral_bins {};
-        std::array<std::uint64_t, SUPPORT_VERTICAL_BUCKETS> support_failure_vertical_bins {};
         std::uint64_t components_built {};
         std::array<std::uint64_t, COMPONENT_SIZE_BUCKETS> component_size_buckets {};
         std::uint64_t component_primary_rejected_columns {};
@@ -217,6 +212,7 @@ namespace SwarmController {
                 const octomap::OcTree & tree, FrontierDetectionTrace * trace) const;
 
         GlobalFrontierDetectorConfig config_;
+        std::size_t support_depth_samples_ {};
     };
 
 }// namespace SwarmController

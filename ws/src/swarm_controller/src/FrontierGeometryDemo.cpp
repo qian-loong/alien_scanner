@@ -49,7 +49,7 @@ namespace SwarmController {
             return point(value.x * scalar, value.y * scalar, value.z * scalar);
         }
 
-        bool finitePositive(const float value)
+        bool finitePositive(const double value)
         {
             return std::isfinite(value) && value > 0.0F;
         }
@@ -58,7 +58,7 @@ namespace SwarmController {
         {
             constexpr std::array<const char *, 6U> MODES {
                     "combined", "ring_geometry", "voxel_observation",
-                    "vertical_columns", "support_envelope", "component_fragmentation",
+                    "vertical_columns", "support_evidence", "component_fragmentation",
             };
             return std::any_of(MODES.begin(), MODES.end(), [&](const char * candidate) {
                 return mode == candidate;
@@ -149,48 +149,6 @@ namespace SwarmController {
             };
             for(const auto & [first, second] : EDGES) {
                 addLine(scene, ns, corners[first], corners[second], width, color);
-            }
-        }
-
-        void addSupportEnvelope(
-                DemoScene & scene, const std::string & ns,
-                const FrontierSupportAttemptTrace & attempt,
-                const float depth, const float width, const float height,
-                const DemoColor color)
-        {
-            const float inward_length = std::hypot(
-                    attempt.inward_direction.x, attempt.inward_direction.y);
-            if(inward_length <= std::numeric_limits<float>::epsilon()) {
-                return;
-            }
-            const Point3f inward = point(
-                    attempt.inward_direction.x / inward_length,
-                    attempt.inward_direction.y / inward_length, 0.0F);
-            const Point3f lateral = point(-inward.y, inward.x, 0.0F);
-            const Point3f back = add(attempt.anchor, multiply(inward, depth));
-            const Point3f half_lateral = multiply(lateral, 0.5F * width);
-            const Point3f half_vertical = point(0.0F, 0.0F, 0.5F * height);
-            const std::array<Point3f, 8U> corners {
-                    add(add(attempt.anchor, half_lateral), half_vertical),
-                    add(add(attempt.anchor, multiply(half_lateral, -1.0F)), half_vertical),
-                    add(add(attempt.anchor, multiply(half_lateral, -1.0F)),
-                        multiply(half_vertical, -1.0F)),
-                    add(add(attempt.anchor, half_lateral),
-                        multiply(half_vertical, -1.0F)),
-                    add(add(back, half_lateral), half_vertical),
-                    add(add(back, multiply(half_lateral, -1.0F)), half_vertical),
-                    add(add(back, multiply(half_lateral, -1.0F)),
-                        multiply(half_vertical, -1.0F)),
-                    add(add(back, half_lateral), multiply(half_vertical, -1.0F)),
-            };
-            constexpr std::array<std::pair<std::size_t, std::size_t>, 12U> EDGES {
-                    std::pair<std::size_t, std::size_t> {0U, 1U}, {1U, 2U},
-                    {2U, 3U}, {3U, 0U}, {4U, 5U}, {5U, 6U},
-                    {6U, 7U}, {7U, 4U}, {0U, 4U}, {1U, 5U},
-                    {2U, 6U}, {3U, 7U},
-            };
-            for(const auto & [first, second] : EDGES) {
-                addLine(scene, ns, corners[first], corners[second], 0.025F, color);
             }
         }
 
@@ -359,11 +317,6 @@ namespace SwarmController {
            || config_.column_stride_voxels == 0U || config_.min_z_layers == 0U
            || !finitePositive(config_.min_z_span)
            || !finitePositive(config_.support_depth)
-           || !finitePositive(config_.support_width)
-           || !finitePositive(config_.support_height)
-           || config_.support_depth_samples == 0U
-           || config_.support_lateral_samples == 0U
-           || config_.support_vertical_samples == 0U
            || config_.min_component_columns == 0U
            || config_.max_trace_candidates == 0U
            || config_.max_trace_support_samples == 0U
@@ -393,7 +346,7 @@ namespace SwarmController {
                 appendDetectorFrontierStage(scene, replay, config_.stage);
             }
         } else if(config_.mode == "vertical_columns"
-                  || config_.mode == "support_envelope"
+                  || config_.mode == "support_evidence"
                   || config_.mode == "component_fragmentation") {
             appendFrontierPipeline(scene);
         }
@@ -713,7 +666,7 @@ namespace SwarmController {
         const bool show_vertical = config_.mode == "combined"
                                    || config_.mode == "vertical_columns";
         const bool show_support = config_.mode == "combined"
-                                  || config_.mode == "support_envelope";
+                                  || config_.mode == "support_evidence";
         const bool show_components = config_.mode == "combined"
                                      || config_.mode == "component_fragmentation";
 
@@ -741,137 +694,99 @@ namespace SwarmController {
         }
 
         if(show_support) {
-        enum class SupportExample {
-            Passed,
-            Unknown,
-            Occupied,
-        };
-        const std::array<std::pair<Point3f, SupportExample>, 3U> support_examples {
-                std::pair<Point3f, SupportExample> {point(1.1F, 3.0F, 0.0F), SupportExample::Passed},
-                {point(1.1F, 4.35F, 0.0F), SupportExample::Unknown},
-                {point(1.1F, 5.70F, 0.0F), SupportExample::Occupied},
-        };
-        for(const auto & [column, example] : support_examples) {
-            const DemoColor status_color = example == SupportExample::Passed
-                                                   ? GREEN
-                                                   : (example == SupportExample::Unknown
-                                                              ? ORANGE
-                                                              : MAGENTA);
-            const std::string status_ns = example == SupportExample::Passed
-                                                  ? "support_pass"
-                                                  : (example == SupportExample::Unknown
-                                                             ? "support_reject_unknown"
-                                                             : "support_reject_occupied");
-            addColumn(column, 7U, status_ns, status_color);
-            addSphere(scene, "support_anchor", column, 0.14F, MAGENTA);
-            addArrow(
-                    scene, "support_unknown_direction",
-                    add(column, point(0.0F, 0.0F, 0.48F)),
-                    add(column, point(0.55F, 0.0F, 0.48F)), RED, 0.72F);
-            addArrow(
-                    scene, "support_inward_direction",
-                    add(column, point(-0.05F, 0.0F, 0.62F)),
-                    add(column, point(-config_.support_depth, 0.0F, 0.62F)),
-                    GREEN, 0.72F);
-            const Point3f envelope_center = add(
-                    column, point(-0.5F * config_.support_depth, 0.0F, 0.0F));
-            addWireBox(
-                    scene, status_ns + "_envelope", envelope_center,
-                    point(config_.support_depth, config_.support_width,
-                          config_.support_height),
-                    status_color);
+            enum class SupportExample {
+                Passed,
+                Unknown,
+                Occupied,
+            };
+            const std::array<std::pair<Point3f, SupportExample>, 3U> support_examples {
+                    std::pair<Point3f, SupportExample> {
+                            point(1.1F, 3.0F, 0.0F), SupportExample::Passed},
+                    {point(1.1F, 4.35F, 0.0F), SupportExample::Unknown},
+                    {point(1.1F, 5.70F, 0.0F), SupportExample::Occupied},
+            };
+            const std::size_t support_samples = static_cast<std::size_t>(std::ceil(
+                    config_.support_depth / config_.voxel_resolution));
+            const std::size_t unknown_failure_depth =
+                    std::min<std::size_t>(1U, support_samples - 1U);
+            const std::size_t occupied_failure_depth =
+                    std::min<std::size_t>(3U, support_samples - 1U);
+            for(const auto & [column, example] : support_examples) {
+                const DemoColor status_color = example == SupportExample::Passed
+                                                       ? GREEN
+                                                       : (example == SupportExample::Unknown
+                                                                  ? ORANGE
+                                                                  : MAGENTA);
+                const std::string status_ns = example == SupportExample::Passed
+                                                      ? "support_pass"
+                                                      : (example == SupportExample::Unknown
+                                                                 ? "support_reject_unknown"
+                                                                 : "support_reject_occupied");
+                const Point3f anchor = column;
+                addColumn(column, 7U, status_ns, status_color);
+                addSphere(scene, "support_anchor", anchor, 0.14F, MAGENTA);
+                addArrow(
+                        scene, "support_unknown_direction", anchor,
+                        add(anchor, point(0.55F, 0.0F, 0.0F)), RED, 0.72F);
+                addArrow(
+                        scene, "support_inward_direction", anchor,
+                        add(anchor, point(-config_.support_depth, 0.0F, 0.0F)),
+                        GREEN, 0.72F);
 
-            bool stopped = false;
-            const std::size_t unknown_failure_depth = std::min<std::size_t>(
-                    1U, config_.support_depth_samples - 1U);
-            const std::size_t occupied_failure_depth = std::min<std::size_t>(
-                    3U, config_.support_depth_samples - 1U);
-            for(std::size_t depth = 0U;
-                depth < config_.support_depth_samples && !stopped;
-                ++depth)
-            {
-                for(std::size_t lateral = 0U;
-                    lateral < config_.support_lateral_samples && !stopped;
-                    ++lateral)
-                {
-                    for(std::size_t vertical = 0U;
-                        vertical < config_.support_vertical_samples;
-                        ++vertical)
-                    {
-                        const float depth_fraction = static_cast<float>(depth + 1U)
-                                                     / static_cast<float>(
-                                                             config_.support_depth_samples);
-                        const float lateral_fraction = config_.support_lateral_samples == 1U
-                                                               ? 0.0F
-                                                               : static_cast<float>(lateral)
-                                                                         / static_cast<float>(
-                                                                                 config_.support_lateral_samples
-                                                                                 - 1U)
-                                                                         - 0.5F;
-                        const float vertical_fraction = config_.support_vertical_samples == 1U
-                                                                ? 0.0F
-                                                                : static_cast<float>(vertical)
-                                                                          / static_cast<float>(
-                                                                                  config_.support_vertical_samples
-                                                                                  - 1U)
-                                                                          - 0.5F;
-                        const Point3f sample = add(
-                                column,
-                                point(-config_.support_depth * depth_fraction,
-                                      config_.support_width * lateral_fraction,
-                                      config_.support_height * vertical_fraction));
-                        const bool unknown_failure = example == SupportExample::Unknown
-                                                     && depth == unknown_failure_depth
-                                                     && lateral == 0U
-                                                     && vertical == 0U;
-                        const bool occupied_failure = example == SupportExample::Occupied
-                                                      && depth == occupied_failure_depth
-                                                      && lateral
-                                                                 == config_.support_lateral_samples
-                                                                            / 2U
-                                                      && vertical
-                                                                 == config_.support_vertical_samples
-                                                                            / 2U;
-                        DemoColor sample_color {0.35F, 0.92F, 0.70F, 0.34F};
-                        std::string sample_ns = "support_known_samples";
-                        if(unknown_failure) {
-                            sample_color = ORANGE;
-                            sample_ns = "support_first_failure_unknown";
-                        } else if(occupied_failure) {
-                            sample_color = MAGENTA;
-                            sample_ns = "support_first_failure_occupied";
-                        }
-                        const float sample_size = 0.52F * config_.voxel_resolution;
-                        addCube(
-                                scene, sample_ns, sample,
-                                point(sample_size, sample_size, sample_size), sample_color);
-                        if(unknown_failure || occupied_failure) {
-                            stopped = true;
-                            break;
-                        }
+                Point3f last_sample = anchor;
+                for(std::size_t depth = 0U; depth < support_samples; ++depth) {
+                    const Point3f sample = add(
+                            anchor,
+                            point(-config_.voxel_resolution
+                                          * static_cast<float>(depth + 1U),
+                                  0.0F, 0.0F));
+                    last_sample = sample;
+                    const bool unknown_failure = example == SupportExample::Unknown
+                                                 && depth == unknown_failure_depth;
+                    const bool occupied_failure = example == SupportExample::Occupied
+                                                  && depth == occupied_failure_depth;
+                    DemoColor sample_color {0.35F, 0.92F, 0.70F, 0.34F};
+                    std::string sample_ns = "support_known_samples";
+                    if(unknown_failure) {
+                        sample_color = ORANGE;
+                        sample_ns = "support_first_failure_unknown";
+                    } else if(occupied_failure) {
+                        sample_color = MAGENTA;
+                        sample_ns = "support_first_failure_occupied";
+                    }
+                    const float sample_size = 0.52F * config_.voxel_resolution;
+                    addCube(
+                            scene, sample_ns, sample,
+                            point(sample_size, sample_size, sample_size), sample_color);
+                    if(unknown_failure || occupied_failure) {
+                        break;
                     }
                 }
-            }
-            if(config_.show_unknown) {
-                for(int offset = -1; offset <= 1; ++offset) {
-                    addCube(
-                            scene, "support_unknown_space",
-                            add(column, point(0.25F, 0.22F * static_cast<float>(offset), 0.0F)),
-                            point(column_size, column_size, column_size), DARK_GRAY);
+                addLine(
+                        scene, "support_evidence_ray", anchor, last_sample, 0.026F,
+                        status_color);
+                if(config_.show_unknown) {
+                    for(int offset = -1; offset <= 1; ++offset) {
+                        addCube(
+                                scene, "support_unknown_space",
+                                add(column,
+                                    point(0.25F, 0.22F * static_cast<float>(offset),
+                                          0.0F)),
+                                point(column_size, column_size, column_size), DARK_GRAY);
+                    }
+                }
+                if(config_.show_labels) {
+                    const std::string label = example == SupportExample::Passed
+                                                      ? "SUPPORT PASSED"
+                                                      : (example == SupportExample::Unknown
+                                                                 ? "SUPPORT REJECTED: UNKNOWN"
+                                                                 : "SUPPORT REJECTED: OCCUPIED");
+                    addText(
+                            scene, "support_labels",
+                            add(column, point(-0.4F, 0.0F, 0.92F)), label,
+                            status_color, 0.16F);
                 }
             }
-            if(config_.show_labels) {
-                const std::string label = example == SupportExample::Passed
-                                                  ? "SUPPORT PASSED"
-                                                  : (example == SupportExample::Unknown
-                                                             ? "SUPPORT REJECTED: UNKNOWN"
-                                                             : "SUPPORT REJECTED: OCCUPIED");
-                addText(
-                        scene, "support_labels",
-                        add(column, point(-0.4F, 0.0F, 0.92F)), label,
-                        status_color, 0.16F);
-            }
-        }
         }
 
         if(show_components) {
@@ -998,7 +913,6 @@ namespace SwarmController {
         detector_config.min_z_layers = config_.min_z_layers;
         detector_config.min_z_span = config_.min_z_span;
         detector_config.support_depth = config_.support_depth;
-        detector_config.support_width = config_.support_width;
         detector_config.max_trace_candidates = config_.max_trace_candidates;
         detector_config.max_trace_support_samples =
                 config_.max_trace_support_samples;
@@ -1266,14 +1180,12 @@ namespace SwarmController {
                                 config_.support_depth)),
                     GREEN, 0.72F);
 
-            addSupportEnvelope(
-                    scene,
-                    selected_attempt->passed()
-                            ? "support_pass_envelope"
-                            : "support_reject_envelope",
-                    *selected_attempt, config_.support_depth, config_.support_width,
-                    config_.min_z_span,
-                    selected_attempt->passed() ? GREEN : ORANGE);
+            if(!selected_attempt->samples.empty()) {
+                addLine(
+                        scene, "support_evidence_ray", selected_attempt->anchor,
+                        selected_attempt->samples.back().position, 0.026F,
+                        selected_attempt->passed() ? GREEN : ORANGE);
+            }
             for(const FrontierSupportSampleTrace & sample : selected_attempt->samples) {
                 DemoColor color = DemoColor {0.35F, 0.92F, 0.70F, 0.38F};
                 std::string ns = "support_known_samples";
@@ -1362,21 +1274,28 @@ namespace SwarmController {
         }
 
         if(config_.show_labels) {
+            constexpr float LABEL_LATERAL_OFFSET = 1.15F;
             addText(
                     scene, "pipeline_labels",
-                    add(selected_endpoint, point(0.0F, 0.0F, 0.25F)),
+                    add(
+                            selected_endpoint,
+                            point(0.0F, -LABEL_LATERAL_OFFSET, 0.25F)),
                     selected_return.hit
                             ? "SELECTED HIT ENDPOINT"
                             : "SELECTED MAX-RANGE ENDPOINT",
                     ORANGE, 0.15F);
             addText(
                     scene, "frontier_scope_status",
-                    add(selected_endpoint, point(0.0F, 0.0F, 0.55F)),
+                    add(
+                            selected_endpoint,
+                            point(0.0F, -LABEL_LATERAL_OFFSET, 0.65F)),
                     "LOCAL: FRONTIER CANDIDATE\n" + global_status,
                     WHITE, 0.14F);
             addText(
                     scene, "pipeline_labels",
-                    add(selected_candidate->center, point(0.0F, 0.0F, 0.65F)),
+                    add(
+                            selected_candidate->center,
+                            point(0.0F, LABEL_LATERAL_OFFSET, 0.65F)),
                     selected_candidate->vertical_passed
                             ? (selected_candidate->support_passed
                                        ? "SUPPORT PASSED"

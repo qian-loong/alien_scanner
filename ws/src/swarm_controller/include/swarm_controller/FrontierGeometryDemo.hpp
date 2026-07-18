@@ -140,12 +140,7 @@ namespace SwarmController {
         std::size_t column_stride_voxels {2U};
         std::size_t min_z_layers {5U};
         float min_z_span {0.4F};
-        float support_depth {0.8F};
-        float support_width {1.0F};
-        float support_height {0.4F};
-        std::size_t support_depth_samples {8U};
-        std::size_t support_lateral_samples {5U};
-        std::size_t support_vertical_samples {5U};
+        double support_depth {0.8};
         std::size_t min_component_columns {12U};
         std::size_t max_trace_candidates {10'000U};
         std::size_t max_trace_support_samples {100'000U};

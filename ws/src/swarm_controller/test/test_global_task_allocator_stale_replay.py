@@ -44,7 +44,6 @@ def generate_test_description():
             'frontier.min_z_layers': 5,
             'frontier.min_z_span': 0.4,
             'frontier.support_depth': 0.2,
-            'frontier.support_width': 0.1,
             'frontier.min_columns': 4,
             'frontier.min_area': 0.05,
             'frontier.min_span': 0.3,

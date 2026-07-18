@@ -31,7 +31,8 @@ namespace SwarmController {
         struct ColumnSample {
             std::vector<Point3f>    free_points;
             std::array<std::vector<Point3f>, 4U> frontier_points;
-            std::array<std::set<std::uint16_t>, 4U> frontier_z_keys;
+            std::array<std::map<octomap::key_type, octomap::OcTreeKey>, 4U>
+                    frontier_anchor_keys;
             std::array<std::size_t, 4U> unknown_votes {};
             std::size_t             unknown_count {};
         };
@@ -41,9 +42,6 @@ namespace SwarmController {
             std::uint64_t  attempted_samples {};
             std::size_t    depth_index {};
             std::size_t    depth_samples {};
-            std::int64_t   lateral_offset {};
-            std::int64_t   half_width_steps {};
-            std::int64_t   vertical_offset {};
             bool           has_failure_position {};
             Point3f        failure_position {};
 
@@ -140,14 +138,37 @@ namespace SwarmController {
             return std::chrono::duration<double>(end - start).count();
         }
 
+        std::optional<std::size_t> checkedSupportDepthSamples(
+                const GlobalFrontierDetectorConfig & config)
+        {
+            if(!std::isfinite(config.support_depth) || config.support_depth <= 0.0
+               || !std::isfinite(config.resolution) || config.resolution <= 0.0
+               || config.max_support_samples_per_column == 0U)
+            {
+                return std::nullopt;
+            }
+            const long double depth_samples = std::ceil(
+                    static_cast<long double>(config.support_depth)
+                    / static_cast<long double>(config.resolution));
+            const long double configured_limit = static_cast<long double>(
+                    config.max_support_samples_per_column);
+            const long double size_limit = static_cast<long double>(
+                    std::numeric_limits<std::size_t>::max());
+            if(!std::isfinite(depth_samples) || depth_samples < 1.0L
+               || depth_samples > configured_limit || depth_samples >= size_limit)
+            {
+                return std::nullopt;
+            }
+            return static_cast<std::size_t>(depth_samples);
+        }
+
         bool finiteConfig(const GlobalFrontierDetectorConfig & config)
         {
             const bool base_valid =
                     std::isfinite(config.resolution) && config.resolution > 0.0
                    && config.column_stride_voxels > 0U && config.min_z_layers > 0U
                    && std::isfinite(config.min_z_span) && config.min_z_span > 0.0F
-                   && std::isfinite(config.support_depth) && config.support_depth > 0.0F
-                   && std::isfinite(config.support_width) && config.support_width > 0.0F
+                   && std::isfinite(config.support_depth) && config.support_depth > 0.0
                    && config.min_columns > 0U && std::isfinite(config.min_area)
                    && config.min_area > 0.0F && std::isfinite(config.min_span)
                    && config.min_span > 0.0F
@@ -162,21 +183,7 @@ namespace SwarmController {
                     && config.max_trace_support_samples > 0U
                     && config.max_trace_components > 0U
                     && config.max_trace_geometry_elements > 0U;
-            if(!base_valid) {
-                return false;
-            }
-            const double depth_samples = std::max(
-                    2.0, std::ceil(config.support_depth / config.resolution));
-            const double width_samples =
-                    2.0 * std::ceil(0.5 * config.support_width / config.resolution) + 1.0;
-            const double height_samples =
-                    2.0 * std::ceil(0.5 * config.min_z_span / config.resolution) + 1.0;
-            const double limit = static_cast<double>(
-                    config.max_support_samples_per_column);
-            return depth_samples <= limit && width_samples <= limit
-                   && height_samples <= limit
-                   && depth_samples * width_samples <= limit
-                   && depth_samples * width_samples * height_samples <= limit;
+            return base_valid;
         }
 
         std::int64_t columnIndex(const std::uint16_t key, const std::size_t stride)
@@ -192,111 +199,75 @@ namespace SwarmController {
         }
 
         SupportCheckResult supportAt(
-                const octomap::OcTree & tree, const octomap::point3d & center,
-                const float inward_x, const float inward_y,
-                const GlobalFrontierDetectorConfig & config,
+                const octomap::OcTree & tree, const octomap::OcTreeKey & anchor_key,
+                const int inward_x, const int inward_y,
+                const std::size_t depth_samples,
                 TraceCollector * trace_collector,
                 FrontierSupportAttemptTrace * attempt_trace)
         {
             SupportCheckResult result;
-            octomap::OcTreeKey center_key;
-            if(!tree.coordToKeyChecked(center, center_key)) {
-                result.failure = FrontierSupportFailure::OutOfBounds;
-                return result;
-            }
-            const int normal_x = static_cast<int>(std::lround(inward_x));
-            const int normal_y = static_cast<int>(std::lround(inward_y));
-            const int lateral_x = -normal_y;
-            const int lateral_y = normal_x;
-            const std::size_t depth_samples = std::max<std::size_t>(
-                    2U, static_cast<std::size_t>(std::ceil(
-                            config.support_depth / static_cast<float>(config.resolution))));
-            const std::int64_t half_width_steps = static_cast<std::int64_t>(std::ceil(
-                    0.5F * config.support_width
-                    / static_cast<float>(config.resolution)));
-            const std::int64_t half_height_steps = static_cast<std::int64_t>(std::ceil(
-                    0.5F * config.min_z_span
-                    / static_cast<float>(config.resolution)));
             const auto max_key = static_cast<std::int64_t>(
                     std::numeric_limits<octomap::key_type>::max());
             result.depth_samples = depth_samples;
-            result.half_width_steps = half_width_steps;
             for(std::size_t depth_index = 1U; depth_index <= depth_samples; ++depth_index) {
-                for(std::int64_t lateral_offset = -half_width_steps;
-                    lateral_offset <= half_width_steps; ++lateral_offset)
+                saturatingIncrement(result.attempted_samples);
+                result.depth_index = depth_index;
+                result.has_failure_position = true;
+                const std::int64_t x = static_cast<std::int64_t>(anchor_key[0])
+                                       + inward_x * static_cast<std::int64_t>(depth_index);
+                const std::int64_t y = static_cast<std::int64_t>(anchor_key[1])
+                                       + inward_y * static_cast<std::int64_t>(depth_index);
+                const std::int64_t z = static_cast<std::int64_t>(anchor_key[2]);
+                if(x < 0 || y < 0 || z < 0
+                   || x > max_key || y > max_key || z > max_key)
                 {
-                    const std::int64_t x = static_cast<std::int64_t>(center_key[0])
-                                           + normal_x * static_cast<std::int64_t>(depth_index)
-                                           + lateral_x * lateral_offset;
-                    const std::int64_t y = static_cast<std::int64_t>(center_key[1])
-                                           + normal_y * static_cast<std::int64_t>(depth_index)
-                                           + lateral_y * lateral_offset;
-                    for(std::int64_t vertical_offset = -half_height_steps;
-                        vertical_offset <= half_height_steps; ++vertical_offset)
-                    {
-                        saturatingIncrement(result.attempted_samples);
-                        result.depth_index = depth_index;
-                        result.lateral_offset = lateral_offset;
-                        result.vertical_offset = vertical_offset;
-                        result.has_failure_position = true;
-                        const std::int64_t z = static_cast<std::int64_t>(center_key[2])
-                                               + vertical_offset;
-                        if(x < 0 || y < 0 || z < 0
-                           || x > max_key || y > max_key || z > max_key)
-                        {
-                            const Point3f failure_position {
-                                    static_cast<float>(tree.keyToCoord(
-                                            std::clamp<std::int64_t>(x, 0, max_key))),
-                                    static_cast<float>(tree.keyToCoord(
-                                            std::clamp<std::int64_t>(y, 0, max_key))),
-                                    static_cast<float>(tree.keyToCoord(
-                                            std::clamp<std::int64_t>(z, 0, max_key)))};
-                            result.failure_position = failure_position;
-                            if(trace_collector != nullptr && attempt_trace != nullptr) {
-                                trace_collector->addSupportSample(
-                                        *attempt_trace, failure_position,
-                                        FrontierTraceSampleState::OutOfBounds);
-                            }
-                            result.failure = FrontierSupportFailure::OutOfBounds;
-                            return result;
-                        }
-                        const octomap::OcTreeKey key {
-                                static_cast<octomap::key_type>(x),
-                                static_cast<octomap::key_type>(y),
-                                static_cast<octomap::key_type>(z)};
-                        const auto * node = tree.search(key);
-                        if(node == nullptr) {
-                            const auto sample = tree.keyToCoord(key);
-                            result.failure_position =
-                                    Point3f {sample.x(), sample.y(), sample.z()};
-                            if(trace_collector != nullptr && attempt_trace != nullptr) {
-                                trace_collector->addSupportSample(
-                                        *attempt_trace, result.failure_position,
-                                        FrontierTraceSampleState::Unknown);
-                            }
-                            result.failure = FrontierSupportFailure::Unknown;
-                            return result;
-                        }
-                        if(tree.isNodeOccupied(node)) {
-                            const auto sample = tree.keyToCoord(key);
-                            result.failure_position =
-                                    Point3f {sample.x(), sample.y(), sample.z()};
-                            if(trace_collector != nullptr && attempt_trace != nullptr) {
-                                trace_collector->addSupportSample(
-                                        *attempt_trace, result.failure_position,
-                                        FrontierTraceSampleState::Occupied);
-                            }
-                            result.failure = FrontierSupportFailure::Occupied;
-                            return result;
-                        }
-                        if(trace_collector != nullptr && attempt_trace != nullptr) {
-                            const auto sample = tree.keyToCoord(key);
-                            trace_collector->addSupportSample(
-                                    *attempt_trace,
-                                    Point3f {sample.x(), sample.y(), sample.z()},
-                                    FrontierTraceSampleState::Free);
-                        }
+                    const Point3f failure_position {
+                            static_cast<float>(tree.keyToCoord(
+                                    std::clamp<std::int64_t>(x, 0, max_key))),
+                            static_cast<float>(tree.keyToCoord(
+                                    std::clamp<std::int64_t>(y, 0, max_key))),
+                            static_cast<float>(tree.keyToCoord(
+                                    std::clamp<std::int64_t>(z, 0, max_key)))};
+                    result.failure_position = failure_position;
+                    if(trace_collector != nullptr && attempt_trace != nullptr) {
+                        trace_collector->addSupportSample(
+                                *attempt_trace, failure_position,
+                                FrontierTraceSampleState::OutOfBounds);
                     }
+                    result.failure = FrontierSupportFailure::OutOfBounds;
+                    return result;
+                }
+                const octomap::OcTreeKey key {
+                        static_cast<octomap::key_type>(x),
+                        static_cast<octomap::key_type>(y),
+                        static_cast<octomap::key_type>(z)};
+                const auto sample = tree.keyToCoord(key);
+                const Point3f sample_position {sample.x(), sample.y(), sample.z()};
+                const auto * node = tree.search(key);
+                if(node == nullptr) {
+                    result.failure_position = sample_position;
+                    if(trace_collector != nullptr && attempt_trace != nullptr) {
+                        trace_collector->addSupportSample(
+                                *attempt_trace, sample_position,
+                                FrontierTraceSampleState::Unknown);
+                    }
+                    result.failure = FrontierSupportFailure::Unknown;
+                    return result;
+                }
+                if(tree.isNodeOccupied(node)) {
+                    result.failure_position = sample_position;
+                    if(trace_collector != nullptr && attempt_trace != nullptr) {
+                        trace_collector->addSupportSample(
+                                *attempt_trace, sample_position,
+                                FrontierTraceSampleState::Occupied);
+                    }
+                    result.failure = FrontierSupportFailure::Occupied;
+                    return result;
+                }
+                if(trace_collector != nullptr && attempt_trace != nullptr) {
+                    trace_collector->addSupportSample(
+                            *attempt_trace, sample_position,
+                            FrontierTraceSampleState::Free);
                 }
             }
             result.has_failure_position = false;
@@ -330,20 +301,6 @@ namespace SwarmController {
                             * FrontierDetectionDiagnostics::SUPPORT_DEPTH_BUCKETS
                             / failure.depth_samples);
             saturatingIncrement(diagnostics.support_failure_depth_octiles[depth_bucket]);
-
-            std::size_t lateral_bucket = 1U;
-            const std::int64_t absolute_lateral = std::abs(failure.lateral_offset);
-            if(absolute_lateral == 0) {
-                lateral_bucket = 0U;
-            } else if(absolute_lateral == failure.half_width_steps) {
-                lateral_bucket = 2U;
-            }
-            saturatingIncrement(diagnostics.support_failure_lateral_bins[lateral_bucket]);
-
-            const std::size_t vertical_bucket = failure.vertical_offset < 0
-                                                        ? 0U
-                                                        : (failure.vertical_offset > 0 ? 2U : 1U);
-            saturatingIncrement(diagnostics.support_failure_vertical_bins[vertical_bucket]);
         }
 
         std::size_t componentSizeBucket(const std::size_t size)
@@ -432,9 +389,11 @@ namespace SwarmController {
     GlobalFrontierDetector::GlobalFrontierDetector(GlobalFrontierDetectorConfig config)
         : config_(std::move(config))
     {
-        if(!finiteConfig(config_)) {
+        const auto support_depth_samples = checkedSupportDepthSamples(config_);
+        if(!finiteConfig(config_) || !support_depth_samples.has_value()) {
             throw std::invalid_argument("invalid global frontier detector configuration");
         }
+        support_depth_samples_ = *support_depth_samples;
     }
 
     FrontierDetectionResult GlobalFrontierDetector::detect(const octomap::OcTree & tree) const
@@ -545,7 +504,15 @@ namespace SwarmController {
                             static_cast<float>(center.x()),
                             static_cast<float>(center.y()),
                             static_cast<float>(center.z())});
-                    sample.frontier_z_keys[direction].insert(key.k[2]);
+                    auto & anchors = sample.frontier_anchor_keys[direction];
+                    const auto [anchor, inserted] = anchors.try_emplace(key.k[2], key);
+                    if(!inserted
+                       && (key.k[0] < anchor->second.k[0]
+                           || (key.k[0] == anchor->second.k[0]
+                               && key.k[1] < anchor->second.k[1])))
+                    {
+                        anchor->second = key;
+                    }
                 }
             }
         }
@@ -598,8 +565,10 @@ namespace SwarmController {
             std::optional<SupportCheckResult> first_support_failure;
             for(const std::size_t direction : directions) {
                 const auto & frontier_points = sample.frontier_points[direction];
+                const auto & frontier_anchor_keys =
+                        sample.frontier_anchor_keys[direction];
                 if(frontier_points.empty()
-                   || sample.frontier_z_keys[direction].size() < config_.min_z_layers)
+                   || frontier_anchor_keys.size() < config_.min_z_layers)
                 {
                     continue;
                 }
@@ -612,13 +581,8 @@ namespace SwarmController {
                     continue;
                 }
                 has_vertical_candidate = true;
-                const float length = std::hypot(
-                        static_cast<float>(FRONTIER_DIRECTIONS[direction].first),
-                        static_cast<float>(FRONTIER_DIRECTIONS[direction].second));
-                const float inward_x =
-                        -static_cast<float>(FRONTIER_DIRECTIONS[direction].first) / length;
-                const float inward_y =
-                        -static_cast<float>(FRONTIER_DIRECTIONS[direction].second) / length;
+                const int inward_x = -FRONTIER_DIRECTIONS[direction].first;
+                const int inward_y = -FRONTIER_DIRECTIONS[direction].second;
                 const Point3f unknown_direction {
                         static_cast<float>(FRONTIER_DIRECTIONS[direction].first),
                         static_cast<float>(FRONTIER_DIRECTIONS[direction].second), 0.0F};
@@ -630,50 +594,42 @@ namespace SwarmController {
                     attempt_trace = &candidate_trace->support_attempts.back();
                     attempt_trace->unknown_direction = unknown_direction;
                     attempt_trace->inward_direction =
-                            Point3f {inward_x, inward_y, 0.0F};
+                            Point3f {static_cast<float>(inward_x),
+                                     static_cast<float>(inward_y), 0.0F};
                     trace_collector.copyGeometry(
                             attempt_trace->column_points, frontier_points);
                 }
-                auto median_z = sample.frontier_z_keys[direction].begin();
+                auto anchor = frontier_anchor_keys.begin();
                 std::advance(
-                        median_z,
+                        anchor,
                         static_cast<std::ptrdiff_t>(
-                                sample.frontier_z_keys[direction].size() / 2U));
-                octomap::OcTreeKey center_key;
+                                frontier_anchor_keys.size() / 2U));
+                const octomap::OcTreeKey anchor_key = anchor->second;
+                const octomap::point3d anchor_position = tree.keyToCoord(anchor_key);
                 SupportCheckResult support_result;
-                if(tree.coordToKeyChecked(
-                           octomap::point3d(
-                                   frontier_points.front().x,
-                                   frontier_points.front().y,
-                                   frontier_points.front().z),
-                           center_key))
-                {
-                    center_key[2] = *median_z;
-                    const octomap::point3d center = tree.keyToCoord(center_key);
-                    if(attempt_trace != nullptr) {
-                        attempt_trace->anchor =
-                                Point3f {center.x(), center.y(), center.z()};
-                    }
-                    if(config_.collect_stage_timings) {
-                        const auto support_start = SteadyClock::now();
-                        result.diagnostics.timings.vertical_seconds +=
-                                secondsBetween(vertical_segment_start, support_start);
-                        support_result = supportAt(
-                                tree, center, inward_x, inward_y, config_,
-                                trace == nullptr ? nullptr : &trace_collector,
-                                attempt_trace);
-                        const auto support_end = SteadyClock::now();
-                        result.diagnostics.timings.support_seconds +=
-                                secondsBetween(support_start, support_end);
-                        vertical_segment_start = support_end;
-                    } else {
-                        support_result = supportAt(
-                                tree, center, inward_x, inward_y, config_,
-                                trace == nullptr ? nullptr : &trace_collector,
-                                attempt_trace);
-                    }
+                if(attempt_trace != nullptr) {
+                    attempt_trace->anchor = Point3f {
+                            anchor_position.x(), anchor_position.y(), anchor_position.z()};
+                }
+                if(config_.collect_stage_timings) {
+                    const auto support_start = SteadyClock::now();
+                    result.diagnostics.timings.vertical_seconds +=
+                            secondsBetween(vertical_segment_start, support_start);
+                    support_result = supportAt(
+                            tree, anchor_key, inward_x, inward_y,
+                            support_depth_samples_,
+                            trace == nullptr ? nullptr : &trace_collector,
+                            attempt_trace);
+                    const auto support_end = SteadyClock::now();
+                    result.diagnostics.timings.support_seconds +=
+                            secondsBetween(support_start, support_end);
+                    vertical_segment_start = support_end;
                 } else {
-                    support_result.failure = FrontierSupportFailure::OutOfBounds;
+                    support_result = supportAt(
+                            tree, anchor_key, inward_x, inward_y,
+                            support_depth_samples_,
+                            trace == nullptr ? nullptr : &trace_collector,
+                            attempt_trace);
                 }
                 if(attempt_trace != nullptr) {
                     attempt_trace->failure = support_result.failure;
