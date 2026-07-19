@@ -14,6 +14,7 @@ namespace SwarmController::Test {
         StorageUnavailable,
         InvalidSchema,
         InvalidMessage,
+        IncompleteTrace,
         OutputError,
     };
 
@@ -21,6 +22,8 @@ namespace SwarmController::Test {
         std::filesystem::path bag_uri;
         std::filesystem::path statistics_csv;
         std::filesystem::path timing_csv;
+        std::filesystem::path component_csv;
+        std::filesystem::path component_membership_csv;
         std::string topic_name {"/global_map"};
         std::string expected_frame {"map"};
         GlobalFrontierDetectorConfig detector_config;

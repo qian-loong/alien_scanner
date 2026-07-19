@@ -144,6 +144,49 @@ allocator 仍通过独立 `KnownFreePathChecker` 检查机体与 first-hop segme
 `support_anchor` 不是 selected endpoint、candidate column 的几何中心、Region representative 或探索
 目标；这些位置不同是预期行为。
 
+### QA-09：为什么 v2 Demo 中看不到 `min_columns` 的位置？
+
+`min_columns` 不是空间位置，而是 Component 的列数阈值。Detector 先将通过 vertical 和 support 的
+体素按 XY 聚合为 column，再按 XY 八邻域连接成 Component，随后按固定顺序检查：
+
+```text
+column count >= min_columns
+area >= min_area
+horizontal span >= min_span
+direction consistency >= min_direction_consistency
+```
+
+生产默认 `min_columns=12`，表示同一 Component 至少包含 `12` 个 supported XY columns；一个 column
+可以包含多个 Z 层，因此它不是“至少 12 个体素”。阈值本身没有 Marker 坐标。`region_decision` 小球
+位于 Component representative；绿色表示通过全部 Component 条件，橙色表示被某项条件拒绝，但小球
+位置不是 `min_columns` 的位置。
+
+evidence-ray-v2 的默认 combined 局部窗口只显示一个通过的 Component，所以画面中没有
+`min_columns` 拒绝案例。真实 68 帧 `/global_map` analyzer 中 `8,690 / 9,195` 个 Component 在
+`min_columns` 首判据被拒绝，但它们只承载 `17,458 / 191,067`（`9.137%`）的 supported columns；
+direction reject 反而承载 `90.448%`。这是另一数据集上的全局统计，不能从这个固定合成局部窗口直接
+读出，也不能只按被拒 Component 数量判断应降低 `min_columns`。
+需要单独观察列数和碎裂关系时，可运行教学 fixture：
+
+```bash
+ros2 launch swarm_controller frontier_geometry_demo.launch.py \
+  mode:=component_fragmentation \
+  min_component_columns:=12
+```
+
+该 fixture 显示 `17 COLUMNS -> 11 COMPONENTS`，但不宣称来自默认 combined 的 Detector Trace。
+
+### QA-10：Allocator freshness 是否属于任务分配算法？
+
+它属于 `global_task_allocator` 的运行期执行管线，但不属于 Region 匹配、评分或唯一 owner 选择算法。
+当前节点在 timer 中同步执行 OctoMap 反序列化和全图 Frontier 检测；处理百万级 leaf 时会阻塞同一执行
+链上的订阅和 timer。检测结束后，地图或 diagnostics 可能已超过 freshness timeout，于是输入健康检查
+失败并安全退回 `LocalFallback`，即使 ROS-free 匹配算法本身没有错误。
+
+后续修复应把重型 decode/detect 移到有界后台 worker，合并过时 pending 快照，只发布与最新输入 revision
+一致的完成结果，并保持 stale/replay/关闭时序和资源上限。该工作解决“任务分配算法能否持续获得新鲜
+输入并及时运行”，不得与 Component 连通或 Region 阈值修改混在同一行为改动中。
+
 ## 4. 完成度与开放项
 
 | 范围 | 状态 | 证据或剩余工作 |

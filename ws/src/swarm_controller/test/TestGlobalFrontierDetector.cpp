@@ -162,6 +162,65 @@ namespace SwarmController {
             }
         }
 
+        enum class TestUnknownDirection {
+            PositiveX,
+            PositiveY,
+            NegativeX,
+        };
+
+        void addDirectionalCandidate(
+                octomap::OcTree & tree, const octomap::key_type x,
+                const octomap::key_type y, const octomap::key_type z_center,
+                const TestUnknownDirection direction)
+        {
+            addKeyColumn(tree, x, y, z_center);
+            auto setKey = [&](const int dx, const int dy, const int dz,
+                              const bool occupied) {
+                tree.updateNode(
+                        octomap::OcTreeKey {
+                                static_cast<octomap::key_type>(
+                                        static_cast<int>(x) + dx),
+                                static_cast<octomap::key_type>(
+                                        static_cast<int>(y) + dy),
+                                static_cast<octomap::key_type>(
+                                        static_cast<int>(z_center) + dz)},
+                        occupied, true);
+            };
+            constexpr int SUPPORT_DEPTH = 8;
+            if(direction == TestUnknownDirection::PositiveX) {
+                for(int depth = 1; depth <= SUPPORT_DEPTH; ++depth) {
+                    setKey(-depth, 0, 0, false);
+                }
+                return;
+            }
+            setKey(-1, 0, 0, true);
+            if(direction == TestUnknownDirection::PositiveY) {
+                for(int depth = 1; depth <= SUPPORT_DEPTH; ++depth) {
+                    setKey(0, -depth, 0, false);
+                }
+                return;
+            }
+            setKey(0, -1, 0, true);
+            setKey(0, 1, 0, true);
+            for(int depth = 1; depth <= SUPPORT_DEPTH; ++depth) {
+                setKey(depth, 0, 1, false);
+            }
+        }
+
+        void addDirectionalFrontierLine(
+                octomap::OcTree & tree, const octomap::key_type x,
+                const octomap::key_type first_y,
+                const octomap::key_type z_center, const std::size_t count,
+                const TestUnknownDirection direction)
+        {
+            for(std::size_t index = 0U; index < count; ++index) {
+                addDirectionalCandidate(
+                        tree, x,
+                        static_cast<octomap::key_type>(first_y + 2U * index),
+                        z_center, direction);
+            }
+        }
+
         void expectSameRegions(
                 const FrontierDetectionResult & lhs,
                 const FrontierDetectionResult & rhs,
@@ -246,6 +305,71 @@ namespace SwarmController {
                         right.timings.component_seconds);
                 EXPECT_DOUBLE_EQ(left.timings.total_seconds, right.timings.total_seconds);
             }
+        }
+
+        void expectCompleteComponentTrace(
+                const TracedFrontierDetectionResult & traced)
+        {
+            ASSERT_FALSE(traced.trace.truncated);
+            ASSERT_EQ(
+                    traced.trace.components.size(),
+                    traced.result.diagnostics.components_built);
+            std::uint64_t exact_columns = 0U;
+            std::array<std::uint64_t, 5U> rejection_counts {};
+            for(std::size_t index = 0U; index < traced.trace.components.size(); ++index) {
+                const FrontierComponentTrace & component =
+                        traced.trace.components[index];
+                EXPECT_EQ(component.component_index, index);
+                ASSERT_TRUE(component.columns_complete);
+                ASSERT_TRUE(component.edges_complete);
+                ASSERT_FALSE(component.columns.empty());
+                EXPECT_EQ(component.columns.size(), component.exact_column_count);
+                EXPECT_EQ(component.stable_key, component.columns.front());
+                EXPECT_FLOAT_EQ(
+                        component.horizontal_span,
+                        std::hypot(
+                                component.xy_maximum.x - component.xy_minimum.x,
+                                component.xy_maximum.y - component.xy_minimum.y));
+                const std::size_t votes = std::accumulate(
+                        component.direction_votes.begin(),
+                        component.direction_votes.end(), std::size_t {0U});
+                EXPECT_FLOAT_EQ(
+                        component.information_gain, static_cast<float>(votes));
+                exact_columns += component.exact_column_count;
+                switch(component.rejection) {
+                    case FrontierComponentRejection::Columns:
+                        ++rejection_counts[0U];
+                        break;
+                    case FrontierComponentRejection::Area:
+                        ++rejection_counts[1U];
+                        break;
+                    case FrontierComponentRejection::Span:
+                        ++rejection_counts[2U];
+                        break;
+                    case FrontierComponentRejection::Direction:
+                        ++rejection_counts[3U];
+                        break;
+                    case FrontierComponentRejection::None:
+                        ++rejection_counts[4U];
+                        break;
+                }
+            }
+            const auto & diagnostics = traced.result.diagnostics;
+            EXPECT_EQ(exact_columns, diagnostics.support_passed_columns);
+            EXPECT_EQ(
+                    rejection_counts[0U],
+                    diagnostics.component_primary_rejected_columns);
+            EXPECT_EQ(
+                    rejection_counts[1U],
+                    diagnostics.component_primary_rejected_area);
+            EXPECT_EQ(
+                    rejection_counts[2U],
+                    diagnostics.component_primary_rejected_span);
+            EXPECT_EQ(
+                    rejection_counts[3U],
+                    diagnostics.component_primary_rejected_direction);
+            EXPECT_EQ(rejection_counts[4U], diagnostics.components_accepted);
+            EXPECT_EQ(rejection_counts[4U], traced.result.regions.size());
         }
 
     }// namespace
@@ -340,6 +464,25 @@ namespace SwarmController {
         EXPECT_EQ(result.diagnostics.components_accepted, 0U);
     }
 
+    TEST(GlobalFrontierDetectorTest, ProductionDefaultsRejectSingleThinObservation)
+    {
+        octomap::OcTree tree(0.1);
+        for(int y = -20; y <= 20; ++y) {
+            for(int z = 12; z <= 18; ++z) {
+                setFree(tree, 1.0F, 0.1F * static_cast<float>(y),
+                        0.1F * static_cast<float>(z));
+            }
+        }
+        tree.updateInnerOccupancy();
+
+        const auto result = GlobalFrontierDetector {}.detect(tree);
+
+        EXPECT_TRUE(result.accepted());
+        EXPECT_TRUE(result.regions.empty());
+        EXPECT_GT(result.diagnostics.support_rejected_unknown, 0U);
+        expectCompleteConservation(result);
+    }
+
     TEST(GlobalFrontierDetectorTest, EmptyTreeHasNoFrontierEvidence)
     {
         octomap::OcTree tree(0.1);
@@ -385,6 +528,197 @@ namespace SwarmController {
         EXPECT_GT(region_it->unknown_direction.x, 0.5F);
         EXPECT_NEAR(region_it->unknown_direction.y, 0.0F, 0.5F);
         expectCompleteConservation(result);
+    }
+
+    TEST(GlobalFrontierDetectorTest, ProductionDefaultsKeepStraightCorridorAsOneRegion)
+    {
+        octomap::OcTree tree(0.1);
+        constexpr auto X = static_cast<octomap::key_type>(32'000U);
+        constexpr auto FIRST_Y = static_cast<octomap::key_type>(32'000U);
+        constexpr auto CENTER = static_cast<octomap::key_type>(32'768U);
+        addDirectionalFrontierLine(
+                tree, X, FIRST_Y, CENTER, 16U,
+                TestUnknownDirection::PositiveX);
+        tree.updateInnerOccupancy();
+
+        const auto result = GlobalFrontierDetector {}.detect(tree);
+
+        ASSERT_EQ(result.status, FrontierDetectionStatus::Accepted);
+        ASSERT_EQ(result.regions.size(), 1U);
+        EXPECT_EQ(result.diagnostics.components_built, 1U);
+        EXPECT_GT(result.regions.front().unknown_direction.x, 0.5F);
+        expectCompleteConservation(result);
+    }
+
+    TEST(GlobalFrontierDetectorTest, ProductionDefaultsKeepSeparatedCorridorsDistinct)
+    {
+        octomap::OcTree tree(0.1);
+        constexpr auto X = static_cast<octomap::key_type>(32'000U);
+        constexpr auto FIRST_Y = static_cast<octomap::key_type>(32'000U);
+        constexpr auto SECOND_Y = static_cast<octomap::key_type>(32'100U);
+        constexpr auto CENTER = static_cast<octomap::key_type>(32'768U);
+        addDirectionalFrontierLine(
+                tree, X, FIRST_Y, CENTER, 16U,
+                TestUnknownDirection::PositiveX);
+        addDirectionalFrontierLine(
+                tree, X, SECOND_Y, CENTER, 16U,
+                TestUnknownDirection::PositiveX);
+        tree.updateInnerOccupancy();
+
+        const auto result = GlobalFrontierDetector {}.detect(tree);
+
+        ASSERT_EQ(result.status, FrontierDetectionStatus::Accepted);
+        ASSERT_EQ(result.regions.size(), 2U);
+        EXPECT_EQ(
+                std::count_if(
+                        result.regions.begin(), result.regions.end(),
+                        [](const FrontierRegion & region) {
+                            return region.unknown_direction.x > 0.5F;
+                        }),
+                2U);
+        expectCompleteConservation(result);
+    }
+
+    TEST(GlobalFrontierDetectorTest, ProductionDefaultsKeepOccupiedBarrierDistinct)
+    {
+        octomap::OcTree tree(0.1);
+        constexpr auto X = static_cast<octomap::key_type>(32'000U);
+        constexpr auto FIRST_Y = static_cast<octomap::key_type>(32'000U);
+        constexpr auto SECOND_Y = static_cast<octomap::key_type>(32'034U);
+        constexpr auto CENTER = static_cast<octomap::key_type>(32'768U);
+        addDirectionalFrontierLine(
+                tree, X, FIRST_Y, CENTER, 16U,
+                TestUnknownDirection::PositiveX);
+        addDirectionalFrontierLine(
+                tree, X, SECOND_Y, CENTER, 16U,
+                TestUnknownDirection::PositiveX);
+        for(int y_offset = 32; y_offset <= 33; ++y_offset) {
+            for(int z_offset = -3; z_offset <= 3; ++z_offset) {
+                tree.updateNode(
+                        octomap::OcTreeKey {
+                                X,
+                                static_cast<octomap::key_type>(
+                                        static_cast<int>(FIRST_Y) + y_offset),
+                                static_cast<octomap::key_type>(
+                                        static_cast<int>(CENTER) + z_offset)},
+                        true, true);
+            }
+        }
+        tree.updateInnerOccupancy();
+
+        const auto result = GlobalFrontierDetector {}.detect(tree);
+
+        ASSERT_EQ(result.status, FrontierDetectionStatus::Accepted);
+        ASSERT_EQ(result.regions.size(), 2U);
+        EXPECT_EQ(result.diagnostics.components_built, 2U);
+        EXPECT_EQ(
+                std::count_if(
+                        result.regions.begin(), result.regions.end(),
+                        [](const FrontierRegion & region) {
+                            return region.unknown_direction.x > 0.5F;
+                        }),
+                2U);
+        expectCompleteConservation(result);
+    }
+
+    TEST(GlobalFrontierDetectorTest, ProductionDefaultsKeepDiagonalQuantizationAsOneRegion)
+    {
+        octomap::OcTree tree(0.1);
+        constexpr auto BASE = static_cast<octomap::key_type>(32'000U);
+        constexpr auto CENTER = static_cast<octomap::key_type>(32'768U);
+        for(int index = 0; index < 16; ++index) {
+            addDirectionalCandidate(
+                    tree,
+                    static_cast<octomap::key_type>(BASE + 2U * index),
+                    static_cast<octomap::key_type>(BASE + 2U * index), CENTER,
+                    index % 4 == 3 ? TestUnknownDirection::PositiveY
+                                   : TestUnknownDirection::PositiveX);
+        }
+        tree.updateInnerOccupancy();
+
+        const auto result = GlobalFrontierDetector {}.detect(tree);
+
+        ASSERT_EQ(result.status, FrontierDetectionStatus::Accepted);
+        ASSERT_EQ(result.regions.size(), 1U);
+        EXPECT_GE(result.regions.front().direction_consistency, 0.65F);
+        expectCompleteConservation(result);
+    }
+
+    TEST(GlobalFrontierDetectorTest, ProductionDefaultsRejectMixedOppositeDirections)
+    {
+        octomap::OcTree tree(0.1);
+        constexpr auto X = static_cast<octomap::key_type>(32'000U);
+        constexpr auto BASE_Y = static_cast<octomap::key_type>(32'000U);
+        constexpr auto CENTER = static_cast<octomap::key_type>(32'768U);
+        for(int index = 0; index < 16; ++index) {
+            addDirectionalCandidate(
+                    tree, X,
+                    static_cast<octomap::key_type>(BASE_Y + 2U * index), CENTER,
+                    index < 8 ? TestUnknownDirection::PositiveX
+                              : TestUnknownDirection::NegativeX);
+        }
+        tree.updateInnerOccupancy();
+
+        const auto result = GlobalFrontierDetector {}.detect(tree);
+
+        EXPECT_TRUE(result.accepted());
+        EXPECT_TRUE(result.regions.empty());
+        EXPECT_GT(result.diagnostics.component_primary_rejected_direction, 0U);
+        expectCompleteConservation(result);
+    }
+
+    TEST(GlobalFrontierDetectorTest, OneColumnGapCharacterizesComponentSplit)
+    {
+        constexpr auto X = static_cast<octomap::key_type>(32'000U);
+        constexpr auto BASE_Y = static_cast<octomap::key_type>(32'000U);
+        constexpr auto CENTER = static_cast<octomap::key_type>(32'768U);
+        auto populate = [&](octomap::OcTree & tree, const bool omit_middle,
+                            const bool reverse) {
+            const auto add_index = [&](const int index) {
+                if(omit_middle && index == 6) {
+                    return;
+                }
+                addDirectionalCandidate(
+                        tree, X,
+                        static_cast<octomap::key_type>(BASE_Y + 2U * index), CENTER,
+                        TestUnknownDirection::PositiveX);
+            };
+            if(reverse) {
+                for(int index = 12; index >= 0; --index) {
+                    add_index(index);
+                }
+            } else {
+                for(int index = 0; index <= 12; ++index) {
+                    add_index(index);
+                }
+            }
+            tree.updateInnerOccupancy();
+        };
+
+        octomap::OcTree complete(0.1);
+        octomap::OcTree complete_reverse(0.1);
+        octomap::OcTree gapped(0.1);
+        octomap::OcTree gapped_reverse(0.1);
+        populate(complete, false, false);
+        populate(complete_reverse, false, true);
+        populate(gapped, true, false);
+        populate(gapped_reverse, true, true);
+
+        const auto complete_result = GlobalFrontierDetector {}.detect(complete);
+        const auto complete_reverse_result =
+                GlobalFrontierDetector {}.detect(complete_reverse);
+        const auto gapped_result = GlobalFrontierDetector {}.detect(gapped);
+        const auto gapped_reverse_result =
+                GlobalFrontierDetector {}.detect(gapped_reverse);
+
+        ASSERT_EQ(complete_result.regions.size(), 1U);
+        EXPECT_TRUE(gapped_result.regions.empty());
+        EXPECT_EQ(gapped_result.diagnostics.components_built, 2U);
+        EXPECT_EQ(gapped_result.diagnostics.component_primary_rejected_columns, 2U);
+        expectSameRegions(complete_result, complete_reverse_result, false);
+        expectSameRegions(gapped_result, gapped_reverse_result, false);
+        expectCompleteConservation(complete_result);
+        expectCompleteConservation(gapped_result);
     }
 
     TEST(GlobalFrontierDetectorTest, TwoSeparatedCorridorFrontiersRemainDistinct)
@@ -725,6 +1059,36 @@ namespace SwarmController {
         EXPECT_FALSE(traced.trace.truncated);
     }
 
+    TEST(GlobalFrontierDetectorTest, TraceReportsExactComponentMetrics)
+    {
+        octomap::OcTree tree(0.1);
+        constexpr auto X = static_cast<octomap::key_type>(32'000U);
+        constexpr auto FIRST_Y = static_cast<octomap::key_type>(32'000U);
+        constexpr auto CENTER = static_cast<octomap::key_type>(32'768U);
+        addDirectionalFrontierLine(
+                tree, X, FIRST_Y, CENTER, 16U,
+                TestUnknownDirection::PositiveX);
+        tree.updateInnerOccupancy();
+
+        const GlobalFrontierDetector detector;
+        const auto traced = detector.detectWithTrace(tree);
+
+        ASSERT_EQ(traced.result.status, FrontierDetectionStatus::Accepted);
+        ASSERT_FALSE(traced.result.regions.empty());
+        expectCompleteComponentTrace(traced);
+        ASSERT_EQ(traced.trace.components.size(), 1U);
+        const auto & component = traced.trace.components.front();
+        EXPECT_EQ(component.exact_column_count, component.columns.size());
+        EXPECT_EQ(component.stable_key, component.columns.front());
+        EXPECT_FLOAT_EQ(component.area, traced.result.regions.front().area);
+        EXPECT_FLOAT_EQ(
+                component.horizontal_span,
+                traced.result.regions.front().horizontal_span);
+        EXPECT_FLOAT_EQ(
+                component.direction_consistency,
+                traced.result.regions.front().direction_consistency);
+    }
+
     TEST(GlobalFrontierDetectorTest, TraceLimitsDoNotChangeDetectionResult)
     {
         octomap::OcTree tree(0.1);
@@ -744,6 +1108,9 @@ namespace SwarmController {
         EXPECT_LE(traced.trace.candidates.size(), 1U);
         EXPECT_LE(traced.trace.components.size(), 1U);
         EXPECT_LE(traceGeometryElements(traced.trace), 1U);
+        if(!traced.trace.components.empty()) {
+            EXPECT_FALSE(traced.trace.components.front().columns_complete);
+        }
     }
 
     TEST(GlobalFrontierDetectorTest, TraceSeparatesDirectionalSupportAttempts)
@@ -775,6 +1142,7 @@ namespace SwarmController {
                 }
             }
         }
+
         tree.updateNode(
                 octomap::OcTreeKey {
                         static_cast<octomap::key_type>(CANDIDATE - 1U),

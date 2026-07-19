@@ -79,11 +79,14 @@ namespace SwarmController {
             }
 
             template<typename T>
-            void copyGeometry(
+            bool copyGeometry(
                     std::vector<T> & target, const std::vector<T> & source)
             {
-                if(!enabled() || source.empty()) {
-                    return;
+                if(!enabled()) {
+                    return false;
+                }
+                if(source.empty()) {
+                    return true;
                 }
                 const std::size_t available =
                         geometry_elements >= config->max_trace_geometry_elements
@@ -96,6 +99,7 @@ namespace SwarmController {
                 if(count != source.size()) {
                     trace->truncated = true;
                 }
+                return count == source.size();
             }
 
             bool reserveGeometryElement()
@@ -323,12 +327,20 @@ namespace SwarmController {
             return 5U;
         }
 
-        FrontierRegion makeRegion(
+        struct RegionComputation {
+            FrontierRegion region;
+            std::array<std::size_t, 4U> direction_votes {};
+            Point3f xy_minimum {};
+            Point3f xy_maximum {};
+        };
+
+        RegionComputation makeRegion(
                 const std::vector<FrontierColumnKey> & columns,
                 const std::map<FrontierColumnKey, ColumnSample> & samples,
                 const float column_size, const std::size_t max_columns_per_region)
         {
-            FrontierRegion result;
+            RegionComputation computation;
+            FrontierRegion & result = computation.region;
             result.columns = columns;
             result.stable_key = columns.front();
             Point3f min_point {
@@ -365,6 +377,8 @@ namespace SwarmController {
                         sum.y / static_cast<float>(point_count),
                         sum.z / static_cast<float>(point_count),
                 };
+                computation.xy_minimum = min_point;
+                computation.xy_maximum = max_point;
             }
             const auto dominant = static_cast<std::size_t>(std::distance(
                     votes.begin(), std::max_element(votes.begin(), votes.end())));
@@ -381,7 +395,8 @@ namespace SwarmController {
                                                    ? 0.0F
                                                    : static_cast<float>(votes[dominant])
                                                              / static_cast<float>(total_unknown);
-            return result;
+            computation.direction_votes = votes;
+            return computation;
         }
 
     }// namespace
@@ -711,7 +726,9 @@ namespace SwarmController {
         }
         const float column_size = static_cast<float>(
                 config_.column_stride_voxels * config_.resolution);
+        std::size_t component_index = 0U;
         while(!remaining.empty()) {
+            const std::size_t current_component_index = component_index++;
             const FrontierColumnKey seed = *remaining.begin();
             remaining.erase(remaining.begin());
             std::vector<FrontierColumnKey> component {seed};
@@ -745,8 +762,9 @@ namespace SwarmController {
                         FrontierDetectionStatus::ResourceLimit,
                         "frontier region column limit exceeded", false);
             }
-            FrontierRegion region = makeRegion(
+            RegionComputation computation = makeRegion(
                     component, supported, column_size, config_.max_columns_per_region);
+            FrontierRegion & region = computation.region;
             FrontierComponentTrace component_trace;
             bool collect_component_trace = false;
             if(trace != nullptr) {
@@ -754,9 +772,22 @@ namespace SwarmController {
                     trace->truncated = true;
                 } else {
                     collect_component_trace = true;
-                    trace_collector.copyGeometry(
-                            component_trace.columns, component);
+                    component_trace.component_index = current_component_index;
+                    component_trace.stable_key = region.stable_key;
+                    component_trace.exact_column_count = component.size();
                     component_trace.representative = region.representative;
+                    component_trace.unknown_direction = region.unknown_direction;
+                    component_trace.xy_minimum = computation.xy_minimum;
+                    component_trace.xy_maximum = computation.xy_maximum;
+                    component_trace.direction_votes = computation.direction_votes;
+                    component_trace.information_gain = region.information_gain;
+                    component_trace.area = region.area;
+                    component_trace.horizontal_span = region.horizontal_span;
+                    component_trace.direction_consistency =
+                            region.direction_consistency;
+                    component_trace.columns_complete = trace_collector.copyGeometry(
+                            component_trace.columns, component);
+                    component_trace.edges_complete = true;
                     const std::set<FrontierColumnKey> component_keys(
                             component.begin(), component.end());
                     for(const FrontierColumnKey & current : component) {
@@ -766,11 +797,14 @@ namespace SwarmController {
                                     current.y + static_cast<std::int64_t>(dy)};
                             if(current < neighbor
                                && component_keys.find(neighbor)
-                                          != component_keys.end()
-                               && trace_collector.reserveGeometryElement())
+                                          != component_keys.end())
                             {
-                                component_trace.edges.push_back(
-                                        FrontierComponentEdge {current, neighbor});
+                                if(trace_collector.reserveGeometryElement()) {
+                                    component_trace.edges.push_back(
+                                            FrontierComponentEdge {current, neighbor});
+                                } else {
+                                    component_trace.edges_complete = false;
+                                }
                             }
                         }
                     }

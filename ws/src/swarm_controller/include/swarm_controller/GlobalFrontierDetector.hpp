@@ -181,10 +181,23 @@ namespace SwarmController {
     };
 
     struct FrontierComponentTrace {
+        std::size_t                     component_index {};
+        FrontierColumnKey               stable_key {};
+        std::size_t                     exact_column_count {};
         std::vector<FrontierColumnKey> columns;
         std::vector<FrontierComponentEdge> edges;
-        Point3f                       representative {};
-        FrontierComponentRejection    rejection {FrontierComponentRejection::None};
+        Point3f                         representative {};
+        Point3f                         unknown_direction {};
+        Point3f                         xy_minimum {};
+        Point3f                         xy_maximum {};
+        std::array<std::size_t, 4U>     direction_votes {};
+        float                           information_gain {};
+        float                           area {};
+        float                           horizontal_span {};
+        float                           direction_consistency {};
+        FrontierComponentRejection      rejection {FrontierComponentRejection::None};
+        bool                            columns_complete {};
+        bool                            edges_complete {};
     };
 
     struct FrontierDetectionTrace {

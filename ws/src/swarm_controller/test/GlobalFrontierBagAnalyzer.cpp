@@ -9,6 +9,9 @@
 #include <iomanip>
 #include <locale>
 #include <memory>
+#include <numeric>
+#include <optional>
+#include <set>
 #include <sstream>
 #include <system_error>
 #include <utility>
@@ -28,6 +31,12 @@ namespace SwarmController::Test {
     namespace {
 
         constexpr const char * OCTOMAP_TYPE = "octomap_msgs/msg/Octomap";
+        constexpr std::array<std::pair<std::int64_t, std::int64_t>, 8U>
+                COMPONENT_NEIGHBORS {
+                        std::pair<std::int64_t, std::int64_t> {1, 0},
+                        {1, 1}, {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}, {0, -1},
+                        {1, -1},
+                };
 
         std::string statusName(const FrontierDetectionStatus status)
         {
@@ -42,6 +51,24 @@ namespace SwarmController::Test {
                     return "ResourceLimit";
             }
             return "Invalid";
+        }
+
+        std::string componentRejectionName(
+                const FrontierComponentRejection rejection)
+        {
+            switch(rejection) {
+                case FrontierComponentRejection::None:
+                    return "None";
+                case FrontierComponentRejection::Columns:
+                    return "Columns";
+                case FrontierComponentRejection::Area:
+                    return "Area";
+                case FrontierComponentRejection::Span:
+                    return "Span";
+                case FrontierComponentRejection::Direction:
+                    return "Direction";
+            }
+            return "Unknown";
         }
 
         std::string csvField(const std::string & value)
@@ -158,19 +185,453 @@ namespace SwarmController::Test {
                    << timings.total_seconds << '\n';
         }
 
-        bool commitOutput(
-                const std::filesystem::path & temporary,
-                const std::filesystem::path & destination,
-                std::string & reason)
+        void writeComponentHeader(std::ostream & output)
         {
-            std::error_code error;
-            std::filesystem::rename(temporary, destination, error);
-            if(!error) {
+            output << "frame_index,bag_timestamp_ns,map_stamp_ns,component_index,"
+                      "stable_key_x,stable_key_y,exact_columns,area,horizontal_span,"
+                      "representative_x,representative_y,representative_z,"
+                      "unknown_direction_x,unknown_direction_y,unknown_direction_z,"
+                      "information_gain,direction_consistency,direction_votes_pos_x,"
+                      "direction_votes_pos_y,direction_votes_neg_x,"
+                      "direction_votes_neg_y,xy_min_x,xy_min_y,xy_max_x,xy_max_y,"
+                      "rejection,columns_complete,edges_complete\n";
+        }
+
+        void writeComponentRow(
+                std::ostream & output, const std::size_t frame_index,
+                const std::int64_t bag_timestamp,
+                const octomap_msgs::msg::Octomap & message,
+                const FrontierComponentTrace & component)
+        {
+            output << frame_index << ',' << bag_timestamp << ','
+                   << stampNanoseconds(message.header.stamp) << ','
+                   << component.component_index << ',' << component.stable_key.x << ','
+                   << component.stable_key.y << ',' << component.exact_column_count << ','
+                   << component.area << ',' << component.horizontal_span << ','
+                   << component.representative.x << ',' << component.representative.y << ','
+                   << component.representative.z << ','
+                   << component.unknown_direction.x << ','
+                   << component.unknown_direction.y << ','
+                   << component.unknown_direction.z << ','
+                   << component.information_gain << ','
+                   << component.direction_consistency;
+            writeArray(output, component.direction_votes);
+            output << ',' << component.xy_minimum.x << ',' << component.xy_minimum.y
+                   << ',' << component.xy_maximum.x << ',' << component.xy_maximum.y
+                   << ',' << componentRejectionName(component.rejection)
+                   << ',' << (component.columns_complete ? 1 : 0)
+                   << ',' << (component.edges_complete ? 1 : 0) << '\n';
+        }
+
+        void writeMembershipHeader(std::ostream & output)
+        {
+            output << "frame_index,component_index,stable_key_x,stable_key_y,"
+                      "column_x,column_y\n";
+        }
+
+        void writeMembershipRows(
+                std::ostream & output, const std::size_t frame_index,
+                const FrontierComponentTrace & component)
+        {
+            for(const FrontierColumnKey & column : component.columns) {
+                output << frame_index << ',' << component.component_index << ','
+                       << component.stable_key.x << ',' << component.stable_key.y << ','
+                       << column.x << ',' << column.y << '\n';
+            }
+        }
+
+        std::optional<std::string> componentTraceError(
+                const FrontierDetectionResult & detection,
+                const FrontierDetectionTrace & trace)
+        {
+            if(!detection.diagnostics.complete) {
+                return "detector diagnostics are incomplete";
+            }
+            if(trace.truncated) {
+                return "component trace is truncated";
+            }
+            if(trace.components.size() != detection.diagnostics.components_built) {
+                return "component row count does not match diagnostics";
+            }
+
+            std::uint64_t exact_columns = 0U;
+            std::array<std::uint64_t, 5U> rejection_counts {};
+            for(std::size_t index = 0U; index < trace.components.size(); ++index) {
+                const FrontierComponentTrace & component = trace.components[index];
+                if(component.component_index != index) {
+                    return "component indices are not contiguous";
+                }
+                if(component.exact_column_count == 0U) {
+                    return "component has zero exact columns";
+                }
+                if(!component.columns_complete || !component.edges_complete) {
+                    return "component membership or edges are incomplete";
+                }
+                if(component.columns.size() != component.exact_column_count) {
+                    return "component membership count is incomplete";
+                }
+                if(!std::is_sorted(component.columns.begin(), component.columns.end())
+                   || std::adjacent_find(
+                              component.columns.begin(), component.columns.end())
+                              != component.columns.end())
+                {
+                    return "component membership is not sorted and unique";
+                }
+                if(!(component.stable_key == component.columns.front())) {
+                    return "component stable key does not match first column";
+                }
+                const std::set<FrontierColumnKey> membership(
+                        component.columns.begin(), component.columns.end());
+                using EdgeKey =
+                        std::pair<FrontierColumnKey, FrontierColumnKey>;
+                std::set<EdgeKey> expected_edges;
+                for(const FrontierColumnKey & column : component.columns) {
+                    for(const auto & [dx, dy] : COMPONENT_NEIGHBORS) {
+                        const FrontierColumnKey neighbor {
+                                column.x + dx, column.y + dy};
+                        if(column < neighbor
+                           && membership.find(neighbor) != membership.end())
+                        {
+                            expected_edges.emplace(column, neighbor);
+                        }
+                    }
+                }
+                std::set<EdgeKey> actual_edges;
+                for(const FrontierComponentEdge & edge : component.edges) {
+                    if(!(edge.first < edge.second)
+                       || membership.find(edge.first) == membership.end()
+                       || membership.find(edge.second) == membership.end())
+                    {
+                        return "component edge has invalid or unordered endpoint";
+                    }
+                    if(!actual_edges.emplace(edge.first, edge.second).second) {
+                        return "component edge is duplicated";
+                    }
+                }
+                if(actual_edges != expected_edges) {
+                    return "component edges do not match membership adjacency";
+                }
+                const float span = std::hypot(
+                        component.xy_maximum.x - component.xy_minimum.x,
+                        component.xy_maximum.y - component.xy_minimum.y);
+                if(std::fabs(span - component.horizontal_span) > 1.0e-4F) {
+                    return "component XY bounds do not reproduce horizontal span";
+                }
+                const std::uint64_t vote_total = std::accumulate(
+                        component.direction_votes.begin(),
+                        component.direction_votes.end(), std::uint64_t {0U});
+                if(std::fabs(
+                           static_cast<double>(vote_total)
+                           - static_cast<double>(component.information_gain))
+                   > 0.5)
+                {
+                    return "component votes do not reproduce information gain";
+                }
+                exact_columns += component.exact_column_count;
+                switch(component.rejection) {
+                    case FrontierComponentRejection::Columns:
+                        ++rejection_counts[0U];
+                        break;
+                    case FrontierComponentRejection::Area:
+                        ++rejection_counts[1U];
+                        break;
+                    case FrontierComponentRejection::Span:
+                        ++rejection_counts[2U];
+                        break;
+                    case FrontierComponentRejection::Direction:
+                        ++rejection_counts[3U];
+                        break;
+                    case FrontierComponentRejection::None:
+                        ++rejection_counts[4U];
+                        break;
+                }
+            }
+            const auto & diagnostics = detection.diagnostics;
+            if(exact_columns != diagnostics.support_passed_columns) {
+                return "component column mass does not match supported columns";
+            }
+            if(rejection_counts[0U] != diagnostics.component_primary_rejected_columns
+               || rejection_counts[1U]
+                          != diagnostics.component_primary_rejected_area
+               || rejection_counts[2U]
+                          != diagnostics.component_primary_rejected_span
+               || rejection_counts[3U]
+                          != diagnostics.component_primary_rejected_direction
+               || rejection_counts[4U] != diagnostics.components_accepted
+               || rejection_counts[4U] != detection.regions.size())
+            {
+                return "component rejection counts do not match diagnostics";
+            }
+            return std::nullopt;
+        }
+
+        struct OutputCommitEntry {
+            std::filesystem::path temporary;
+            std::filesystem::path destination;
+            std::filesystem::path backup;
+            bool had_destination {};
+            bool backed_up {};
+            bool published {};
+        };
+
+        bool normalizeOutputPath(
+                const std::filesystem::path & input,
+                std::filesystem::path & output, std::string & reason)
+        {
+            if(input.empty()) {
+                output.clear();
                 return true;
             }
-            reason = "failed to commit output '" + destination.string()
-                     + "': " + error.message();
-            return false;
+            std::error_code error;
+            const std::filesystem::path absolute =
+                    std::filesystem::absolute(input, error);
+            if(error) {
+                reason = "failed to make output path absolute '"
+                         + input.string() + "': " + error.message();
+                return false;
+            }
+            const std::filesystem::path canonical_parent =
+                    std::filesystem::weakly_canonical(
+                            absolute.parent_path(), error);
+            if(error) {
+                reason = "failed to canonicalize output parent '"
+                         + absolute.parent_path().string() + "': "
+                         + error.message();
+                return false;
+            }
+            output = (canonical_parent / absolute.filename()).lexically_normal();
+            return true;
+        }
+
+        std::filesystem::file_status directoryEntryStatus(
+                const std::filesystem::path & path,
+                std::error_code & error)
+        {
+            std::filesystem::file_status status =
+                    std::filesystem::symlink_status(path, error);
+            if(error == std::errc::no_such_file_or_directory) {
+                error.clear();
+                status = std::filesystem::file_status {
+                        std::filesystem::file_type::not_found};
+            }
+            return status;
+        }
+
+        std::optional<std::string> validateOutputEntries(
+                const std::vector<OutputCommitEntry> & entries)
+        {
+            std::vector<std::filesystem::path> all_paths;
+            all_paths.reserve(entries.size() * 3U);
+            for(const OutputCommitEntry & entry : entries) {
+                all_paths.push_back(entry.destination.lexically_normal());
+                all_paths.push_back(entry.temporary.lexically_normal());
+                all_paths.push_back(entry.backup.lexically_normal());
+            }
+            std::sort(all_paths.begin(), all_paths.end());
+            if(std::adjacent_find(all_paths.begin(), all_paths.end())
+               != all_paths.end())
+            {
+                return "analyzer output and staging paths must be distinct";
+            }
+
+            for(std::size_t lhs = 0U; lhs < entries.size(); ++lhs) {
+                for(std::size_t rhs = lhs + 1U; rhs < entries.size(); ++rhs) {
+                    std::error_code error;
+                    const bool lhs_exists = std::filesystem::exists(
+                            entries[lhs].destination, error);
+                    if(error) {
+                        return "failed to inspect output '"
+                               + entries[lhs].destination.string() + "': "
+                               + error.message();
+                    }
+                    const bool rhs_exists = std::filesystem::exists(
+                            entries[rhs].destination, error);
+                    if(error) {
+                        return "failed to inspect output '"
+                               + entries[rhs].destination.string() + "': "
+                               + error.message();
+                    }
+                    if(lhs_exists && rhs_exists
+                       && std::filesystem::equivalent(
+                               entries[lhs].destination,
+                               entries[rhs].destination, error))
+                    {
+                        return "analyzer output paths resolve to the same file";
+                    }
+                    if(error) {
+                        return "failed to compare output paths: "
+                               + error.message();
+                    }
+                }
+            }
+
+            for(const OutputCommitEntry & entry : entries) {
+                for(const auto & staging : {entry.temporary, entry.backup}) {
+                    std::error_code error;
+                    const std::filesystem::file_status status =
+                            directoryEntryStatus(staging, error);
+                    if(error) {
+                        return "failed to inspect staging path '"
+                               + staging.string() + "': " + error.message();
+                    }
+                    if(status.type() != std::filesystem::file_type::not_found) {
+                        return "analyzer staging path already exists: "
+                               + staging.string();
+                    }
+                }
+            }
+            return std::nullopt;
+        }
+
+        std::string rollbackOutputs(std::vector<OutputCommitEntry> & entries)
+        {
+            std::string rollback_error;
+            auto appendError = [&](const std::string & message) {
+                if(!rollback_error.empty()) {
+                    rollback_error += "; ";
+                }
+                rollback_error += message;
+            };
+            for(auto entry = entries.rbegin(); entry != entries.rend(); ++entry) {
+                if(!entry->published) {
+                    continue;
+                }
+                std::error_code error;
+                std::filesystem::remove(entry->destination, error);
+                if(error) {
+                    appendError(
+                            "failed to remove published output '"
+                            + entry->destination.string() + "': "
+                            + error.message());
+                } else {
+                    entry->published = false;
+                }
+            }
+            for(auto entry = entries.rbegin(); entry != entries.rend(); ++entry) {
+                if(!entry->backed_up) {
+                    continue;
+                }
+                std::error_code error;
+                std::filesystem::rename(
+                        entry->backup, entry->destination, error);
+                if(error) {
+                    appendError(
+                            "failed to restore output '"
+                            + entry->destination.string() + "': "
+                            + error.message());
+                } else {
+                    entry->backed_up = false;
+                }
+            }
+            return rollback_error;
+        }
+
+        bool commitOutputs(
+                std::vector<OutputCommitEntry> & entries, std::string & reason)
+        {
+            for(OutputCommitEntry & entry : entries) {
+                std::error_code error;
+                const std::filesystem::file_status temporary_status =
+                        directoryEntryStatus(entry.temporary, error);
+                if(error
+                   || temporary_status.type()
+                              != std::filesystem::file_type::regular)
+                {
+                    reason = error
+                                     ? "failed to inspect temporary output '"
+                                               + entry.temporary.string() + "': "
+                                               + error.message()
+                                     : "temporary output is not a regular file: "
+                                               + entry.temporary.string();
+                    return false;
+                }
+                const std::filesystem::file_status destination_status =
+                        directoryEntryStatus(entry.destination, error);
+                if(error) {
+                    reason = "failed to inspect output '"
+                             + entry.destination.string() + "': "
+                             + error.message();
+                    return false;
+                }
+                entry.had_destination =
+                        destination_status.type()
+                        != std::filesystem::file_type::not_found;
+                if(entry.had_destination
+                   && !std::filesystem::is_regular_file(
+                           entry.destination, error))
+                {
+                    reason = error
+                                     ? "failed to inspect output '"
+                                               + entry.destination.string() + "': "
+                                               + error.message()
+                                     : "output destination is not a regular file: "
+                                               + entry.destination.string();
+                    return false;
+                }
+                const std::filesystem::file_status backup_status =
+                        directoryEntryStatus(entry.backup, error);
+                if(error
+                   || backup_status.type()
+                              != std::filesystem::file_type::not_found)
+                {
+                    reason = error
+                                     ? "failed to inspect backup path '"
+                                               + entry.backup.string() + "': "
+                                               + error.message()
+                                     : "output backup path already exists: "
+                                               + entry.backup.string();
+                    return false;
+                }
+            }
+
+            for(OutputCommitEntry & entry : entries) {
+                if(!entry.had_destination) {
+                    continue;
+                }
+                std::error_code error;
+                std::filesystem::rename(
+                        entry.destination, entry.backup, error);
+                if(error) {
+                    reason = "failed to back up output '"
+                             + entry.destination.string() + "': "
+                             + error.message();
+                    const std::string rollback_error = rollbackOutputs(entries);
+                    if(!rollback_error.empty()) {
+                        reason += "; rollback failed: " + rollback_error;
+                    }
+                    return false;
+                }
+                entry.backed_up = true;
+            }
+
+            for(OutputCommitEntry & entry : entries) {
+                std::error_code error;
+                std::filesystem::rename(
+                        entry.temporary, entry.destination, error);
+                if(error) {
+                    reason = "failed to publish output '"
+                             + entry.destination.string() + "': "
+                             + error.message();
+                    const std::string rollback_error = rollbackOutputs(entries);
+                    if(!rollback_error.empty()) {
+                        reason += "; rollback failed: " + rollback_error;
+                    }
+                    return false;
+                }
+                entry.published = true;
+            }
+
+            for(OutputCommitEntry & entry : entries) {
+                if(!entry.backed_up) {
+                    continue;
+                }
+                std::error_code ignored;
+                std::filesystem::remove(entry.backup, ignored);
+                if(!ignored) {
+                    entry.backed_up = false;
+                }
+            }
+            return true;
         }
 
         void removeTemporary(const std::filesystem::path & path)
@@ -181,6 +642,34 @@ namespace SwarmController::Test {
             std::error_code ignored;
             std::filesystem::remove(path, ignored);
         }
+
+        class TemporaryOutputGuard
+        {
+        public:
+            explicit TemporaryOutputGuard(std::vector<std::filesystem::path> paths)
+                : paths_(std::move(paths))
+            {
+            }
+
+            ~TemporaryOutputGuard()
+            {
+                if(released_) {
+                    return;
+                }
+                for(const auto & path : paths_) {
+                    removeTemporary(path);
+                }
+            }
+
+            void release()
+            {
+                released_ = true;
+            }
+
+        private:
+            std::vector<std::filesystem::path> paths_;
+            bool released_ {};
+        };
 
         BagAnalysisResult failure(
                 const BagAnalysisStatus status, const std::size_t frames,
@@ -202,6 +691,73 @@ namespace SwarmController::Test {
             return BagAnalysisResult {
                     BagAnalysisStatus::OutputError, 0U,
                     "bag URI, statistics output, topic, and frame must be non-empty"};
+        }
+        const bool component_detail_requested =
+                !options.component_csv.empty()
+                || !options.component_membership_csv.empty();
+        if(options.component_csv.empty()
+           != options.component_membership_csv.empty())
+        {
+            return BagAnalysisResult {
+                    BagAnalysisStatus::OutputError, 0U,
+                    "component and membership CSV paths must be provided together"};
+        }
+        std::filesystem::path statistics_destination;
+        std::filesystem::path timing_destination;
+        std::filesystem::path component_destination;
+        std::filesystem::path membership_destination;
+        std::string path_reason;
+        if(!normalizeOutputPath(
+                   options.statistics_csv, statistics_destination,
+                   path_reason)
+           || !normalizeOutputPath(
+                   options.timing_csv, timing_destination, path_reason)
+           || !normalizeOutputPath(
+                   options.component_csv, component_destination,
+                   path_reason)
+           || !normalizeOutputPath(
+                   options.component_membership_csv,
+                   membership_destination, path_reason))
+        {
+            return BagAnalysisResult {
+                    BagAnalysisStatus::OutputError, 0U,
+                    std::move(path_reason)};
+        }
+        const std::filesystem::path statistics_temporary =
+                statistics_destination.string() + ".tmp";
+        const std::filesystem::path timing_temporary =
+                timing_destination.empty()
+                        ? std::filesystem::path {}
+                        : std::filesystem::path {timing_destination.string() + ".tmp"};
+        const std::filesystem::path component_temporary =
+                component_destination.empty()
+                        ? std::filesystem::path {}
+                        : std::filesystem::path {component_destination.string() + ".tmp"};
+        const std::filesystem::path membership_temporary =
+                membership_destination.empty()
+                        ? std::filesystem::path {}
+                        : std::filesystem::path {membership_destination.string() + ".tmp"};
+        std::vector<OutputCommitEntry> output_entries;
+        auto appendOutput = [&](const std::filesystem::path & destination,
+                                const std::filesystem::path & temporary) {
+            if(destination.empty()) {
+                return;
+            }
+            output_entries.push_back(OutputCommitEntry {
+                    temporary, destination,
+                    std::filesystem::path {
+                            destination.string() + ".backup.tmp"}});
+        };
+        appendOutput(statistics_destination, statistics_temporary);
+        appendOutput(timing_destination, timing_temporary);
+        appendOutput(component_destination, component_temporary);
+        appendOutput(membership_destination, membership_temporary);
+        if(const auto path_error = validateOutputEntries(output_entries);
+           path_error.has_value())
+        {
+            return BagAnalysisResult {
+                    BagAnalysisStatus::OutputError, 0U,
+                    *path_error};
         }
 
         rosbag2_cpp::Reader reader;
@@ -248,38 +804,33 @@ namespace SwarmController::Test {
                     std::string("failed to filter bag topic: ") + error.what()};
         }
 
-        const std::filesystem::path statistics_temporary =
-                options.statistics_csv.string() + ".tmp";
-        const std::filesystem::path timing_temporary = options.timing_csv.empty()
-                                                                 ? std::filesystem::path {}
-                                                                 : std::filesystem::path {
-                                                                           options.timing_csv.string()
-                                                                           + ".tmp"};
-        removeTemporary(statistics_temporary);
-        removeTemporary(timing_temporary);
         std::error_code directory_error;
-        if(!options.statistics_csv.parent_path().empty()) {
+        for(const OutputCommitEntry & output : output_entries) {
+            const auto & output_path = output.destination;
+            if(output_path.parent_path().empty()) {
+                continue;
+            }
+            directory_error.clear();
             std::filesystem::create_directories(
-                    options.statistics_csv.parent_path(), directory_error);
+                    output_path.parent_path(), directory_error);
+            if(directory_error) {
+                return failure(
+                        BagAnalysisStatus::OutputError, 0U,
+                        "failed to create output directory: "
+                                + directory_error.message(),
+                        statistics_temporary, timing_temporary);
+            }
         }
-        if(directory_error) {
+        if(const auto path_error = validateOutputEntries(output_entries);
+           path_error.has_value())
+        {
             return failure(
-                    BagAnalysisStatus::OutputError, 0U,
-                    "failed to create statistics output directory: "
-                            + directory_error.message(),
+                    BagAnalysisStatus::OutputError, 0U, *path_error,
                     statistics_temporary, timing_temporary);
         }
-        if(!options.timing_csv.empty() && !options.timing_csv.parent_path().empty()) {
-            std::filesystem::create_directories(
-                    options.timing_csv.parent_path(), directory_error);
-        }
-        if(directory_error) {
-            return failure(
-                    BagAnalysisStatus::OutputError, 0U,
-                    "failed to create timing output directory: "
-                            + directory_error.message(),
-                    statistics_temporary, timing_temporary);
-        }
+        TemporaryOutputGuard output_guard(
+                {statistics_temporary, timing_temporary, component_temporary,
+                 membership_temporary});
 
         std::ofstream statistics(statistics_temporary, std::ios::binary | std::ios::trunc);
         if(!statistics) {
@@ -304,6 +855,28 @@ namespace SwarmController::Test {
             timing.imbue(std::locale::classic());
             timing << std::fixed << std::setprecision(9);
             writeTimingHeader(timing);
+        }
+
+        std::ofstream components;
+        std::ofstream membership;
+        if(component_detail_requested) {
+            components.open(
+                    component_temporary, std::ios::binary | std::ios::trunc);
+            membership.open(
+                    membership_temporary, std::ios::binary | std::ios::trunc);
+            if(!components || !membership) {
+                statistics.close();
+                timing.close();
+                return failure(
+                        BagAnalysisStatus::OutputError, 0U,
+                        "failed to open component audit output",
+                        statistics_temporary, timing_temporary);
+            }
+            components.imbue(std::locale::classic());
+            components << std::fixed << std::setprecision(9);
+            membership.imbue(std::locale::classic());
+            writeComponentHeader(components);
+            writeMembershipHeader(membership);
         }
 
         auto detector_config = options.detector_config;
@@ -421,7 +994,36 @@ namespace SwarmController::Test {
                                 + std::to_string(frame_index),
                         statistics_temporary, timing_temporary);
             }
-            const FrontierDetectionResult detection = detector->detect(*raw_tree);
+            FrontierDetectionResult detection;
+            std::optional<FrontierDetectionTrace> component_trace;
+            if(component_detail_requested) {
+                TracedFrontierDetectionResult traced =
+                        detector->detectWithTrace(*raw_tree);
+                detection = std::move(traced.result);
+                component_trace = std::move(traced.trace);
+                const auto trace_error =
+                        componentTraceError(detection, *component_trace);
+                if(trace_error.has_value()) {
+                    statistics.close();
+                    timing.close();
+                    components.close();
+                    membership.close();
+                    return failure(
+                            BagAnalysisStatus::IncompleteTrace, frame_index,
+                            "incomplete component trace at frame "
+                                    + std::to_string(frame_index) + ": "
+                                    + *trace_error,
+                            statistics_temporary, timing_temporary);
+                }
+                for(const FrontierComponentTrace & component : component_trace->components) {
+                    writeComponentRow(
+                            components, frame_index, bag_message->recv_timestamp, message,
+                            component);
+                    writeMembershipRows(membership, frame_index, component);
+                }
+            } else {
+                detection = detector->detect(*raw_tree);
+            }
             writeStatisticsRow(
                     statistics, frame_index, bag_message->recv_timestamp, message,
                     detection);
@@ -435,6 +1037,8 @@ namespace SwarmController::Test {
 
         statistics.close();
         timing.close();
+        components.close();
+        membership.close();
         if(!statistics) {
             return failure(
                     BagAnalysisStatus::OutputError, frame_index,
@@ -447,21 +1051,19 @@ namespace SwarmController::Test {
                     "failed while writing timing output", statistics_temporary,
                     timing_temporary);
         }
+        if(component_detail_requested && (!components || !membership)) {
+            return failure(
+                    BagAnalysisStatus::OutputError, frame_index,
+                    "failed while writing component audit output",
+                    statistics_temporary, timing_temporary);
+        }
         std::string commit_reason;
-        if(!commitOutput(
-                   statistics_temporary, options.statistics_csv, commit_reason))
-        {
+        if(!commitOutputs(output_entries, commit_reason)) {
             return failure(
                     BagAnalysisStatus::OutputError, frame_index,
                     std::move(commit_reason), statistics_temporary, timing_temporary);
         }
-        if(!timing_temporary.empty()
-           && !commitOutput(timing_temporary, options.timing_csv, commit_reason))
-        {
-            return failure(
-                    BagAnalysisStatus::OutputError, frame_index,
-                    std::move(commit_reason), statistics_temporary, timing_temporary);
-        }
+        output_guard.release();
         return BagAnalysisResult {BagAnalysisStatus::Success, frame_index, {}};
     }
 
