@@ -96,6 +96,7 @@ install(
         include/swarm_controller/ExplorationTask.hpp
         include/swarm_controller/GlobalFrontierDetector.hpp
         include/swarm_controller/GlobalTaskAllocator.hpp
+        include/swarm_controller/LatestSnapshotSlot.hpp
         include/swarm_controller/TaskLeaseTracker.hpp
         include/swarm_controller/SingleDroneExplorer.hpp
         include/swarm_controller/SingleDroneExplorerNode.hpp
@@ -370,6 +371,13 @@ if(BUILD_TESTING)
         )
     endif()
 
+    ament_add_gtest(TestLatestSnapshotSlot test/TestLatestSnapshotSlot.cpp)
+    if(TARGET TestLatestSnapshotSlot)
+        target_include_directories(TestLatestSnapshotSlot PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
     ament_add_gtest(TestSingleDroneExplorer test/TestSingleDroneExplorer.cpp)
     if(TARGET TestSingleDroneExplorer)
         target_link_libraries(TestSingleDroneExplorer swarm_exploration)
@@ -432,6 +440,21 @@ if(BUILD_TESTING)
     )
     add_launch_test(
             test/test_global_task_allocator_stale_replay.py
+            RUNNER "${RUNNER}"
+            TIMEOUT 120
+    )
+    add_launch_test(
+            test/test_global_task_allocator_pipeline.py
+            RUNNER "${RUNNER}"
+            TIMEOUT 120
+    )
+    add_launch_test(
+            test/test_global_task_allocator_pipeline_load.py
+            RUNNER "${RUNNER}"
+            TIMEOUT 120
+    )
+    add_launch_test(
+            test/test_global_task_allocator_clock_reset.py
             RUNNER "${RUNNER}"
             TIMEOUT 120
     )

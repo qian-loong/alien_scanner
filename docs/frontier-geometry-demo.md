@@ -456,8 +456,8 @@ Demo 能验证确定性单机 raycast、OctoMap 插入、固定短段 known-free
 ## 9. 验证记录
 
 - `colcon build --packages-select drone_scanner swarm_controller --symlink-install`：通过；
-- `swarm_controller` CTest：`24/24` 通过，其中包含九阶段话题、QoS、晚加入缓存、快照审计和阶段
-  Namespace 的 launch integration test；
+- `swarm_controller` CTest：`28/28` 通过，合计 `238 tests, 0 errors, 0 failures`；其中包含九阶段话题、
+  QoS、晚加入缓存、快照审计、阶段 Namespace 和 allocator 后台执行管线的 launch integration test；
 - `drone_scanner` CTest：`10/10` 通过；包级 `flake8` 仍报告既有
   `fake_odom_launch.py` 4 处 `E501`，不属于本 Demo 改动；
 - 默认 launch 提供九个 reliable + transient-local 阶段话题，每个话题一个 publisher；V2 节点共发布

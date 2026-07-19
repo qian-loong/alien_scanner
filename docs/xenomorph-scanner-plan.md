@@ -234,6 +234,8 @@ ROS-free `PeerStateTracker` 管理独立 position/goal 时效；全候选被 pee
 **3-9 目标：** 在 `/global_map` 上提取经单环多次观测支撑的稳定 2.5D frontier 区域，结合
 各机本机 OctoMap 的 first-hop 可执行性做唯一任务所有权分配；入口或证据不足时保持 3-7
 本地探索。任务只引导本机 known-free 短跳，不引入长距离 A*，也不把全局图当作本机安全图。
+主体、support-v2、Component 语义审计和 allocator freshness 后台执行管线已实现并通过自动测试与
+代码复核；Component 行为修改尚未选定，3-9 仍待真实三机运行人工验收，因此进度表保持未勾选。
 
 **跨 Phase 契约（摘要）：**
 
@@ -500,8 +502,8 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 [ ] 5. （可选）ros2 bag 录制 + README 演示 GIF
 ```
 
-**当前进度：** Phase 1、Phase 2 已完成；Phase 3 的 3-1～3-8 已完成，下一步为 3-9
-全局 frontier 多机任务分配，随后执行 3-10 一键验收（见
+**当前进度：** Phase 1、Phase 2 已完成；Phase 3 的 3-1～3-8 已完成，3-9 已完成实现、自动测试与
+代码复核，待真实三机运行人工验收；验收通过后执行 3-10 一键入口与总体验收（见
 [`docs/phases/phase-03-swarm.md`](phases/phase-03-swarm.md)）。
 
 ---
@@ -529,5 +531,5 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 | 字段 | 值 |
 |------|-----|
 | 创建日期 | 2026-07-06 |
-| 最后更新 | 2026-07-15 |
-| 状态 | Phase 1–2 已完成；Phase 3 进行中（3-1～3-8 已完成）；分步细节见 `docs/phases/` |
+| 最后更新 | 2026-07-19 |
+| 状态 | Phase 1–2 已完成；Phase 3 进行中（3-1～3-8 已完成；3-9 待真实运行人工验收）；分步细节见 `docs/phases/` |

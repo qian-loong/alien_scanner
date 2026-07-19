@@ -1,16 +1,22 @@
 #include "swarm_controller/GlobalFrontierDetector.hpp"
 #include "swarm_controller/GlobalTaskAllocator.hpp"
+#include "swarm_controller/LatestSnapshotSlot.hpp"
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <condition_variable>
+#include <exception>
+#include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -37,10 +43,24 @@ namespace SwarmController {
 
         using SteadyClock = std::chrono::steady_clock;
 
-        tf2::TimePoint timePointFromStamp(const builtin_interfaces::msg::Time & stamp)
+        std::optional<std::int64_t> positiveStampNanoseconds(
+                const builtin_interfaces::msg::Time & stamp)
         {
-            return tf2::TimePoint(
-                    std::chrono::seconds(stamp.sec) + std::chrono::nanoseconds(stamp.nanosec));
+            if(stamp.sec < 0 || stamp.nanosec >= 1'000'000'000U) {
+                return {};
+            }
+            const std::int64_t nanoseconds =
+                    static_cast<std::int64_t>(stamp.sec) * 1'000'000'000LL
+                    + static_cast<std::int64_t>(stamp.nanosec);
+            if(nanoseconds <= 0) {
+                return {};
+            }
+            return nanoseconds;
+        }
+
+        tf2::TimePoint timePointFromNanoseconds(const std::int64_t stamp_ns)
+        {
+            return tf2::TimePoint(std::chrono::nanoseconds(stamp_ns));
         }
 
         geometry_msgs::msg::Point point(const Point3f & value)
@@ -86,33 +106,88 @@ namespace SwarmController {
                    <= static_cast<std::int64_t>(std::llround(timeout_seconds * 1.0e9));
 
         }
-        std::shared_ptr<octomap::OcTree> decodeMap(
+        enum class MapProcessingStatus {
+            Accepted,
+            Invalid,
+            ResourceLimit,
+        };
+
+        struct DecodedMapResult {
+            MapProcessingStatus status {MapProcessingStatus::Invalid};
+            std::shared_ptr<octomap::OcTree> map;
+            std::size_t leaf_count {};
+            std::uint64_t input_sequence {};
+            std::string reason;
+        };
+
+        struct MapProcessingResult {
+            MapProcessingStatus status {MapProcessingStatus::Invalid};
+            std::shared_ptr<octomap::OcTree> map;
+            FrontierDetectionResult detection;
+            std::size_t leaf_count {};
+            std::uint64_t input_sequence {};
+            std::string reason;
+
+            bool accepted() const
+            {
+                return status == MapProcessingStatus::Accepted;
+            }
+        };
+
+        DecodedMapResult decodeMap(
                 const octomap_msgs::msg::Octomap & message,
                 const std::string & map_frame, const double resolution,
-                std::string & reason)
+                const std::size_t max_serialized_bytes,
+                const std::size_t max_voxels)
         {
+            DecodedMapResult result;
             if(message.header.frame_id != map_frame) {
-                reason = "map frame mismatch";
-                return {};
+                result.reason = "map frame mismatch";
+                return result;
             }
             if(message.binary) {
-                reason = "binary Octomap is not supported";
-                return {};
+                result.reason = "binary Octomap is not supported";
+                return result;
             }
-            std::unique_ptr<octomap::AbstractOcTree> abstract(
-                    octomap_msgs::fullMsgToMap(message));
-            auto * tree = dynamic_cast<octomap::OcTree *>(abstract.get());
-            if(tree == nullptr) {
-                reason = "message does not contain an OcTree";
-                return {};
+            if(message.data.size() > max_serialized_bytes) {
+                result.status = MapProcessingStatus::ResourceLimit;
+                result.reason = "serialized map exceeds byte limit";
+                return result;
             }
-            if(std::fabs(tree->getResolution() - resolution) > 1.0e-5) {
-                reason = "Octomap resolution mismatch";
-                return {};
+            try {
+                std::unique_ptr<octomap::AbstractOcTree> abstract(
+                        octomap_msgs::fullMsgToMap(message));
+                auto * tree = dynamic_cast<octomap::OcTree *>(abstract.get());
+                if(tree == nullptr) {
+                    result.reason = "message does not contain an OcTree";
+                    return result;
+                }
+                if(std::fabs(tree->getResolution() - resolution) > 1.0e-5) {
+                    result.reason = "Octomap resolution mismatch";
+                    return result;
+                }
+                result.leaf_count = tree->getNumLeafNodes();
+                if(result.leaf_count > max_voxels) {
+                    result.status = MapProcessingStatus::ResourceLimit;
+                    result.reason = "decoded map exceeds leaf voxel limit";
+                    return result;
+                }
+                abstract.release();
+                result.map = std::shared_ptr<octomap::OcTree>(tree);
+                result.status = MapProcessingStatus::Accepted;
+                return result;
+            } catch(const std::bad_alloc &) {
+                result.status = MapProcessingStatus::ResourceLimit;
+                result.reason = "Octomap deserialization allocation exceeded resource limit";
+                return result;
+            } catch(const std::exception & exception) {
+                result.reason = std::string("Octomap deserialization failed: ")
+                                + exception.what();
+                return result;
+            } catch(...) {
+                result.reason = "Octomap deserialization failed with an unknown exception";
+                return result;
             }
-            abstract.release();
-            reason.clear();
-            return std::shared_ptr<octomap::OcTree>(tree);
         }
 
     }// namespace
@@ -124,6 +199,7 @@ namespace SwarmController {
             : Node("global_task_allocator")
             , steady_start_(SteadyClock::now())
             , allocator_epoch_(makeAllocatorEpoch())
+            , global_snapshot_slot_(SnapshotStampPolicy::NonDecreasing)
         {
             declareParameters();
             loadConfiguration();
@@ -141,24 +217,54 @@ namespace SwarmController {
             const auto period = std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::duration<double>(1.0 / allocation_rate_hz_));
             timer_ = create_wall_timer(period, [this]() { onTimer(); });
+            worker_ = std::thread([this]() { workerLoop(); });
             RCLCPP_INFO(
                     get_logger(), "global_task_allocator: %zu drones at %.2f Hz epoch=%llu",
                     drones_.size(), allocation_rate_hz_,
                     static_cast<unsigned long long>(allocator_epoch_));
         }
 
+        ~GlobalTaskAllocatorNode() override
+        {
+            stopWorker();
+        }
+
     private:
+        using MapMessage = octomap_msgs::msg::Octomap;
+
+        struct MapSnapshot {
+            MapMessage::SharedPtr message;
+            std::uint64_t input_sequence {};
+        };
+
+        using GlobalSnapshotSlot = LatestSnapshotSlot<
+                MapSnapshot, MapProcessingResult>;
+        using LocalSnapshotSlot = LatestSnapshotSlot<
+                MapSnapshot, DecodedMapResult>;
+
         struct DroneTrack {
             std::string id;
             std::string prefix;
-            octomap_msgs::msg::Octomap::SharedPtr pending_map;
-            std::int64_t pending_map_stamp_ns {};
+            LocalSnapshotSlot snapshot_slot {SnapshotStampPolicy::StrictlyIncreasing};
             std::shared_ptr<octomap::OcTree> local_map;
             std::int64_t local_map_stamp_ns {};
             double local_map_receive_seconds {-1.0};
+            std::uint64_t local_map_applied_revision {};
+            std::uint64_t local_map_received_count {};
+            std::uint64_t local_map_invalid_envelope_count {};
+            std::uint64_t local_map_regressed_count {};
+            std::uint64_t local_map_duplicate_count {};
+            std::uint64_t local_map_resource_rejection_count {};
+            std::uint64_t local_map_failure_count {};
+            std::size_t local_map_leaf_count {};
+            std::uint64_t local_map_input_reason_sequence {};
+            std::string local_map_reason;
             nav_msgs::msg::Odometry odom;
+            std::int64_t odom_stamp_ns {};
             bool has_odom {false};
             double odom_receive_seconds {-1.0};
+            std::uint64_t odom_invalid_stamp_count {};
+            std::string odom_reason;
             rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr map_subscription;
             rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscription;
             rclcpp::Publisher<swarm_controller_interfaces::msg::ExplorationTask>::SharedPtr
@@ -174,6 +280,15 @@ namespace SwarmController {
             declare_parameter("task.lease", 3.0);
             declare_parameter("global_map.stale_timeout", 5.0);
             declare_parameter("global_map.diagnostics_timeout", 5.0);
+            declare_parameter(
+                    "global_map.max_serialized_bytes_per_source",
+                    std::int64_t {67'108'864});
+            declare_parameter(
+                    "global_map.max_voxels_per_source",
+                    std::int64_t {5'000'000});
+            declare_parameter(
+                    "global_map.max_global_voxels",
+                    std::int64_t {10'000'000});
             declare_parameter("drone.odom_timeout", 2.0);
             declare_parameter("drone.local_map_timeout", 5.0);
 
@@ -224,6 +339,11 @@ namespace SwarmController {
             if(value <= 0) {
                 throw std::invalid_argument(std::string(name) + " must be positive");
             }
+            if(static_cast<std::uint64_t>(value)
+               > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()))
+            {
+                throw std::invalid_argument(std::string(name) + " exceeds size_t range");
+            }
             return static_cast<std::size_t>(value);
         }
 
@@ -235,6 +355,16 @@ namespace SwarmController {
             return static_cast<std::size_t>(value);
         }
 
+        static std::size_t checkedMultiply(
+                const std::size_t lhs, const std::size_t rhs,
+                const char * name)
+        {
+            if(lhs != 0U && rhs > std::numeric_limits<std::size_t>::max() / lhs) {
+                throw std::invalid_argument(std::string(name) + " overflows size_t");
+            }
+            return lhs * rhs;
+        }
+
         void loadConfiguration()
         {
             map_frame_ = get_parameter("map_frame").as_string();
@@ -244,6 +374,18 @@ namespace SwarmController {
             global_map_timeout_seconds_ = get_parameter("global_map.stale_timeout").as_double();
             diagnostics_timeout_seconds_ =
                     get_parameter("global_map.diagnostics_timeout").as_double();
+            max_serialized_bytes_per_source_ = positiveSize(
+                    get_parameter("global_map.max_serialized_bytes_per_source").as_int(),
+                    "global_map.max_serialized_bytes_per_source");
+            max_voxels_per_source_ = positiveSize(
+                    get_parameter("global_map.max_voxels_per_source").as_int(),
+                    "global_map.max_voxels_per_source");
+            max_global_voxels_ = positiveSize(
+                    get_parameter("global_map.max_global_voxels").as_int(),
+                    "global_map.max_global_voxels");
+            max_global_serialized_bytes_ = checkedMultiply(
+                    drone_namespaces_.size(), max_serialized_bytes_per_source_,
+                    "drone count * global_map.max_serialized_bytes_per_source");
             odom_timeout_seconds_ = get_parameter("drone.odom_timeout").as_double();
             local_map_timeout_seconds_ = get_parameter("drone.local_map_timeout").as_double();
             const double resolution = get_parameter("resolution").as_double();
@@ -382,20 +524,98 @@ namespace SwarmController {
                 drones_[index].map_subscription = create_subscription<octomap_msgs::msg::Octomap>(
                         drones_[index].prefix + "/octomap", map_qos,
                         [this, index](const octomap_msgs::msg::Octomap::SharedPtr message) {
-                            std::lock_guard<std::mutex> lock(mutex_);
-                            const std::int64_t stamp = rclcpp::Time(message->header.stamp).nanoseconds();
-                            if(stamp > drones_[index].pending_map_stamp_ns) {
-                                drones_[index].pending_map = message;
-                                drones_[index].pending_map_stamp_ns = stamp;
+                            bool notify = false;
+                            const std::int64_t now_ros_ns =
+                                    get_clock()->now().nanoseconds();
+                            {
+                                std::lock_guard<std::mutex> lock(mutex_);
+                                if(stopping_ || message == nullptr) {
+                                    return;
+                                }
+                                observeRosClockLocked(now_ros_ns);
+                                DroneTrack & track = drones_.at(index);
+                                ++track.local_map_received_count;
+                                const std::uint64_t input_sequence =
+                                        track.local_map_received_count;
+                                const auto stamp = positiveStampNanoseconds(
+                                        message->header.stamp);
+                                if(!stamp.has_value() || *stamp > now_ros_ns
+                                   || message->data.size() > max_serialized_bytes_per_source_)
+                                {
+                                    ++track.local_map_invalid_envelope_count;
+                                    if(message->data.size() > max_serialized_bytes_per_source_) {
+                                        ++track.local_map_resource_rejection_count;
+                                        track.local_map_reason =
+                                                "serialized map exceeds byte limit";
+                                    } else if(!stamp.has_value()) {
+                                        track.local_map_reason =
+                                                "observation stamp must be positive";
+                                    } else if(*stamp > now_ros_ns) {
+                                        track.local_map_reason =
+                                                "observation stamp is in the future";
+                                    } else {
+                                        track.local_map_reason = "invalid map envelope";
+                                    }
+                                    ++track.local_map_failure_count;
+                                    track.local_map_input_reason_sequence = input_sequence;
+                                    return;
+                                }
+                                try {
+                                    const SnapshotSubmitStatus status =
+                                            track.snapshot_slot.submit(
+                                                    MapSnapshot {message, input_sequence},
+                                                    *stamp, monotonicNow());
+                                    if(status == SnapshotSubmitStatus::RejectedRegressed) {
+                                        ++track.local_map_regressed_count;
+                                    } else if(status
+                                              == SnapshotSubmitStatus::RejectedDuplicate)
+                                    {
+                                        ++track.local_map_duplicate_count;
+                                    } else {
+                                        notify = true;
+                                    }
+                                } catch(const std::exception & exception) {
+                                    ++track.local_map_failure_count;
+                                    track.local_map_input_reason_sequence = input_sequence;
+                                    track.local_map_reason =
+                                            std::string("local snapshot admission failed: ")
+                                            + exception.what();
+                                } catch(...) {
+                                    ++track.local_map_failure_count;
+                                    track.local_map_input_reason_sequence = input_sequence;
+                                    track.local_map_reason =
+                                            "local snapshot admission failed with an unknown exception";
+                                }
+                            }
+                            if(notify) {
+                                worker_cv_.notify_one();
                             }
                         });
                 drones_[index].odom_subscription = create_subscription<nav_msgs::msg::Odometry>(
                         drones_[index].prefix + "/odom", rclcpp::QoS(10),
                         [this, index](const nav_msgs::msg::Odometry::SharedPtr message) {
+                            const std::int64_t now_ros_ns =
+                                    get_clock()->now().nanoseconds();
                             std::lock_guard<std::mutex> lock(mutex_);
-                            drones_[index].odom = *message;
-                            drones_[index].has_odom = true;
-                            drones_[index].odom_receive_seconds = monotonicNow();
+                            if(stopping_ || message == nullptr) {
+                                return;
+                            }
+                            observeRosClockLocked(now_ros_ns);
+                            DroneTrack & track = drones_[index];
+                            const auto stamp = positiveStampNanoseconds(
+                                    message->header.stamp);
+                            if(!stamp.has_value() || *stamp > now_ros_ns) {
+                                ++track.odom_invalid_stamp_count;
+                                track.odom_reason = !stamp.has_value()
+                                                            ? "observation stamp must be positive"
+                                                            : "observation stamp is in the future";
+                                return;
+                            }
+                            track.odom = *message;
+                            track.odom_stamp_ns = *stamp;
+                            track.has_odom = true;
+                            track.odom_receive_seconds = monotonicNow();
+                            track.odom_reason.clear();
                         });
                 drones_[index].task_publisher = create_publisher<
                         swarm_controller_interfaces::msg::ExplorationTask>(
@@ -409,28 +629,77 @@ namespace SwarmController {
             global_map_subscription_ = create_subscription<octomap_msgs::msg::Octomap>(
                     "/global_map", qos,
                     [this](const octomap_msgs::msg::Octomap::SharedPtr message) {
-                        std::lock_guard<std::mutex> lock(mutex_);
-                        const std::int64_t stamp = rclcpp::Time(message->header.stamp).nanoseconds();
-                        ++global_map_received_count_;
-                        // The merger stamp is the maximum source observation stamp. A slower
-                        // source can change the merged tree without advancing that maximum.
-                        if(stamp >= pending_global_stamp_ns_) {
-                            if(stamp == pending_global_stamp_ns_
-                               && pending_global_stamp_ns_ > 0)
-                            {
-                                ++global_map_same_stamp_count_;
+                        bool notify = false;
+                        const std::int64_t now_ros_ns =
+                                get_clock()->now().nanoseconds();
+                        {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            if(stopping_ || message == nullptr) {
+                                return;
                             }
-                            pending_global_map_ = message;
-                            pending_global_stamp_ns_ = stamp;
+                            observeRosClockLocked(now_ros_ns);
+                            const auto stamp = positiveStampNanoseconds(
+                                    message->header.stamp);
+                            ++global_map_received_count_;
+                            const std::uint64_t input_sequence =
+                                    global_map_received_count_;
+                            if(!stamp.has_value() || *stamp > now_ros_ns
+                               || message->data.size() > max_global_serialized_bytes_)
+                            {
+                                ++global_map_invalid_envelope_count_;
+                                if(message->data.size() > max_global_serialized_bytes_) {
+                                    ++global_map_resource_rejection_count_;
+                                    global_map_input_reason_ =
+                                            "serialized map exceeds byte limit";
+                                } else if(!stamp.has_value()) {
+                                    global_map_input_reason_ =
+                                            "observation stamp must be positive";
+                                } else if(*stamp > now_ros_ns) {
+                                    global_map_input_reason_ =
+                                            "observation stamp is in the future";
+                                } else {
+                                    global_map_input_reason_ = "invalid map envelope";
+                                }
+                                global_map_input_reason_sequence_ = input_sequence;
+                                return;
+                            }
+                            try {
+                                const SnapshotSubmitStatus status =
+                                        global_snapshot_slot_.submit(
+                                                MapSnapshot {message, input_sequence},
+                                                *stamp, monotonicNow());
+                                if(status == SnapshotSubmitStatus::RejectedRegressed) {
+                                    ++global_map_regressed_stamp_count_;
+                                } else {
+                                    if(status == SnapshotSubmitStatus::SameStampAccepted) {
+                                        ++global_map_same_stamp_count_;
+                                    }
+                                    notify = true;
+                                }
+                            } catch(const std::exception & exception) {
+                                ++global_map_worker_failure_count_;
+                                global_map_input_reason_sequence_ = input_sequence;
+                                global_map_input_reason_ =
+                                        std::string("global snapshot admission failed: ")
+                                        + exception.what();
+                            } catch(...) {
+                                ++global_map_worker_failure_count_;
+                                global_map_input_reason_sequence_ = input_sequence;
+                                global_map_input_reason_ =
+                                        "global snapshot admission failed with an unknown exception";
+                            }
                         }
-                        else {
-                            ++global_map_regressed_stamp_count_;
+                        if(notify) {
+                            worker_cv_.notify_one();
                         }
                     });
             global_diagnostics_subscription_ = create_subscription<
                     diagnostic_msgs::msg::DiagnosticArray>(
                     "/global_map_diagnostics", qos,
                     [this](const diagnostic_msgs::msg::DiagnosticArray::SharedPtr message) {
+                        if(message == nullptr) {
+                            return;
+                        }
                         bool healthy = false;
                         for(const auto & status : message->status) {
                             if(status.name == "global_map_merger") {
@@ -451,12 +720,71 @@ namespace SwarmController {
                                 }
                             }
                         }
+                        const std::int64_t now_ros_ns =
+                                get_clock()->now().nanoseconds();
                         std::lock_guard<std::mutex> lock(mutex_);
+                        if(stopping_) {
+                            return;
+                        }
+                        observeRosClockLocked(now_ros_ns);
+                        const auto stamp = positiveStampNanoseconds(
+                                message->header.stamp);
+                        if(!stamp.has_value() || *stamp > now_ros_ns) {
+                            ++global_diagnostics_invalid_stamp_count_;
+                            global_diagnostics_healthy_ = false;
+                            global_diagnostics_reason_ = !stamp.has_value()
+                                                                 ? "observation stamp must be positive"
+                                                                 : "observation stamp is in the future";
+                            return;
+                        }
                         global_diagnostics_healthy_ = healthy;
-                        global_diagnostics_stamp_ns_ =
-                                rclcpp::Time(message->header.stamp).nanoseconds();
+                        global_diagnostics_stamp_ns_ = *stamp;
                         global_diagnostics_receive_seconds_ = monotonicNow();
+                        global_diagnostics_reason_.clear();
                     });
+        }
+
+        void observeRosClockLocked(const std::int64_t now_ros_ns)
+        {
+            if(now_ros_ns <= 0) {
+                return;
+            }
+            if(last_ros_now_ns_ > 0 && now_ros_ns < last_ros_now_ns_) {
+                ++ros_clock_reset_count_;
+                global_snapshot_slot_.resetStampWatermark();
+                global_map_.reset();
+                global_map_stamp_ns_ = 0;
+                global_map_receive_seconds_ = -1.0;
+                global_map_applied_revision_ = 0U;
+                global_map_leaf_count_ = 0U;
+                regions_.clear();
+                global_map_input_reason_sequence_ = global_map_received_count_;
+                global_map_input_reason_ =
+                        "ROS clock moved backwards; waiting for a fresh global map";
+                global_diagnostics_healthy_ = false;
+                global_diagnostics_stamp_ns_ = 0;
+                global_diagnostics_receive_seconds_ = -1.0;
+                global_diagnostics_reason_ =
+                        "ROS clock moved backwards; waiting for fresh diagnostics";
+                for(DroneTrack & track : drones_) {
+                    track.snapshot_slot.resetStampWatermark();
+                    track.local_map.reset();
+                    track.local_map_stamp_ns = 0;
+                    track.local_map_receive_seconds = -1.0;
+                    track.local_map_applied_revision = 0U;
+                    track.local_map_leaf_count = 0U;
+                    track.local_map_input_reason_sequence =
+                            track.local_map_received_count;
+                    track.local_map_reason =
+                            "ROS clock moved backwards; waiting for a fresh local map";
+                    track.has_odom = false;
+                    track.odom_stamp_ns = 0;
+                    track.odom_receive_seconds = -1.0;
+                    track.odom_reason =
+                            "ROS clock moved backwards; waiting for fresh odometry";
+                }
+            }
+            last_ros_now_ns_ = now_ros_ns;
         }
 
         double monotonicNow() const
@@ -464,7 +792,9 @@ namespace SwarmController {
             return std::chrono::duration<double>(SteadyClock::now() - steady_start_).count();
         }
 
-        bool transformOdometry(const nav_msgs::msg::Odometry & odom, Pose3D & pose)
+        bool transformOdometry(
+                const nav_msgs::msg::Odometry & odom,
+                const std::int64_t stamp_ns, Pose3D & pose)
         {
             geometry_msgs::msg::PoseStamped source;
             source.header = odom.header;
@@ -477,7 +807,7 @@ namespace SwarmController {
                 try {
                     const auto transform = tf_buffer_->lookupTransform(
                             map_frame_, source.header.frame_id,
-                            timePointFromStamp(source.header.stamp), tf2::durationFromSec(0.0));
+                            timePointFromNanoseconds(stamp_ns), tf2::durationFromSec(0.0));
                     tf2::doTransform(source, mapped, transform);
                 } catch(const tf2::TransformException &) {
                     return false;
@@ -495,81 +825,370 @@ namespace SwarmController {
                    && std::isfinite(pose.position.z) && std::isfinite(pose.yaw);
         }
 
-        void processPendingMaps(double now_seconds)
+        MapProcessingResult processGlobalMap(const MapMessage & message)
         {
-            octomap_msgs::msg::Octomap::SharedPtr global;
-            std::vector<octomap_msgs::msg::Octomap::SharedPtr> local(drones_.size());
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                global = std::move(pending_global_map_);
-                for(std::size_t index = 0U; index < drones_.size(); ++index) {
-                    local[index] = std::move(drones_[index].pending_map);
-                }
+            MapProcessingResult result;
+            const DecodedMapResult decoded = decodeMap(
+                    message, map_frame_, detector_config_.resolution,
+                    max_global_serialized_bytes_, max_global_voxels_);
+            result.status = decoded.status;
+            result.map = decoded.map;
+            result.leaf_count = decoded.leaf_count;
+            result.reason = decoded.reason;
+            if(!decoded.map) {
+                result.detection.status =
+                        decoded.status == MapProcessingStatus::ResourceLimit
+                                ? FrontierDetectionStatus::ResourceLimit
+                                : FrontierDetectionStatus::Invalid;
+                result.detection.reason = decoded.reason;
+                return result;
             }
-            if(global) {
-                std::string reason;
-                auto map = decodeMap(*global, map_frame_, detector_config_.resolution, reason);
-                if(map) {
-                    const FrontierDetectionResult detection = detector_->detect(*map);
-                    detector_status_ = detection.status;
-                    detector_diagnostics_ = detection.diagnostics;
-                    vertical_rejected_columns_ = detection.vertical_rejected_columns;
-                    scanned_free_voxels_ = detection.scanned_free_voxels;
-                    support_rejected_columns_ = detection.support_rejected_columns;
-                    raw_frontier_columns_ = detection.raw_columns;
-                    supported_frontier_columns_ = detection.supported_columns;
-                    detected_region_count_ = detection.regions.size();
-                    if(detection.accepted()) {
-                        global_map_ = std::move(map);
-                        global_map_stamp_ns_ = rclcpp::Time(global->header.stamp).nanoseconds();
-                        regions_ = detection.regions;
-                        ++global_update_sequence_;
-                        global_map_receive_seconds_ = now_seconds;
-                        detector_reason_.clear();
-                    } else {
-                        detector_reason_ = detection.reason;
+            try {
+                result.detection = detector_->detect(*decoded.map);
+                result.status = result.detection.accepted()
+                                        ? MapProcessingStatus::Accepted
+                                        : (result.detection.status
+                                                           == FrontierDetectionStatus::ResourceLimit
+                                                   ? MapProcessingStatus::ResourceLimit
+                                                   : MapProcessingStatus::Invalid);
+                result.reason = result.detection.reason;
+                if(!result.detection.accepted() && result.reason.empty()) {
+                    result.reason = "frontier detector rejected the decoded map";
+                    result.detection.reason = result.reason;
+                }
+            } catch(const std::bad_alloc &) {
+                result.status = MapProcessingStatus::ResourceLimit;
+                result.reason = "frontier detection allocation exceeded resource limit";
+                result.detection.status = FrontierDetectionStatus::ResourceLimit;
+                result.detection.reason = result.reason;
+                result.map.reset();
+            } catch(const std::exception & exception) {
+                result.status = MapProcessingStatus::Invalid;
+                result.reason = std::string("frontier detection failed: ")
+                                + exception.what();
+                result.detection.status = FrontierDetectionStatus::Invalid;
+                result.detection.reason = result.reason;
+                result.map.reset();
+            } catch(...) {
+                result.status = MapProcessingStatus::Invalid;
+                result.reason = "frontier detection failed with an unknown exception";
+                result.detection.status = FrontierDetectionStatus::Invalid;
+                result.detection.reason = result.reason;
+                result.map.reset();
+            }
+            return result;
+        }
+
+        DecodedMapResult processLocalMap(const MapMessage & message)
+        {
+            return decodeMap(
+                    message, map_frame_, detector_config_.resolution,
+                    max_serialized_bytes_per_source_, max_voxels_per_source_);
+        }
+
+        bool workerHasWorkLocked() const
+        {
+            if(global_snapshot_slot_.hasProcessablePending()) {
+                return true;
+            }
+            return std::any_of(
+                    drones_.begin(), drones_.end(), [](const DroneTrack & track) {
+                        return track.snapshot_slot.hasProcessablePending();
+                    });
+        }
+
+        void workerLoop()
+        {
+            while(true) {
+                std::optional<GlobalSnapshotSlot::PendingItem> global_pending;
+                std::optional<LocalSnapshotSlot::PendingItem> local_pending;
+                std::size_t local_index = 0U;
+                {
+                    std::unique_lock<std::mutex> lock(mutex_);
+                    worker_cv_.wait(lock, [this]() {
+                        return stopping_ || workerHasWorkLocked();
+                    });
+                    if(stopping_) {
+                        return;
                     }
-                } else {
-                    detector_status_ = FrontierDetectionStatus::Invalid;
-                    detector_diagnostics_ = {};
-                    raw_frontier_columns_ = 0U;
-                    scanned_free_voxels_ = 0U;
-                    supported_frontier_columns_ = 0U;
-                    vertical_rejected_columns_ = 0U;
-                    support_rejected_columns_ = 0U;
-                    detected_region_count_ = 0U;
-                    detector_reason_ = reason;
+                    const std::size_t source_count = drones_.size() + 1U;
+                    for(std::size_t offset = 0U; offset < source_count; ++offset) {
+                        const std::size_t source =
+                                (worker_next_source_ + offset) % source_count;
+                        if(source == 0U
+                           && global_snapshot_slot_.hasProcessablePending())
+                        {
+                            global_pending = global_snapshot_slot_.takePending();
+                            worker_next_source_ = 1U % source_count;
+                            break;
+                        }
+                        if(source > 0U
+                           && drones_[source - 1U]
+                                      .snapshot_slot.hasProcessablePending())
+                        {
+                            local_index = source - 1U;
+                            local_pending = drones_[local_index].snapshot_slot.takePending();
+                            worker_next_source_ = (source + 1U) % source_count;
+                            break;
+                        }
+                    }
                 }
-            }
-            for(std::size_t index = 0U; index < local.size(); ++index) {
-                if(!local[index]) {
+
+                if(global_pending.has_value()) {
+                    MapProcessingResult result;
+                    try {
+                        result = processGlobalMap(*global_pending->payload.message);
+                    } catch(const std::exception & exception) {
+                        result.status = MapProcessingStatus::Invalid;
+                        result.reason = std::string("global map worker failed: ")
+                                        + exception.what();
+                    } catch(...) {
+                        result.status = MapProcessingStatus::Invalid;
+                        result.reason = "global map worker failed with an unknown exception";
+                    }
+                    result.input_sequence = global_pending->payload.input_sequence;
+                    const std::uint64_t input_sequence = result.input_sequence;
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    if(stopping_) {
+                        global_snapshot_slot_.clear();
+                        return;
+                    }
+                    try {
+                        global_snapshot_slot_.publishResult(
+                                global_pending->revision, global_pending->stamp_ns,
+                                global_pending->received_seconds, std::move(result));
+                    } catch(const std::exception & exception) {
+                        ++global_map_worker_failure_count_;
+                        if(input_sequence >= global_map_input_reason_sequence_) {
+                            global_map_input_reason_sequence_ = input_sequence;
+                            global_map_input_reason_ =
+                                    std::string("global result handoff failed: ")
+                                    + exception.what();
+                        }
+                        global_snapshot_slot_.clear();
+                    }
+                    worker_cv_.notify_one();
                     continue;
                 }
-                std::string reason;
-                auto map = decodeMap(
-                        *local[index], map_frame_, detector_config_.resolution, reason);
-                if(map) {
+
+                if(local_pending.has_value()) {
+                    DecodedMapResult result;
+                    try {
+                        result = processLocalMap(*local_pending->payload.message);
+                    } catch(const std::exception & exception) {
+                        result.reason = std::string("local map worker failed: ")
+                                        + exception.what();
+                    } catch(...) {
+                        result.reason = "local map worker failed with an unknown exception";
+                    }
+                    result.input_sequence = local_pending->payload.input_sequence;
+                    const std::uint64_t input_sequence = result.input_sequence;
                     std::lock_guard<std::mutex> lock(mutex_);
-                    drones_[index].local_map = std::move(map);
-                    drones_[index].local_map_stamp_ns =
-                            rclcpp::Time(local[index]->header.stamp).nanoseconds();
-                    drones_[index].local_map_receive_seconds = now_seconds;
+                    if(stopping_) {
+                        drones_[local_index].snapshot_slot.clear();
+                        return;
+                    }
+                    try {
+                        drones_[local_index].snapshot_slot.publishResult(
+                                local_pending->revision, local_pending->stamp_ns,
+                                local_pending->received_seconds, std::move(result));
+                    } catch(const std::exception & exception) {
+                        DroneTrack & track = drones_[local_index];
+                        ++track.local_map_failure_count;
+                        if(input_sequence >= track.local_map_input_reason_sequence) {
+                            track.local_map_input_reason_sequence = input_sequence;
+                            track.local_map_reason =
+                                    std::string("local result handoff failed: ")
+                                    + exception.what();
+                        }
+                        track.snapshot_slot.clear();
+                    }
+                    worker_cv_.notify_one();
                 }
             }
+        }
+
+        void applyReadyMaps()
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if(stopping_) {
+                return;
+            }
+
+            if(auto ready = global_snapshot_slot_.claimReady(); ready.has_value()) {
+                const std::uint64_t revision = ready->revision;
+                bool applied = false;
+                try {
+                    MapProcessingResult & processed = ready->payload;
+                    detector_status_ = processed.detection.status;
+                    detector_diagnostics_ = processed.detection.diagnostics;
+                    vertical_rejected_columns_ = processed.detection.vertical_rejected_columns;
+                    scanned_free_voxels_ = processed.detection.scanned_free_voxels;
+                    support_rejected_columns_ = processed.detection.support_rejected_columns;
+                    raw_frontier_columns_ = processed.detection.raw_columns;
+                    supported_frontier_columns_ = processed.detection.supported_columns;
+                    detected_region_count_ = processed.detection.regions.size();
+                    detector_reason_ = processed.reason;
+                    if(processed.accepted() && processed.detection.accepted()) {
+                        if(global_update_sequence_ == std::numeric_limits<std::uint64_t>::max()) {
+                            throw std::overflow_error("global update sequence exhausted");
+                        }
+                        global_map_ = processed.map;
+                        global_map_stamp_ns_ = ready->stamp_ns;
+                        global_map_receive_seconds_ = ready->received_seconds;
+                        regions_ = std::move(processed.detection.regions);
+                        ++global_update_sequence_;
+                        detector_reason_.clear();
+                        if(processed.input_sequence
+                           >= global_map_input_reason_sequence_)
+                        {
+                            global_map_input_reason_.clear();
+                            global_map_input_reason_sequence_ = 0U;
+                        }
+                        global_map_applied_revision_ = revision;
+                        global_map_leaf_count_ = processed.leaf_count;
+                        applied = true;
+                    } else {
+                        ++global_map_processing_failure_count_;
+                        if(processed.status == MapProcessingStatus::ResourceLimit) {
+                            ++global_map_resource_rejection_count_;
+                        }
+                        if(processed.input_sequence
+                           >= global_map_input_reason_sequence_)
+                        {
+                            global_map_input_reason_sequence_ = processed.input_sequence;
+                            global_map_input_reason_ = processed.reason;
+                        }
+                    }
+                } catch(const std::exception & exception) {
+                    ++global_map_worker_failure_count_;
+                    if(ready->payload.input_sequence
+                       >= global_map_input_reason_sequence_)
+                    {
+                        global_map_input_reason_sequence_ =
+                                ready->payload.input_sequence;
+                        global_map_input_reason_ =
+                                std::string("global result apply failed: ")
+                                + exception.what();
+                    }
+                } catch(...) {
+                    ++global_map_worker_failure_count_;
+                    if(ready->payload.input_sequence
+                       >= global_map_input_reason_sequence_)
+                    {
+                        global_map_input_reason_sequence_ =
+                                ready->payload.input_sequence;
+                        global_map_input_reason_ =
+                                "global result apply failed with an unknown exception";
+                    }
+                }
+                if(!global_snapshot_slot_.acknowledgeReady(revision, applied)) {
+                    ++global_map_worker_failure_count_;
+                    global_map_input_reason_ =
+                            "global result acknowledgement failed";
+                    global_map_input_reason_sequence_ =
+                            std::max(
+                                    global_map_input_reason_sequence_,
+                                    ready->payload.input_sequence);
+                    global_snapshot_slot_.clear();
+                }
+            }
+
+            for(std::size_t index = 0U; index < drones_.size(); ++index) {
+                auto ready = drones_[index].snapshot_slot.claimReady();
+                if(!ready.has_value()) {
+                    continue;
+                }
+                DroneTrack & track = drones_[index];
+                const std::uint64_t revision = ready->revision;
+                bool applied = false;
+                try {
+                    const DecodedMapResult & processed = ready->payload;
+                    if(processed.status == MapProcessingStatus::Accepted && processed.map) {
+                        track.local_map = processed.map;
+                        track.local_map_stamp_ns = ready->stamp_ns;
+                        track.local_map_receive_seconds = ready->received_seconds;
+                        track.local_map_applied_revision = revision;
+                        track.local_map_leaf_count = processed.leaf_count;
+                        if(processed.input_sequence
+                           >= track.local_map_input_reason_sequence)
+                        {
+                            track.local_map_reason.clear();
+                            track.local_map_input_reason_sequence = 0U;
+                        }
+                        applied = true;
+                    } else {
+                        ++track.local_map_failure_count;
+                        if(processed.status == MapProcessingStatus::ResourceLimit) {
+                            ++track.local_map_resource_rejection_count;
+                        }
+                        if(processed.input_sequence
+                           >= track.local_map_input_reason_sequence)
+                        {
+                            track.local_map_input_reason_sequence =
+                                    processed.input_sequence;
+                            track.local_map_reason = processed.reason;
+                        }
+                    }
+                } catch(const std::exception & exception) {
+                    ++track.local_map_failure_count;
+                    if(ready->payload.input_sequence
+                       >= track.local_map_input_reason_sequence)
+                    {
+                        track.local_map_input_reason_sequence =
+                                ready->payload.input_sequence;
+                        track.local_map_reason =
+                                std::string("local result apply failed: ")
+                                + exception.what();
+                    }
+                } catch(...) {
+                    ++track.local_map_failure_count;
+                    if(ready->payload.input_sequence
+                       >= track.local_map_input_reason_sequence)
+                    {
+                        track.local_map_input_reason_sequence =
+                                ready->payload.input_sequence;
+                        track.local_map_reason =
+                                "local result apply failed with an unknown exception";
+                    }
+                }
+                if(!track.snapshot_slot.acknowledgeReady(revision, applied)) {
+                    ++track.local_map_failure_count;
+                    track.local_map_reason = "local result acknowledgement failed";
+                    track.local_map_input_reason_sequence =
+                            std::max(
+                                    track.local_map_input_reason_sequence,
+                                    ready->payload.input_sequence);
+                    track.snapshot_slot.clear();
+                }
+            }
+            worker_cv_.notify_one();
         }
 
         void onTimer()
         {
             const std::int64_t now_ros_ns = get_clock()->now().nanoseconds();
             const double now = monotonicNow();
-            processPendingMaps(now);
-            GlobalAllocationInput input;
-            input.regions = regions_;
-            input.global_update_sequence = global_update_sequence_;
-            input.monotonic_time_seconds = now;
-            bool diagnostics_healthy = false;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
+                if(stopping_) {
+                    return;
+                }
+                observeRosClockLocked(now_ros_ns);
+            }
+            applyReadyMaps();
+            GlobalAllocationInput input;
+            input.monotonic_time_seconds = now;
+            bool diagnostics_healthy = false;
+            bool global_fresh = false;
+            std::vector<std::shared_ptr<octomap::OcTree>> local_map_holders;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if(stopping_) {
+                    return;
+                }
+                input.regions = regions_;
+                input.global_update_sequence = global_update_sequence_;
                 diagnostics_healthy = global_diagnostics_healthy_
                                       && global_diagnostics_receive_seconds_ >= 0.0
                                       && now - global_diagnostics_receive_seconds_
@@ -577,11 +1196,20 @@ namespace SwarmController {
                                       && freshStamp(
                                               global_diagnostics_stamp_ns_, now_ros_ns,
                                               diagnostics_timeout_seconds_);
+                global_fresh = global_map_ != nullptr
+                               && global_map_receive_seconds_ >= 0.0
+                               && now - global_map_receive_seconds_
+                                          <= global_map_timeout_seconds_
+                               && freshStamp(
+                                       global_map_stamp_ns_, now_ros_ns,
+                                       global_map_timeout_seconds_);
                 input.drones.reserve(drones_.size());
+                local_map_holders.reserve(drones_.size());
                 for(const DroneTrack & track : drones_) {
+                    local_map_holders.push_back(track.local_map);
                     DroneAllocationState state;
                     state.id = track.id;
-                    state.local_map = track.local_map.get();
+                    state.local_map = local_map_holders.back().get();
                     state.local_map_fresh = track.local_map != nullptr
                                             && now - track.local_map_receive_seconds
                                                        <= local_map_timeout_seconds_
@@ -592,27 +1220,48 @@ namespace SwarmController {
                                        && now - track.odom_receive_seconds
                                                   <= odom_timeout_seconds_
                                        && freshStamp(
-                                               rclcpp::Time(track.odom.header.stamp).nanoseconds(),
+                                               track.odom_stamp_ns,
                                                now_ros_ns, odom_timeout_seconds_);
-                    if(state.odom_fresh && !transformOdometry(track.odom, state.pose)) {
+                    if(state.odom_fresh
+                       && !transformOdometry(
+                               track.odom, track.odom_stamp_ns, state.pose))
+                    {
                         state.odom_fresh = false;
                     }
                     input.drones.push_back(state);
                 }
+                input.healthy = global_fresh && diagnostics_healthy
+                                && detector_reason_.empty()
+                                && global_map_input_reason_.empty();
             }
-            const bool global_fresh = global_map_ != nullptr
-                                      && global_map_receive_seconds_ >= 0.0
-                                      && now - global_map_receive_seconds_
-                                                 <= global_map_timeout_seconds_
-                                      && freshStamp(
-                                              global_map_stamp_ns_, now_ros_ns,
-                                              global_map_timeout_seconds_);
-            input.healthy = global_fresh && diagnostics_healthy
-                            && detector_reason_.empty();
             last_result_ = allocator_->update(input);
             publishTasks(last_result_);
-            publishDiagnostics(input.healthy, global_fresh, diagnostics_healthy);
+            publishDiagnostics(input, global_fresh, diagnostics_healthy);
             publishMarkers(last_result_);
+        }
+
+        void stopWorker()
+        {
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if(stopping_) {
+                    return;
+                }
+                stopping_ = true;
+            }
+            if(timer_) {
+                timer_->cancel();
+            }
+            global_map_subscription_.reset();
+            global_diagnostics_subscription_.reset();
+            for(DroneTrack & track : drones_) {
+                track.map_subscription.reset();
+                track.odom_subscription.reset();
+            }
+            worker_cv_.notify_all();
+            if(worker_.joinable()) {
+                worker_.join();
+            }
         }
 
         void publishTasks(const GlobalAllocationResult & result)
@@ -620,6 +1269,7 @@ namespace SwarmController {
             const rclcpp::Time now = get_clock()->now();
             const std::int64_t lease_ns = static_cast<std::int64_t>(
                     std::llround(task_lease_seconds_ * 1.0e9));
+            std::lock_guard<std::mutex> lock(mutex_);
             for(const auto & assignment : result.assignments) {
                 const auto found = std::find_if(
                         drones_.begin(), drones_.end(), [&](const DroneTrack & track) {
@@ -647,15 +1297,20 @@ namespace SwarmController {
         }
 
         void publishDiagnostics(
-                bool healthy, bool global_fresh, bool diagnostics_healthy)
+                const GlobalAllocationInput & input,
+                bool global_fresh, bool diagnostics_healthy)
         {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if(stopping_) {
+                return;
+            }
             diagnostic_msgs::msg::DiagnosticArray message;
             message.header.stamp = get_clock()->now();
             diagnostic_msgs::msg::DiagnosticStatus status;
             status.name = "global_task_allocator";
             status.hardware_id = "swarm";
-            status.level = healthy ? diagnostic_msgs::msg::DiagnosticStatus::OK
-                                   : diagnostic_msgs::msg::DiagnosticStatus::WARN;
+            status.level = input.healthy ? diagnostic_msgs::msg::DiagnosticStatus::OK
+                                        : diagnostic_msgs::msg::DiagnosticStatus::WARN;
             status.message = last_result_.reason.empty()
                                      ? (last_result_.coordination_mode
                                                         == CoordinationMode::Coordinated
@@ -666,6 +1321,13 @@ namespace SwarmController {
             status.values.push_back(numericValue("global_map_fresh", global_fresh ? 1 : 0));
             status.values.push_back(numericValue(
                     "global_map_diagnostics_healthy", diagnostics_healthy ? 1 : 0));
+            status.values.push_back(numericValue(
+                    "global_map_diagnostics_invalid_stamp",
+                    global_diagnostics_invalid_stamp_count_));
+            status.values.push_back(value(
+                    "global_map_diagnostics_reason", global_diagnostics_reason_));
+            status.values.push_back(numericValue(
+                    "ros_clock_resets", ros_clock_reset_count_));
             status.values.push_back(numericValue("global_update_sequence", global_update_sequence_));
             status.values.push_back(numericValue(
                     "global_map_received", global_map_received_count_));
@@ -673,6 +1335,48 @@ namespace SwarmController {
                     "global_map_same_stamp", global_map_same_stamp_count_));
             status.values.push_back(numericValue(
                     "global_map_regressed_stamp", global_map_regressed_stamp_count_));
+            status.values.push_back(numericValue(
+                    "global_map_invalid_envelope", global_map_invalid_envelope_count_));
+            status.values.push_back(numericValue(
+                    "global_map_resource_rejections", global_map_resource_rejection_count_));
+            status.values.push_back(numericValue(
+                    "global_map_processing_failures", global_map_processing_failure_count_));
+            status.values.push_back(numericValue(
+                    "global_map_worker_failures", global_map_worker_failure_count_));
+            status.values.push_back(numericValue(
+                    "global_map_latest_revision", global_snapshot_slot_.latestAcceptedRevision()));
+            status.values.push_back(numericValue(
+                    "global_map_consumed_revision", global_snapshot_slot_.consumedRevision()));
+            status.values.push_back(numericValue(
+                    "global_map_applied_revision", global_map_applied_revision_));
+            status.values.push_back(numericValue(
+                    "global_map_pending_revision", global_snapshot_slot_.pendingRevision()));
+            status.values.push_back(numericValue(
+                    "global_map_in_flight_revision", global_snapshot_slot_.inFlightRevision()));
+            status.values.push_back(numericValue(
+                    "global_map_ready_revision", global_snapshot_slot_.readyRevision()));
+            status.values.push_back(numericValue(
+                    "global_map_pending_coalesced", global_snapshot_slot_.pendingCoalescedCount()));
+            status.values.push_back(numericValue(
+                    "global_map_ready_blocked", global_snapshot_slot_.readyBlockedCount()));
+            status.values.push_back(numericValue(
+                    "global_map_leaf_count", global_map_leaf_count_));
+            status.values.push_back(numericValue(
+                    "global_map_valid_age_seconds",
+                    global_map_receive_seconds_ < 0.0
+                            ? -1.0
+                            : input.monotonic_time_seconds
+                                      - global_map_receive_seconds_));
+            status.values.push_back(numericValue(
+                    "max_serialized_bytes_per_source",
+                    max_serialized_bytes_per_source_));
+            status.values.push_back(numericValue(
+                    "max_voxels_per_source", max_voxels_per_source_));
+            status.values.push_back(numericValue(
+                    "max_global_serialized_bytes", max_global_serialized_bytes_));
+            status.values.push_back(numericValue(
+                    "max_global_voxels", max_global_voxels_));
+            status.values.push_back(value("global_map_input_reason", global_map_input_reason_));
             status.values.push_back(numericValue("raw_frontier_columns", raw_frontier_columns_));
             status.values.push_back(numericValue("scanned_free_voxels", scanned_free_voxels_));
             status.values.push_back(numericValue(
@@ -779,6 +1483,64 @@ namespace SwarmController {
                 status.values.push_back(numericValue(
                         assignment.drone_id + ".revision", assignment.revision));
             }
+            for(std::size_t index = 0U; index < drones_.size(); ++index) {
+                const auto & track = drones_[index];
+                const auto & drone_input = input.drones[index];
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_fresh",
+                        drone_input.local_map_fresh ? 1 : 0));
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_valid_age_seconds",
+                        track.local_map_receive_seconds < 0.0
+                                ? -1.0
+                                : input.monotonic_time_seconds
+                                          - track.local_map_receive_seconds));
+                status.values.push_back(numericValue(
+                        track.id + ".odom_fresh",
+                        drone_input.odom_fresh ? 1 : 0));
+                status.values.push_back(numericValue(
+                        track.id + ".odom_invalid_stamp",
+                        track.odom_invalid_stamp_count));
+                status.values.push_back(value(
+                        track.id + ".odom_reason", track.odom_reason));
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_received", track.local_map_received_count));
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_invalid_envelope",
+                        track.local_map_invalid_envelope_count));
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_regressed", track.local_map_regressed_count));
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_duplicate", track.local_map_duplicate_count));
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_resource_rejections",
+                        track.local_map_resource_rejection_count));
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_failures", track.local_map_failure_count));
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_latest_revision",
+                        track.snapshot_slot.latestAcceptedRevision()));
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_consumed_revision",
+                        track.snapshot_slot.consumedRevision()));
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_applied_revision",
+                        track.local_map_applied_revision));
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_pending_revision",
+                        track.snapshot_slot.pendingRevision()));
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_in_flight_revision",
+                        track.snapshot_slot.inFlightRevision()));
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_ready_revision",
+                        track.snapshot_slot.readyRevision()));
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_pending_coalesced",
+                        track.snapshot_slot.pendingCoalescedCount()));
+                status.values.push_back(value(
+                        track.id + ".local_map_reason", track.local_map_reason));
+            }
             message.status.push_back(std::move(status));
             diagnostics_publisher_->publish(message);
         }
@@ -820,6 +1582,9 @@ namespace SwarmController {
             tasks.color.b = 1.0F;
             tasks.color.a = 0.9F;
             std::lock_guard<std::mutex> lock(mutex_);
+            if(stopping_) {
+                return;
+            }
             for(const auto & assignment : result.assignments) {
                 if(assignment.mode != ExplorationTaskMode::Assigned) {
                     continue;
@@ -832,7 +1597,7 @@ namespace SwarmController {
                     continue;
                 }
                 Pose3D pose;
-                if(transformOdometry(found->odom, pose)) {
+                if(transformOdometry(found->odom, found->odom_stamp_ns, pose)) {
                     tasks.points.push_back(point(pose.position));
                     tasks.points.push_back(point(assignment.target));
                 }
@@ -847,6 +1612,10 @@ namespace SwarmController {
         double task_lease_seconds_ {3.0};
         double global_map_timeout_seconds_ {5.0};
         double diagnostics_timeout_seconds_ {5.0};
+        std::size_t max_serialized_bytes_per_source_ {67'108'864U};
+        std::size_t max_voxels_per_source_ {5'000'000U};
+        std::size_t max_global_serialized_bytes_ {201'326'592U};
+        std::size_t max_global_voxels_ {10'000'000U};
         double odom_timeout_seconds_ {2.0};
         double local_map_timeout_seconds_ {5.0};
         GlobalFrontierDetectorConfig detector_config_;
@@ -855,21 +1624,36 @@ namespace SwarmController {
         std::unique_ptr<GlobalTaskAllocator> allocator_;
         SteadyClock::time_point steady_start_;
         std::uint64_t allocator_epoch_ {};
+        GlobalSnapshotSlot global_snapshot_slot_;
         std::mutex mutex_;
+        std::condition_variable worker_cv_;
+        std::thread worker_;
+        bool stopping_ {false};
+        std::size_t worker_next_source_ {};
         std::vector<DroneTrack> drones_;
-        octomap_msgs::msg::Octomap::SharedPtr pending_global_map_;
-        std::int64_t pending_global_stamp_ns_ {};
         std::shared_ptr<octomap::OcTree> global_map_;
         std::int64_t global_map_stamp_ns_ {};
         double global_map_receive_seconds_ {-1.0};
+        std::uint64_t global_map_applied_revision_ {};
+        std::size_t global_map_leaf_count_ {};
         bool global_diagnostics_healthy_ {false};
         std::int64_t global_diagnostics_stamp_ns_ {};
         double global_diagnostics_receive_seconds_ {-1.0};
+        std::uint64_t global_diagnostics_invalid_stamp_count_ {};
+        std::string global_diagnostics_reason_;
+        std::int64_t last_ros_now_ns_ {};
+        std::uint64_t ros_clock_reset_count_ {};
         std::vector<FrontierRegion> regions_;
         std::uint64_t global_update_sequence_ {};
         std::uint64_t global_map_received_count_ {};
         std::uint64_t global_map_same_stamp_count_ {};
         std::uint64_t global_map_regressed_stamp_count_ {};
+        std::uint64_t global_map_invalid_envelope_count_ {};
+        std::uint64_t global_map_resource_rejection_count_ {};
+        std::uint64_t global_map_processing_failure_count_ {};
+        std::uint64_t global_map_worker_failure_count_ {};
+        std::uint64_t global_map_input_reason_sequence_ {};
+        std::string global_map_input_reason_;
         std::size_t raw_frontier_columns_ {};
         std::size_t scanned_free_voxels_ {};
         std::size_t supported_frontier_columns_ {};

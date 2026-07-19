@@ -37,6 +37,7 @@
   <test_depend>rosbag2_cpp</test_depend>
   <test_depend>rosbag2_storage</test_depend>
   <test_depend>rosbag2_storage_mcap</test_depend>
+  <test_depend>rosgraph_msgs</test_depend>
   <test_depend>sensor_msgs_py</test_depend>
   <test_depend>std_msgs</test_depend>
 

@@ -248,6 +248,15 @@ def _launch_setup(context, *args, **kwargs):
                         'task_allocation.rate').perform(context)),
                     'task.lease': float(LaunchConfiguration(
                         'task.lease').perform(context)),
+                    'global_map.max_serialized_bytes_per_source': int(
+                        LaunchConfiguration(
+                            'global_map.max_serialized_bytes_per_source').perform(
+                                context)),
+                    'global_map.max_voxels_per_source': int(
+                        LaunchConfiguration(
+                            'global_map.max_voxels_per_source').perform(context)),
+                    'global_map.max_global_voxels': int(LaunchConfiguration(
+                        'global_map.max_global_voxels').perform(context)),
                     'resolution': float(LaunchConfiguration(
                         'resolution').perform(context)),
                     'frontier.column_stride_voxels': int(LaunchConfiguration(

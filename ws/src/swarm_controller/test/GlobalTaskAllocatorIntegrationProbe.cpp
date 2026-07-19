@@ -82,11 +82,13 @@ namespace {
             declare_parameter("stamp_offset_seconds", 0.0);
             declare_parameter("diagnostics_reject_after_seconds", -1.0);
             declare_parameter("controlled_global_updates", false);
+            declare_parameter("publish_period_ms", 200);
             stamp_offset_seconds_ = get_parameter("stamp_offset_seconds").as_double();
             diagnostics_reject_after_seconds_ =
                     get_parameter("diagnostics_reject_after_seconds").as_double();
             controlled_global_updates_ =
                     get_parameter("controlled_global_updates").as_bool();
+            publish_period_ms_ = get_parameter("publish_period_ms").as_int();
             if(!std::isfinite(stamp_offset_seconds_) || stamp_offset_seconds_ < 0.0) {
                 throw std::invalid_argument(
                         "stamp_offset_seconds must be finite and non-negative");
@@ -94,6 +96,9 @@ namespace {
             if(!std::isfinite(diagnostics_reject_after_seconds_)) {
                 throw std::invalid_argument(
                         "diagnostics_reject_after_seconds must be finite");
+            }
+            if(publish_period_ms_ <= 0) {
+                throw std::invalid_argument("publish_period_ms must be positive");
             }
             fixed_global_stamp_ns_ = get_clock()->now().nanoseconds();
 
@@ -112,13 +117,45 @@ namespace {
                     [this](const std_msgs::msg::Empty::SharedPtr) {
                         older_global_update_requested_ = true;
                     });
+            invalid_global_trigger_subscription_ = create_subscription<std_msgs::msg::Empty>(
+                    "/test/global_task_allocator/publish_invalid_global_map", rclcpp::QoS(1),
+                    [this](const std_msgs::msg::Empty::SharedPtr) {
+                        invalid_global_update_requested_ = true;
+                    });
+            recover_global_trigger_subscription_ = create_subscription<std_msgs::msg::Empty>(
+                    "/test/global_task_allocator/recover_global_map", rclcpp::QoS(1),
+                    [this](const std_msgs::msg::Empty::SharedPtr) {
+                        global_recovery_requested_ = true;
+                    });
+            invalid_local_trigger_subscription_ = create_subscription<std_msgs::msg::Empty>(
+                    "/test/global_task_allocator/publish_invalid_local_map", rclcpp::QoS(1),
+                    [this](const std_msgs::msg::Empty::SharedPtr) {
+                        invalid_local_update_requested_ = true;
+                    });
+            recover_local_trigger_subscription_ = create_subscription<std_msgs::msg::Empty>(
+                    "/test/global_task_allocator/recover_local_map", rclcpp::QoS(1),
+                    [this](const std_msgs::msg::Empty::SharedPtr) {
+                        local_recovery_requested_ = true;
+                    });
+            invalid_stamp_trigger_subscription_ = create_subscription<std_msgs::msg::Empty>(
+                    "/test/global_task_allocator/publish_invalid_stamp_inputs", rclcpp::QoS(1),
+                    [this](const std_msgs::msg::Empty::SharedPtr) {
+                        invalid_stamp_inputs_requested_ = true;
+                    });
+            future_global_trigger_subscription_ = create_subscription<std_msgs::msg::Empty>(
+                    "/test/global_task_allocator/publish_future_global_map", rclcpp::QoS(1),
+                    [this](const std_msgs::msg::Empty::SharedPtr) {
+                        future_global_update_requested_ = true;
+                    });
             for(int index = 0; index < 3; ++index) {
                 local_publishers_.push_back(create_publisher<octomap_msgs::msg::Octomap>(
                         "/drone_" + std::to_string(index) + "/octomap", qos));
                 odom_publishers_.push_back(create_publisher<nav_msgs::msg::Odometry>(
                         "/drone_" + std::to_string(index) + "/odom", rclcpp::QoS(10)));
             }
-            timer_ = create_wall_timer(std::chrono::milliseconds(200), [this]() { publish(); });
+            timer_ = create_wall_timer(
+                    std::chrono::milliseconds(publish_period_ms_),
+                    [this]() { publish(); });
         }
 
     private:
@@ -129,8 +166,13 @@ namespace {
                                                    .count();
             const auto stamp = get_clock()->now()
                                - rclcpp::Duration::from_seconds(stamp_offset_seconds_);
+            if(stamp.nanoseconds() <= 0) {
+                return;
+            }
             bool publish_global = !controlled_global_updates_;
             bool publish_older_global = false;
+            bool publish_invalid_global = false;
+            bool publish_global_recovery = false;
             if(controlled_global_updates_) {
                 if(!global_initial_published_) {
                     publish_global = true;
@@ -151,18 +193,37 @@ namespace {
                     global_older_stamp_update_published_ = true;
                     publish_older_global = true;
                     publish_global = true;
+                } else if(invalid_global_update_requested_
+                          && !global_invalid_update_published_)
+                {
+                    global_failure_stamp_ns_ = fixed_global_stamp_ns_ + 1;
+                    global_invalid_update_published_ = true;
+                    publish_invalid_global = true;
+                    publish_global = true;
+                } else if(global_recovery_requested_
+                          && global_invalid_update_published_
+                          && !global_recovery_published_)
+                {
+                    global_recovery_published_ = true;
+                    publish_global_recovery = true;
+                    publish_global = true;
                 }
             }
             if(publish_global) {
                 octomap_msgs::msg::Octomap global;
                 octomap_msgs::fullMapToMsg(global_tree_, global);
-                global.header.frame_id = "map";
-                global.header.stamp = controlled_global_updates_
-                                              ? rclcpp::Time(
-                                                        fixed_global_stamp_ns_
-                                                                - (publish_older_global ? 1 : 0),
-                                                        get_clock()->get_clock_type())
-                                              : stamp;
+                global.header.frame_id = publish_invalid_global ? "invalid_map" : "map";
+                if(controlled_global_updates_) {
+                    const std::int64_t global_stamp =
+                            publish_invalid_global || publish_global_recovery
+                                    ? global_failure_stamp_ns_
+                                    : fixed_global_stamp_ns_
+                                              - (publish_older_global ? 1 : 0);
+                    global.header.stamp = rclcpp::Time(
+                            global_stamp, get_clock()->get_clock_type());
+                } else {
+                    global.header.stamp = stamp;
+                }
                 global_publisher_->publish(global);
                 global_initial_published_ = true;
             }
@@ -172,7 +233,27 @@ namespace {
             local.header.frame_id = "map";
             local.header.stamp = stamp;
             for(std::size_t index = 0U; index < local_publishers_.size(); ++index) {
-                local_publishers_[index]->publish(local);
+                if(index == 0U && invalid_local_update_requested_
+                   && !local_invalid_update_published_)
+                {
+                    local_failure_stamp_ns_ = rclcpp::Time(local.header.stamp).nanoseconds();
+                    octomap_msgs::msg::Octomap invalid = local;
+                    invalid.header.frame_id = "invalid_map";
+                    local_publishers_[index]->publish(invalid);
+                    local_invalid_update_published_ = true;
+                } else if(index == 0U && local_invalid_update_published_
+                          && !local_recovery_published_)
+                {
+                    if(local_recovery_requested_) {
+                        octomap_msgs::msg::Octomap recovery = local;
+                        recovery.header.stamp = rclcpp::Time(
+                                local_failure_stamp_ns_, get_clock()->get_clock_type());
+                        local_publishers_[index]->publish(recovery);
+                        local_recovery_published_ = true;
+                    }
+                } else {
+                    local_publishers_[index]->publish(local);
+                }
                 nav_msgs::msg::Odometry odom;
                 odom.header.frame_id = "map";
                 odom.header.stamp = stamp;
@@ -202,17 +283,77 @@ namespace {
                     rejected ? "/drone_0/octomap: resource limit" : ""));
             diagnostics.status.push_back(std::move(status));
             diagnostics_publisher_->publish(diagnostics);
+
+            if(invalid_stamp_inputs_requested_ && !invalid_stamp_inputs_published_) {
+                builtin_interfaces::msg::Time invalid_stamp;
+                invalid_stamp.sec = -1;
+
+                octomap_msgs::msg::Octomap invalid_global;
+                octomap_msgs::fullMapToMsg(global_tree_, invalid_global);
+                invalid_global.header.frame_id = "map";
+                invalid_global.header.stamp = invalid_stamp;
+                global_publisher_->publish(invalid_global);
+
+                octomap_msgs::msg::Octomap invalid_local;
+                octomap_msgs::fullMapToMsg(local_tree_, invalid_local);
+                invalid_local.header.frame_id = "map";
+                invalid_local.header.stamp = invalid_stamp;
+                local_publishers_.front()->publish(invalid_local);
+
+                nav_msgs::msg::Odometry invalid_odom;
+                invalid_odom.header.frame_id = "map";
+                invalid_odom.header.stamp = invalid_stamp;
+                invalid_odom.pose.pose.orientation.w = 1.0;
+                odom_publishers_.front()->publish(invalid_odom);
+
+                diagnostic_msgs::msg::DiagnosticArray invalid_diagnostics;
+                invalid_diagnostics.header.stamp = invalid_stamp;
+                diagnostic_msgs::msg::DiagnosticStatus invalid_status;
+                invalid_status.name = "global_map_merger";
+                invalid_status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+                invalid_status.values.push_back(diagnosticValue("missing_sources", "0"));
+                invalid_status.values.push_back(diagnosticValue("stale_sources", "0"));
+                invalid_status.values.push_back(diagnosticValue("last_rejections", ""));
+                invalid_diagnostics.status.push_back(std::move(invalid_status));
+                diagnostics_publisher_->publish(invalid_diagnostics);
+                invalid_stamp_inputs_published_ = true;
+            }
+
+            if(future_global_update_requested_ && !future_global_update_published_) {
+                octomap_msgs::msg::Octomap future_global;
+                octomap_msgs::fullMapToMsg(global_tree_, future_global);
+                future_global.header.frame_id = "map";
+                future_global.header.stamp = get_clock()->now()
+                                             + rclcpp::Duration::from_seconds(60.0);
+                global_publisher_->publish(future_global);
+                future_global_update_published_ = true;
+            }
         }
 
         double stamp_offset_seconds_ {};
         double diagnostics_reject_after_seconds_ {-1.0};
         bool controlled_global_updates_ {false};
+        std::int64_t publish_period_ms_ {200};
         std::int64_t fixed_global_stamp_ns_ {};
         bool global_initial_published_ {false};
         bool same_global_update_requested_ {false};
         bool global_same_stamp_update_published_ {false};
         bool older_global_update_requested_ {false};
         bool global_older_stamp_update_published_ {false};
+        bool invalid_global_update_requested_ {false};
+        bool global_invalid_update_published_ {false};
+        bool global_recovery_requested_ {false};
+        bool global_recovery_published_ {false};
+        std::int64_t global_failure_stamp_ns_ {};
+        bool invalid_local_update_requested_ {false};
+        bool local_invalid_update_published_ {false};
+        bool local_recovery_requested_ {false};
+        bool local_recovery_published_ {false};
+        std::int64_t local_failure_stamp_ns_ {};
+        bool invalid_stamp_inputs_requested_ {false};
+        bool invalid_stamp_inputs_published_ {false};
+        bool future_global_update_requested_ {false};
+        bool future_global_update_published_ {false};
         std::chrono::steady_clock::time_point start_time_ {
                 std::chrono::steady_clock::now()};
         octomap::OcTree global_tree_;
@@ -224,6 +365,18 @@ namespace {
                 same_global_trigger_subscription_;
         rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr
                 older_global_trigger_subscription_;
+        rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr
+                invalid_global_trigger_subscription_;
+        rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr
+                recover_global_trigger_subscription_;
+        rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr
+                invalid_local_trigger_subscription_;
+        rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr
+                recover_local_trigger_subscription_;
+        rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr
+                invalid_stamp_trigger_subscription_;
+        rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr
+                future_global_trigger_subscription_;
         std::vector<rclcpp::Publisher<octomap_msgs::msg::Octomap>::SharedPtr>
                 local_publishers_;
         std::vector<rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr> odom_publishers_;
