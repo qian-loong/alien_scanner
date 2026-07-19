@@ -7,6 +7,7 @@ import launch_ros.actions
 import launch_testing.actions
 import launch_testing.asserts
 import rclpy
+from launch.substitutions import PathJoinSubstitution
 from rclpy.qos import (
     DurabilityPolicy,
     HistoryPolicy,
@@ -14,9 +15,10 @@ from rclpy.qos import (
     ReliabilityPolicy,
 )
 from visualization_msgs.msg import Marker, MarkerArray
+from launch_ros.substitutions import FindPackageShare
 
 
-STAGES = (
+DEMO_STAGES = (
     'standard_tunnel_geometry',
     'single_ring',
     'bootstrap_yaw_sweep',
@@ -24,9 +26,20 @@ STAGES = (
     'accumulated_frontier',
 )
 
+AUDIT_STAGES = (
+    'audit_overview',
+    'component_rejection',
+    'direction_evidence',
+    'gap_counterfactual',
+)
+
+STAGES = DEMO_STAGES + AUDIT_STAGES
+
 
 def _topic(stage):
-    return f'/frontier_geometry_demo/stages/{stage}/markers'
+    if stage in DEMO_STAGES:
+        return f'/frontier_geometry_demo/stages/{stage}/markers'
+    return f'/frontier_component_audit/stages/{stage}/markers'
 
 
 def generate_test_description():
@@ -42,15 +55,37 @@ def generate_test_description():
             'display.republish_rate_hz': 0.0,
         }],
     )
+    fixture_root = PathJoinSubstitution([
+        FindPackageShare('swarm_controller'),
+        'config',
+    ])
+    component_audit = launch_ros.actions.Node(
+        package='swarm_controller',
+        executable='frontier_component_audit_replay',
+        name='frontier_component_audit_replay',
+        output='screen',
+        parameters=[{
+            'audit.component_csv': PathJoinSubstitution([
+                fixture_root,
+                'frontier_component_audit_frame3_components.csv',
+            ]),
+            'audit.membership_csv': PathJoinSubstitution([
+                fixture_root,
+                'frontier_component_audit_frame3_membership.csv',
+            ]),
+            'display.republish_rate_hz': 0.0,
+        }],
+    )
     return (
         launch.LaunchDescription([
             demo,
+            component_audit,
             launch.actions.TimerAction(
                 period=1.0,
                 actions=[launch_testing.actions.ReadyToTest()],
             ),
         ]),
-        {'demo': demo},
+        {'demo': demo, 'component_audit': component_audit},
     )
 
 
@@ -149,6 +184,16 @@ class TestFrontierGeometryDemoIntegration(unittest.TestCase):
         )
         self.assertIn(
             'frontier_selected_endpoint', namespaces['accumulated_frontier'])
+        self.assertIn(
+            'audit_component_count_bar', namespaces['audit_overview'])
+        self.assertIn(
+            'audit_component_min_columns_rejected',
+            namespaces['component_rejection'],
+        )
+        self.assertIn(
+            'audit_direction_votes', namespaces['direction_evidence'])
+        self.assertIn(
+            'audit_one_column_gap', namespaces['gap_counterfactual'])
 
         for subscription in subscriptions:
             self.node.destroy_subscription(subscription)

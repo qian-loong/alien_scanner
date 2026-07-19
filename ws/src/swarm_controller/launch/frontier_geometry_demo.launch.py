@@ -14,6 +14,16 @@ def generate_launch_description():
         'config',
         'frontier_geometry_demo.rviz',
     ])
+    audit_component_csv = PathJoinSubstitution([
+        FindPackageShare('swarm_controller'),
+        'config',
+        'frontier_component_audit_frame3_components.csv',
+    ])
+    audit_membership_csv = PathJoinSubstitution([
+        FindPackageShare('swarm_controller'),
+        'config',
+        'frontier_component_audit_frame3_membership.csv',
+    ])
 
     demo = Node(
         package='swarm_controller',
@@ -68,6 +78,25 @@ def generate_launch_description():
         }],
     )
 
+    component_audit = Node(
+        package='swarm_controller',
+        executable='frontier_component_audit_replay',
+        name='frontier_component_audit_replay',
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('include_component_audit')),
+        parameters=[{
+            'audit.component_csv': audit_component_csv,
+            'audit.membership_csv': audit_membership_csv,
+            'audit.expected_frame_index': LaunchConfiguration(
+                'audit_frame_index'),
+            'audit.column_footprint_height': LaunchConfiguration(
+                'audit_column_height'),
+            'display.show_labels': LaunchConfiguration('show_labels'),
+            'display.republish_rate_hz': LaunchConfiguration(
+                'republish_rate_hz'),
+        }],
+    )
+
     rviz = Node(
         package='rviz2',
         executable='rviz2',
@@ -81,6 +110,7 @@ def generate_launch_description():
         DeclareLaunchArgument('mode', default_value='combined'),
         DeclareLaunchArgument('stage', default_value='accumulated_frontier'),
         DeclareLaunchArgument('compose_stages', default_value='true'),
+        DeclareLaunchArgument('include_component_audit', default_value='true'),
         DeclareLaunchArgument('tunnel_radius', default_value='2.0'),
         DeclareLaunchArgument('tunnel_length', default_value='8.0'),
         DeclareLaunchArgument('tunnel_center_z', default_value='0.0'),
@@ -115,7 +145,10 @@ def generate_launch_description():
         DeclareLaunchArgument('show_unknown', default_value='true'),
         DeclareLaunchArgument('show_reference_geometry', default_value='true'),
         DeclareLaunchArgument('republish_rate_hz', default_value='0.0'),
+        DeclareLaunchArgument('audit_frame_index', default_value='3'),
+        DeclareLaunchArgument('audit_column_height', default_value='0.08'),
         DeclareLaunchArgument('start_rviz', default_value='true'),
         demo,
+        component_audit,
         rviz,
     ])

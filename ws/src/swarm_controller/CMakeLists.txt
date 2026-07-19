@@ -70,6 +70,15 @@ target_link_libraries(
 )
 target_compile_features(swarm_geometry_demo PUBLIC cxx_std_17)
 
+add_library(swarm_component_audit_replay STATIC
+        src/FrontierComponentAuditReplay.cpp
+)
+target_include_directories(swarm_component_audit_replay PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+target_compile_features(swarm_component_audit_replay PUBLIC cxx_std_17)
+
 install(
         FILES
         include/swarm_controller/Point3f.hpp
@@ -91,10 +100,12 @@ install(
         include/swarm_controller/SingleDroneExplorer.hpp
         include/swarm_controller/SingleDroneExplorerNode.hpp
         include/swarm_controller/FrontierGeometryDemo.hpp
+        include/swarm_controller/FrontierComponentAuditReplay.hpp
         DESTINATION include/swarm_controller
 )
 install(
         TARGETS swarm_octomap swarm_exploration swarm_geometry_demo
+                swarm_component_audit_replay
         EXPORT export_${PROJECT_NAME}
         ARCHIVE DESTINATION lib
         LIBRARY DESTINATION lib
@@ -163,9 +174,22 @@ ament_target_dependencies(
         rclcpp geometry_msgs visualization_msgs
 )
 
+add_executable(frontier_component_audit_replay
+        src/FrontierComponentAuditReplayNode.cpp
+)
+target_include_directories(frontier_component_audit_replay PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(frontier_component_audit_replay swarm_component_audit_replay)
+ament_target_dependencies(
+        frontier_component_audit_replay
+        rclcpp geometry_msgs visualization_msgs
+)
+
 install(
         TARGETS octomap_builder global_map_merger single_drone_explorer global_task_allocator
-                frontier_geometry_demo
+                frontier_geometry_demo frontier_component_audit_replay
         DESTINATION lib/${PROJECT_NAME}
 )
 install(
@@ -302,6 +326,24 @@ if(BUILD_TESTING)
         target_link_libraries(TestFrontierGeometryDemo swarm_geometry_demo)
         target_include_directories(TestFrontierGeometryDemo PUBLIC
                 $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
+    ament_add_gtest(
+            TestFrontierComponentAuditReplay
+            test/TestFrontierComponentAuditReplay.cpp
+    )
+    if(TARGET TestFrontierComponentAuditReplay)
+        target_link_libraries(
+                TestFrontierComponentAuditReplay
+                swarm_component_audit_replay
+        )
+        target_include_directories(TestFrontierComponentAuditReplay PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+        target_compile_definitions(
+                TestFrontierComponentAuditReplay PRIVATE
+                SWARM_CONTROLLER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/config"
         )
     endif()
 

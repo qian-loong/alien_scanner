@@ -66,6 +66,54 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /frontier_geometry_demo/stages/accumulated_frontier/markers
       Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: false
+      Name: "Stage 5: Component Audit Overview"
+      Namespaces:
+        {}
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /frontier_component_audit/stages/audit_overview/markers
+      Value: false
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: false
+      Name: "Stage 6: Component Rejection"
+      Namespaces:
+        {}
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /frontier_component_audit/stages/component_rejection/markers
+      Value: false
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: false
+      Name: "Stage 7: Direction Evidence"
+      Namespaces:
+        {}
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /frontier_component_audit/stages/direction_evidence/markers
+      Value: false
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: false
+      Name: "Stage 8: Gap Counterfactual"
+      Namespaces:
+        {}
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /frontier_component_audit/stages/gap_counterfactual/markers
+      Value: false
   Enabled: true
   Global Options:
     Background Color: 18; 22; 26
