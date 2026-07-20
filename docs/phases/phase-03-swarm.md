@@ -1,6 +1,6 @@
 # Phase 3：多机未知探索与地图融合（swarm_controller）
 
-> **状态：** 🟡 进行中（3-1～3-8 已完成；3-9 冻结为中央式三机参考基线，仍未通过任务分配人工验收；3-10 不启动；分支 `phase/3-swarm-controller`）
+> **状态：** 🟡 重构前收口（3-1～3-8 已完成；3-9 基础实现与诊断已冻结，但多 Region 任务分配验收延期；3-10 当前不启动；分支 `phase/3-swarm-controller`）
 > **答疑与决策：** [`docs/decisions/phase-03-swarm-qa.md`](../decisions/phase-03-swarm-qa.md)
 > **上级摘要：** [`docs/xenomorph-scanner-plan.md`](../xenomorph-scanner-plan.md) §6 Phase 3  
 > **依赖：** Phase 1 [`phase-01-cave-world.md`](phase-01-cave-world.md)、Phase 2 [`phase-02-drone-scanner.md`](phase-02-drone-scanner.md)  
@@ -96,12 +96,62 @@ ICaveField（真值）──仅造数──► FakeLidar（俯仰环）
 | 3-6 | 多机 launch（`num_drones:=3`） | ✅ | `phase3(step6): multi-drone sensing launch` |
 | 3-7 | 多机探索分散（peer 启发式 + 简化前向局部规划） | ✅ | `phase3(step7): multi-drone peer-dispersion allocation` |
 | 3-8 | `/global_map` 融合 | ✅ | `phase3(step8): global map merge` |
-| 3-9 | 全局 frontier 多机任务分配（非全局路径规划） | ⬜ | `phase3(step9): global frontier task allocation` |
-| 3-10 | 一键 swarm + 测试 + 文档验收 | ⬜ | `phase3(step10): swarm entry and tests` |
+| 3-9 | 全局 frontier 多机任务分配（非全局路径规划） | ⏸ 重构后继续 | `phase3(step9): global frontier task allocation` |
+| 3-10 | 一键 swarm + 测试 + 文档验收 | ⏸ 重构后重定 | `phase3(step10): swarm entry and tests` |
 
-**主路径核心实现：** 3-1～3-9；3-10 执行 Phase 总验收。
+**原主路径目标：** 3-1～3-9；3-10 执行 Phase 总验收。当前收口只认定 3-1～3-8 完成，
+3-9 保留未完成状态，3-10 不作为下一项直接实施。
 **里程碑：** M1 = 3-1～3-5（单机自主探索）；M2 = 3-6～3-8（多机 + 全局图）；
-M3 = 3-9（全局任务所有权与确定性派机）。
+M3 = 3-9（全局任务所有权与确定性派机，延期到重构后验收）。
+
+---
+
+## 重构前收尾结论（2026-07-20）
+
+Phase 3 当前停止继续修补中央式三机实现，并将提交 `82954d8` 冻结为可复现、可诊断的参考基线。
+“收口”不等于 Phase 3 验收完成，也不取消 3-9；它表示现有代码、测试、Demo、bag 和已知限制已经足够
+支撑后续架构设计，新增行为修改应在新边界确定后进行。
+
+### 已完成并冻结
+
+- 3-1～3-8：俯仰垂直环、高度自适应、本机 OctoMap、单机/多机本地探索和完整快照全局融合；
+- 3-9 基础能力：frontier support-v2、Component 审计、region/task 确定性纯算法、epoch/revision/lease、
+  allocator 后台处理与 revision 级时延诊断；
+- merger 的 source/cycle 分阶段诊断、revision 与原子提交边界，以及异常/资源失败测试；
+- `KnownFreePathChecker` 的本机 body/segment known-free 安全契约；
+- Frontier Geometry Demo、Component Audit Replay、Release `30/30` CTest 和两份 source-level replay bag；
+- 中央式三机 headless/GUI 性能证据及已知 `ExplorationStalled` 行为。
+
+### 重构后必须继续
+
+| 顺序 | 工作 | 完成判据 |
+|------|------|----------|
+| 1 | 冻结新的角色、通信拓扑和地图数据面契约 | 明确 source/relay/aggregator/allocator 边界，以及 full/keyframe/delta、epoch、重同步和背压语义 |
+| 2 | 在新边界上恢复 3-9 多 Region 任务分配 | 合成与 replay 输入稳定产生至少两个有效 Region，`eligible_edges > 0`、`matching_cardinality > 0` |
+| 3 | 完成任务生命周期验收 | 不同无人机获得唯一 `Assigned`；owner、lease、撤销、失效和重新分配可诊断且确定 |
+| 4 | 完成真实场景人工验收 | 三机真实运行验证 LocalFallback/Assigned/Standby 切换，truth audit 保持 `Clear` |
+| 5 | 重定并执行原 3-10 | 新架构的一键入口、N 机接线、回归测试、RViz 和 Phase 总验收 |
+
+多 Region 分配是保留的强制需求，不得因本次收口被视为取消或完成。新架构可以替换当前中央 allocator
+的部署位置和输入协议，但必须保留唯一所有权、租约/revision、确定性匹配和本机 first-hop 安全边界。
+
+### 当前暂不做
+
+- 不实施 Detector leaf-scan B 优化或 merger C 并行 preparation；先由新数据面决定完整 decode/normalize
+  是否仍是主成本；
+- 不直接扩大 Component 连通半径、降低 `min_columns`/方向阈值，也不为当前 tree cave 强行制造两个
+  Region；
+- 不修改 `ExplorationStalled` 恢复、多运动航向或本机 planner 行为；这些作为独立运动规划问题处理；
+- 不在当前中央式实现中加入 Relay、EdgeAggregator、delta/keyframe 协议、稀疏拓扑、角色/编队或
+  `N > 3` 调度；
+- 不通过增大 freshness timeout、改写 header stamp 或放宽 `KnownFreePathChecker` 掩盖性能/安全问题；
+- 不实现动态障碍时间预测、长距离 A*/Theta*、全局 3D 路径规划或 Mesh（Phase 4）。
+
+### 后续重启条件
+
+开始重构实现前，先形成可提交的架构决策，至少回答节点角色、拓扑控制面、地图数据面、故障/重同步、
+兼容迁移和验收矩阵。重构使用新的阶段分支或明确的新 Step；不得在当前基线提交上继续混入试探性行为
+修改。新旧 source-level bag 用作相同输入对照，bag 本体继续保存在 Docker volume，不进入 Git。
 
 ---
 
@@ -2510,7 +2560,7 @@ header age；高频负载必须捕获 `consumed < latest` 的真实 backlog 和 
 consumed/timing 同步推进；simulated-clock 用例暂停 probe 输入，先观察 rollback 后恢复前的清空中间态。
 
 首轮 Sol 复核发现 consume 时间采样过早以及 clock-reset/coalescing 测试未锁定中间态，均已修复。
-最终 `gpt-5.6-sol` 只读复核无置信度不低于 80% 的剩余问题。`swarm_controller` 当前 `29/29` CTest
+最终 `gpt-5.6-sol` 只读复核无置信度不低于 80% 的剩余问题。该轮 `swarm_controller` 为 `29/29` CTest
 通过，合计 `242 tests, 0 errors, 0 failures`；时序敏感的 pipeline-load 连续 10 次、clock-reset 连续
 5 次通过。下一步是在默认三机真实负载中采集新字段，先完成延迟归因，再决定是否需要独立调度方案。
 
@@ -3133,6 +3183,8 @@ ws/src/swarm_controller/
 │   ├── GlobalFrontierDetector.hpp
 │   ├── GlobalTaskAllocator.hpp
 │   ├── LatestSnapshotSlot.hpp
+│   ├── MapMergeDiagnostics.hpp
+│   ├── MapPipelineTiming.hpp
 │   └── TaskLeaseTracker.hpp
 ├── src/
 │   ├── GlobalFrontierDetector.cpp
@@ -3148,6 +3200,8 @@ ws/src/swarm_controller/
 │   ├── TestTaskLeaseTracker.cpp
 │   ├── TestFrontierExplorationStrategy.cpp
 │   ├── TestSingleDroneExplorer.cpp
+│   ├── TestMapMergeDiagnostics.cpp
+│   ├── TestMapPipelineTiming.cpp
 │   ├── test_global_task_allocator_integration.py
 │   ├── test_global_task_allocator_clock_reset.py
 │   ├── test_global_task_allocator_pipeline.py
@@ -3200,14 +3254,17 @@ ws/src/swarm_controller/
   launch 文件 flake8 E501 失败，与 3-9 改动无关
 - **校准后当前复核：** support-v2、Component 审计和 allocator freshness 管线均已完成 Sol 只读复核；
   最新复核无待修高置信问题
-- **校准后当前验证：** 4 个包构建成功；`swarm_controller` 28/28 CTest 通过，合计
-  `238 tests, 0 errors, 0 failures`
+- **重构前最终验证：** Release 构建成功；`swarm_controller` 17 个 gtest 与 13 个 launch test 共
+  `30/30` CTest 通过，0 failure
 - **待验收项：** 三机 RViz 任务所有权、Standby / LocalFallback 状态切换及
   `enable_truth_audit:=true` 下的真值审计需人工确认；完成前 3-9 保持未勾选
 
 ---
 
-## Step 3-10：一键入口与测试
+## Step 3-10：一键入口与测试（重构后重定，当前不实施）
+
+> 以下保留为原 Phase 总验收目标，不是当前中央式基线的下一项工作。新架构确定后，应按新的节点角色、
+> 数据面和 N 机契约重写入口及测试矩阵，再执行本步。
 
 ```bash
 ros2 launch swarm_controller swarm.launch.xml num_drones:=3
@@ -3239,7 +3296,10 @@ ros2 launch swarm_controller swarm.launch.xml num_drones:=3
 
 ---
 
-## 硬验收判据
+## 硬验收判据（原 Phase 最终目标）
+
+> 当前只完成重构前参考基线收口，尚未满足多 Region 任务分配和 Phase 总验收；以下判据继续保留，
+> 不得因延期而删除或降级。
 
 1. **零真值依赖：** 规划 / 调度不使用洞穴拓扑真值  
 2. **覆盖演进：** 当前单调本地图输入下 known 体积总体增长；融合器允许合法来源快照删除、重置或翻转
@@ -3269,6 +3329,8 @@ ros2 launch swarm_controller swarm.launch.xml num_drones:=3
 [x] 3-6  多机 launch
 [x] 3-7  多机探索分散
 [x] 3-8  /global_map                   ← M2
-[ ] 3-9  全局 frontier 多机任务分配    ← M3
-[ ] 3-10 一键验收 + 文档
+[~] 3-9  基础实现/诊断已冻结；多 Region 分配验收在重构后继续    ← M3 未完成
+[~] 3-10 当前不启动；按新架构重定一键入口与总验收
 ```
+
+`[~]` 表示延期且需求保留，不表示完成。

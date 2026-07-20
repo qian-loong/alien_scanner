@@ -195,7 +195,7 @@ ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 
 ---
 
-### Phase 3：多机未知探索与地图融合 — **进行中（3-1～3-8 已完成）**
+### Phase 3：多机未知探索与地图融合 — **重构前收口（3-1～3-8 已完成）**
 
 **分支：** `phase/3-swarm-controller`
 
@@ -213,8 +213,8 @@ ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 | 3-6 | 多机 launch（`num_drones:=3`）感知栈 | ✅ |
 | 3-7 | 多机探索分散（peer 启发式 + 简化前向局部规划） | ✅ |
 | 3-8 | `/global_map` 融合 | ✅ |
-| 3-9 | 全局 frontier 多机任务分配（非全局路径规划） | ⬜ |
-| 3-10 | 一键 swarm + 测试验收 | ⬜ |
+| 3-9 | 全局 frontier 多机任务分配（非全局路径规划） | ⏸ 基础实现冻结，多 Region 验收延期 |
+| 3-10 | 一键 swarm + 测试验收 | ⏸ 按重构后架构重定 |
 
 **单机探索闭环摘要：** 感知→OctoMap→固定规模前向短段目标→执行→再选；候选点机体包络
 和直线路径必须为 known-free，无安全目标时执行有限 yaw 重扫并 Hold。细节见
@@ -226,16 +226,18 @@ ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 ROS-free `PeerStateTracker` 管理独立 position/goal 时效；全候选被 peer 占用时 Hold
 进入 `WaitingForPeer`；标准诊断可观测接线与过滤原因。默认局部规划收缩为基于 OctoMap
 的固定规模前向短段安全推进，不保存回退位姿、不发布向后恢复目标，也不执行随 frontier
-数量增长的候选邻域展开；无安全前向目标时有限 yaw 重扫后 Hold。分叉所有权、全局地图与
-全局地图与任务分配留给 3-8/3-9。3-7 实现与自动测试已完成；无 `/global_map`；launch
+数量增长的候选邻域展开；无安全前向目标时有限 yaw 重扫后 Hold。全局地图留给 3-8，分叉所有权与
+任务分配留给 3-9。3-7 实现与自动测试已完成；无 `/global_map`；launch
 `multi_drone_exploration.launch.py`。当前 peer position 仅软惩罚、active goal 仅做目标点
 硬分离，不提供机体、路径或时间维度的动态避碰保证；该能力必须作为独立安全层后续设计。
 
 **3-9 目标：** 在 `/global_map` 上提取经单环多次观测支撑的稳定 2.5D frontier 区域，结合
 各机本机 OctoMap 的 first-hop 可执行性做唯一任务所有权分配；入口或证据不足时保持 3-7
 本地探索。任务只引导本机 known-free 短跳，不引入长距离 A*，也不把全局图当作本机安全图。
-主体、support-v2、Component 语义审计和 allocator freshness 后台执行管线已实现并通过自动测试与
-代码复核；Component 行为修改尚未选定，3-9 仍待真实三机运行人工验收，因此进度表保持未勾选。
+主体、support-v2、Component 语义审计、allocator freshness 后台执行管线和 merger 分阶段诊断已实现，
+并通过自动测试与代码复核。当前冻结为中央式三机参考基线；Component 行为修改、多 Region
+`eligible_edges/matching/Assigned` 和真实三机任务生命周期验收延期到拓扑/地图数据面重构后，3-9 不视为
+完成。3-10 当前不启动。
 
 **跨 Phase 契约（摘要）：**
 
@@ -497,13 +499,16 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 [x] 0. 容器与环境（alien-scanner-dev + VcXsrv）
 [x] 1. Phase 1 — cave_world 包 + RViz2 看到洞穴
 [x] 2. Phase 2 — 3D 垂直环 fake LiDAR + fake_odom（见 docs/phases/phase-02-drone-scanner.md）
-[ ] 3. Phase 3 — 未知探索 + 俯仰环 + OctoMap + 多机调度（见 docs/phases/phase-03-swarm.md）
+[~] 3. Phase 3 — 重构前参考基线已收口；3-9 多 Region 验收延期，3-10 重定（见 docs/phases/phase-03-swarm.md）
 [ ] 4. Phase 4 — Mesh 与演示 polish
 [ ] 5. （可选）ros2 bag 录制 + README 演示 GIF
 ```
 
-**当前进度：** Phase 1、Phase 2 已完成；Phase 3 的 3-1～3-8 已完成，3-9 已完成实现、自动测试与
-代码复核，待真实三机运行人工验收；验收通过后执行 3-10 一键入口与总体验收（见
+`[~]` 表示当前阶段已冻结参考基线但仍有保留需求延期，不表示 Phase 完成。
+
+**当前进度：** Phase 1、Phase 2 已完成；Phase 3 已完成 3-1～3-8，并将 3-9 的基础实现、诊断、测试、
+Demo 与 replay 证据冻结为重构前参考基线。3-9 的多 Region 任务分配和真实任务生命周期验收仍是强制
+需求，但延期到拓扑/地图数据面重构后；3-10 按新架构重定，不在当前中央式实现上继续（见
 [`docs/phases/phase-03-swarm.md`](phases/phase-03-swarm.md)）。
 
 ---
@@ -531,5 +536,5 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 | 字段 | 值 |
 |------|-----|
 | 创建日期 | 2026-07-06 |
-| 最后更新 | 2026-07-19 |
-| 状态 | Phase 1–2 已完成；Phase 3 进行中（3-1～3-8 已完成；3-9 待真实运行人工验收）；分步细节见 `docs/phases/` |
+| 最后更新 | 2026-07-20 |
+| 状态 | Phase 1–2 已完成；Phase 3 重构前收口（3-1～3-8 已完成；3-9 多 Region 验收延期；3-10 重定）；分步细节见 `docs/phases/` |

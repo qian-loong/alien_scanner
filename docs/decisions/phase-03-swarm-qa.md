@@ -17,7 +17,7 @@
 | 多机 peer 状态可视化 | Step 3-7 | 每台 explorer 的 MarkerArray 包含自身状态和本机看到的 peer 输入 |
 | 多来源体素混合 | Step 3-8 | 完整快照替换、occupied 优先、无隐式重采样 |
 | 全局图使用边界 | Step 3-8/3-9 | `/global_map` 用于全局任务区域检测，不替代本机运动安全图 |
-| 全局 frontier 任务分配 | Step 3-9 | support-v2 已让真实 bag 产生 Region；Component 语义尚未选定最终修复；freshness 后台管线及 revision 级时延诊断已实现，等待真实负载归因与验收 |
+| 全局 frontier 任务分配 | Step 3-9 | 基础实现、support-v2、Component 审计和时延诊断已冻结；多 Region 匹配与真实任务生命周期验收延期到重构后，3-9 不视为完成 |
 
 ## 2. Step 3-3：本机体素状态
 
@@ -551,6 +551,13 @@ ERROR 或 FATAL。
 因此本轮冻结中央式三机参考基线：保留 revision/原子提交/分阶段诊断、Detector oracle、allocator epoch/
 revision/lease 和安全契约；延期 B、C、Component 行为、本机 stalled 恢复、Relay/稀疏拓扑、delta/
 keyframe、EdgeAggregator、角色/编队和 `N > 3`。3-9 保持未完成，3-10 不开始。
+
+### Q：收口后，3-9 多 Region 任务分配是否取消？
+
+没有取消。它是重构后的强制验收项：至少两个有效 Region、非零 eligible edge/matching、唯一 Assigned
+owner、lease/撤销/失效/重分配，以及真实三机 LocalFallback/Assigned/Standby 切换都必须完成。当前只
+冻结可复用的 Detector oracle、确定性匹配、epoch/revision/lease、后台管线和安全契约；部署位置、地图
+输入协议和通信拓扑允许在重构中替换。原 3-10 同样不是取消，而是等待新架构后重定一键入口和总验收。
 
 ### 决策结论
 
