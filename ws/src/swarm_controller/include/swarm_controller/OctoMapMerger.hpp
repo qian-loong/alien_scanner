@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -16,6 +17,9 @@ namespace SwarmController {
         double      resolution {0.1};
         std::size_t max_voxels_per_source {5'000'000U};
         std::size_t max_global_voxels {10'000'000U};
+
+        // Test-only fault injection. Production configurations leave this empty.
+        std::function<void()> commit_failure_hook;
     };
 
     enum class SourceUpdateStatus {
@@ -24,14 +28,34 @@ namespace SwarmController {
         Invalid,
     };
 
+    enum class SourceUpdateFailureStage {
+        None,
+        InvalidInput,
+        Normalize,
+        Resource,
+        DeltaPreflight,
+        Commit,
+    };
+
+    struct SourceUpdateStageTiming {
+        double normalize_seconds {};
+        double snapshot_compare_seconds {};
+        double delta_preflight_seconds {};
+        double contribution_tree_apply_seconds {};
+        double update_inner_occupancy_seconds {};
+        double source_commit_seconds {};
+    };
+
     struct SourceUpdateResult {
         SourceUpdateStatus status {SourceUpdateStatus::Invalid};
+        SourceUpdateFailureStage failure_stage {SourceUpdateFailureStage::None};
         bool               global_changed {false};
         std::uint64_t      source_revision {0U};
         std::uint64_t      global_revision {0U};
         std::size_t        added_keys {0U};
         std::size_t        removed_keys {0U};
         std::size_t        flipped_keys {0U};
+        SourceUpdateStageTiming timing {};
         std::string        reason;
 
         bool accepted() const
@@ -89,15 +113,19 @@ namespace SwarmController {
         };
 
         using SourceSnapshot = std::vector<VoxelRecord>;
+        using SourceMap = std::unordered_map<std::string, SourceSnapshot>;
         using ContributionMap = std::unordered_map<
                 octomap::OcTreeKey, ContributionCounts, octomap::OcTreeKey::KeyHash>;
 
-        SourceUpdateResult invalidResult(const std::string & reason) const;
+        SourceUpdateResult invalidResult(
+                const std::string & reason, SourceUpdateFailureStage failure_stage,
+                const SourceUpdateStageTiming & timing = {}) const;
         bool normalizeSource(
                 const octomap::OcTree & source, SourceSnapshot & snapshot,
-                std::string & reason) const;
+                std::string & reason, SourceUpdateFailureStage & failure_stage) const;
         SourceUpdateResult replaceSource(
-                const std::string & source_id, SourceSnapshot snapshot, bool remove_entry);
+                const std::string & source_id, SourceSnapshot snapshot, bool remove_entry,
+                SourceUpdateStageTiming timing = {});
 
         static bool keyLess(const octomap::OcTreeKey & lhs, const octomap::OcTreeKey & rhs);
         static bool recordsEqual(const SourceSnapshot & lhs, const SourceSnapshot & rhs);
@@ -107,7 +135,7 @@ namespace SwarmController {
 
         OctoMapMergerConfig                                      config_;
         octomap::OcTree                                          tree_;
-        std::unordered_map<std::string, SourceSnapshot>          sources_;
+        SourceMap                                                 sources_;
         ContributionMap                                          contributions_;
         std::uint64_t                                            source_revision_ {0U};
         std::uint64_t                                            global_revision_ {0U};

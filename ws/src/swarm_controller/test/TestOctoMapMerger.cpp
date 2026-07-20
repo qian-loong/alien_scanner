@@ -158,6 +158,10 @@ namespace SwarmController {
         EXPECT_EQ(repeat.global_revision, first.global_revision);
         EXPECT_EQ(merger.sourceVoxelCount("source"), 1U);
         EXPECT_EQ(merger.knownCount(), 1U);
+        EXPECT_GE(first.timing.normalize_seconds, 0.0);
+        EXPECT_GE(first.timing.snapshot_compare_seconds, 0.0);
+        EXPECT_GE(repeat.timing.normalize_seconds, 0.0);
+        EXPECT_GE(repeat.timing.snapshot_compare_seconds, 0.0);
     }
 
     TEST(OctoMapMergerTest, ReplacesSourceAndPreservesOtherContributions)
@@ -309,6 +313,8 @@ namespace SwarmController {
         const SourceUpdateResult result = merger.updateSource("source", invalid);
 
         EXPECT_EQ(result.status, SourceUpdateStatus::Invalid);
+        EXPECT_EQ(result.failure_stage, SourceUpdateFailureStage::Normalize);
+        EXPECT_GE(result.timing.normalize_seconds, 0.0);
         EXPECT_EQ(merger.sourceRevision(), source_revision);
         EXPECT_EQ(merger.globalRevision(), global_revision);
         EXPECT_EQ(merger.knownCount(), 1U);
@@ -328,6 +334,8 @@ namespace SwarmController {
         const SourceUpdateResult result = merger.updateSource("source", too_large);
 
         EXPECT_EQ(result.status, SourceUpdateStatus::Invalid);
+        EXPECT_EQ(result.failure_stage, SourceUpdateFailureStage::Resource);
+        EXPECT_GE(result.timing.normalize_seconds, 0.0);
         EXPECT_EQ(merger.knownCount(), 1U);
         EXPECT_EQ(query(merger.tree(), 0.05F, 0.05F, 0.05F), QueryState::Occupied);
         EXPECT_EQ(query(merger.tree(), 1.05F, 0.05F, 0.05F), QueryState::Unknown);
@@ -345,10 +353,108 @@ namespace SwarmController {
         const SourceUpdateResult result = merger.updateSource("second", second);
 
         EXPECT_EQ(result.status, SourceUpdateStatus::Invalid);
+        EXPECT_EQ(result.failure_stage, SourceUpdateFailureStage::Resource);
+        EXPECT_GE(result.timing.delta_preflight_seconds, 0.0);
         EXPECT_EQ(merger.sourceCount(), 1U);
         EXPECT_EQ(merger.knownCount(), 1U);
         EXPECT_EQ(query(merger.tree(), 0.05F, 0.05F, 0.05F), QueryState::Occupied);
         EXPECT_EQ(query(merger.tree(), 1.05F, 0.05F, 0.05F), QueryState::Unknown);
+    }
+
+    TEST(OctoMapMergerTest, CommitExceptionLeavesAllStateUnchanged)
+    {
+        bool fail_commit = false;
+        OctoMapMergerConfig merger_config = config();
+        merger_config.commit_failure_hook = [&fail_commit]() {
+            if(fail_commit) {
+                throw std::runtime_error("injected commit failure");
+            }
+        };
+        OctoMapMerger merger(merger_config);
+        octomap::OcTree initial(0.1);
+        octomap::OcTree replacement(0.1);
+        setState(initial, 0.05F, 0.05F, 0.05F, true);
+        setState(replacement, 1.05F, 0.05F, 0.05F, false);
+        ASSERT_EQ(
+                merger.updateSource("source", initial).status,
+                SourceUpdateStatus::AcceptedChanged);
+
+        const std::uint64_t source_revision = merger.sourceRevision();
+        const std::uint64_t global_revision = merger.globalRevision();
+        const std::size_t source_count = merger.sourceCount();
+        const std::size_t source_voxels = merger.sourceVoxelCount("source");
+        const std::size_t known_count = merger.knownCount();
+        const std::size_t occupied_count = merger.occupiedCount();
+
+        fail_commit = true;
+        const SourceUpdateResult failed = merger.updateSource("source", replacement);
+
+        EXPECT_EQ(failed.status, SourceUpdateStatus::Invalid);
+        EXPECT_EQ(failed.failure_stage, SourceUpdateFailureStage::Commit);
+        EXPECT_EQ(failed.source_revision, source_revision);
+        EXPECT_EQ(failed.global_revision, global_revision);
+        EXPECT_EQ(merger.sourceRevision(), source_revision);
+        EXPECT_EQ(merger.globalRevision(), global_revision);
+        EXPECT_EQ(merger.sourceCount(), source_count);
+        EXPECT_EQ(merger.sourceVoxelCount("source"), source_voxels);
+        EXPECT_EQ(merger.knownCount(), known_count);
+        EXPECT_EQ(merger.occupiedCount(), occupied_count);
+        EXPECT_EQ(query(merger.tree(), 0.05F, 0.05F, 0.05F), QueryState::Occupied);
+        EXPECT_EQ(query(merger.tree(), 1.05F, 0.05F, 0.05F), QueryState::Unknown);
+
+        fail_commit = false;
+        const SourceUpdateResult recovered = merger.updateSource("source", replacement);
+        EXPECT_EQ(recovered.status, SourceUpdateStatus::AcceptedChanged);
+        EXPECT_EQ(merger.tree().getNumLeafNodes(), 1U);
+        EXPECT_EQ(query(merger.tree(), 0.05F, 0.05F, 0.05F), QueryState::Unknown);
+        EXPECT_EQ(query(merger.tree(), 1.05F, 0.05F, 0.05F), QueryState::Free);
+    }
+
+    TEST(OctoMapMergerTest, ReplacesOnlyKnownVoxelInReverseKeyOrder)
+    {
+        OctoMapMerger merger(config());
+        octomap::OcTree initial(0.1);
+        octomap::OcTree replacement(0.1);
+        setState(initial, 1.05F, 0.05F, 0.05F, true);
+        setState(replacement, -1.05F, 0.05F, 0.05F, false);
+        ASSERT_EQ(
+                merger.updateSource("source", initial).status,
+                SourceUpdateStatus::AcceptedChanged);
+
+        const SourceUpdateResult result = merger.updateSource("source", replacement);
+
+        EXPECT_EQ(result.status, SourceUpdateStatus::AcceptedChanged);
+        EXPECT_EQ(merger.knownCount(), 1U);
+        EXPECT_EQ(merger.freeCount(), 1U);
+        EXPECT_EQ(merger.tree().getNumLeafNodes(), 1U);
+        EXPECT_EQ(query(merger.tree(), 1.05F, 0.05F, 0.05F), QueryState::Unknown);
+        EXPECT_EQ(query(merger.tree(), -1.05F, 0.05F, 0.05F), QueryState::Free);
+    }
+
+    TEST(OctoMapMergerTest, ReplacesMultipleKeysWithoutLeavingOldTreeLeaves)
+    {
+        OctoMapMerger merger(config());
+        octomap::OcTree initial(0.1);
+        octomap::OcTree replacement(0.1);
+        setState(initial, 1.05F, 0.05F, 0.05F, true);
+        setState(initial, 2.05F, 0.05F, 0.05F, false);
+        setState(replacement, -2.05F, 0.05F, 0.05F, false);
+        setState(replacement, -1.05F, 0.05F, 0.05F, true);
+        ASSERT_EQ(
+                merger.updateSource("source", initial).status,
+                SourceUpdateStatus::AcceptedChanged);
+
+        const SourceUpdateResult result = merger.updateSource("source", replacement);
+
+        EXPECT_EQ(result.status, SourceUpdateStatus::AcceptedChanged);
+        EXPECT_EQ(merger.knownCount(), 2U);
+        EXPECT_EQ(merger.freeCount(), 1U);
+        EXPECT_EQ(merger.occupiedCount(), 1U);
+        EXPECT_EQ(merger.tree().getNumLeafNodes(), 2U);
+        EXPECT_EQ(query(merger.tree(), 1.05F, 0.05F, 0.05F), QueryState::Unknown);
+        EXPECT_EQ(query(merger.tree(), 2.05F, 0.05F, 0.05F), QueryState::Unknown);
+        EXPECT_EQ(query(merger.tree(), -2.05F, 0.05F, 0.05F), QueryState::Free);
+        EXPECT_EQ(query(merger.tree(), -1.05F, 0.05F, 0.05F), QueryState::Occupied);
     }
 
     TEST(OctoMapMergerTest, RejectsEmptySourceIdWithoutMutation)
@@ -360,6 +466,7 @@ namespace SwarmController {
         const SourceUpdateResult result = merger.updateSource("", source);
 
         EXPECT_EQ(result.status, SourceUpdateStatus::Invalid);
+        EXPECT_EQ(result.failure_stage, SourceUpdateFailureStage::InvalidInput);
         EXPECT_EQ(merger.sourceCount(), 0U);
         EXPECT_EQ(merger.knownCount(), 0U);
     }

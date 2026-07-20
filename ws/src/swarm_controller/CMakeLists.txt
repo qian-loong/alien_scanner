@@ -102,6 +102,7 @@ install(
         include/swarm_controller/SingleDroneExplorerNode.hpp
         include/swarm_controller/FrontierGeometryDemo.hpp
         include/swarm_controller/FrontierComponentAuditReplay.hpp
+        include/swarm_controller/MapMergeDiagnostics.hpp
         DESTINATION include/swarm_controller
 )
 install(
@@ -381,6 +382,13 @@ if(BUILD_TESTING)
     ament_add_gtest(TestMapPipelineTiming test/TestMapPipelineTiming.cpp)
     if(TARGET TestMapPipelineTiming)
         target_include_directories(TestMapPipelineTiming PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
+    ament_add_gtest(TestMapMergeDiagnostics test/TestMapMergeDiagnostics.cpp)
+    if(TARGET TestMapMergeDiagnostics)
+        target_include_directories(TestMapMergeDiagnostics PUBLIC
                 $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         )
     endif()

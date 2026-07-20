@@ -1,14 +1,25 @@
 #include "swarm_controller/OctoMapMerger.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
+#include <new>
 #include <stdexcept>
 #include <utility>
 
 namespace SwarmController {
 
     namespace {
+
+        using SteadyClock = std::chrono::steady_clock;
+
+        double elapsedSeconds(
+                const SteadyClock::time_point start,
+                const SteadyClock::time_point finish)
+        {
+            return std::chrono::duration<double>(finish - start).count();
+        }
 
         bool sameKey(const octomap::OcTreeKey & lhs, const octomap::OcTreeKey & rhs)
         {
@@ -38,21 +49,37 @@ namespace SwarmController {
             const std::string & source_id, const octomap::OcTree & source)
     {
         if(source_id.empty()) {
-            return invalidResult("source_id must not be empty");
+            return invalidResult(
+                    "source_id must not be empty", SourceUpdateFailureStage::InvalidInput);
         }
 
         SourceSnapshot snapshot;
-        std::string    reason;
-        if(!normalizeSource(source, snapshot, reason)) {
-            return invalidResult(reason);
+        std::string                 reason;
+        SourceUpdateFailureStage    failure_stage = SourceUpdateFailureStage::None;
+        SourceUpdateStageTiming     timing;
+        const auto normalize_start = SteadyClock::now();
+        try {
+            if(!normalizeSource(source, snapshot, reason, failure_stage)) {
+                timing.normalize_seconds = elapsedSeconds(
+                        normalize_start, SteadyClock::now());
+                return invalidResult(reason, failure_stage, timing);
+            }
+        } catch(const std::bad_alloc &) {
+            timing.normalize_seconds = elapsedSeconds(
+                    normalize_start, SteadyClock::now());
+            return invalidResult(
+                    "source normalization allocation failed",
+                    SourceUpdateFailureStage::Resource, timing);
         }
-        return replaceSource(source_id, std::move(snapshot), false);
+        timing.normalize_seconds = elapsedSeconds(normalize_start, SteadyClock::now());
+        return replaceSource(source_id, std::move(snapshot), false, timing);
     }
 
     SourceUpdateResult OctoMapMerger::removeSource(const std::string & source_id)
     {
         if(source_id.empty()) {
-            return invalidResult("source_id must not be empty");
+            return invalidResult(
+                    "source_id must not be empty", SourceUpdateFailureStage::InvalidInput);
         }
         if(sources_.find(source_id) == sources_.end()) {
             SourceUpdateResult result;
@@ -110,20 +137,25 @@ namespace SwarmController {
         return occupied_count_;
     }
 
-    SourceUpdateResult OctoMapMerger::invalidResult(const std::string & reason) const
+    SourceUpdateResult OctoMapMerger::invalidResult(
+            const std::string & reason, const SourceUpdateFailureStage failure_stage,
+            const SourceUpdateStageTiming & timing) const
     {
         SourceUpdateResult result;
         result.status          = SourceUpdateStatus::Invalid;
+        result.failure_stage   = failure_stage;
         result.source_revision = source_revision_;
         result.global_revision = global_revision_;
+        result.timing           = timing;
         result.reason          = reason;
         return result;
     }
 
     bool OctoMapMerger::normalizeSource(
             const octomap::OcTree & source, SourceSnapshot & snapshot,
-            std::string & reason) const
+            std::string & reason, SourceUpdateFailureStage & failure_stage) const
     {
+        failure_stage = SourceUpdateFailureStage::Normalize;
         const double tolerance = 1.0e-6
                                  * std::max(
                                          {1.0, std::abs(config_.resolution),
@@ -144,6 +176,7 @@ namespace SwarmController {
             const unsigned level = source.getTreeDepth() - it.getDepth();
             if(level >= std::numeric_limits<std::uint64_t>::digits) {
                 reason = "source leaf expansion width overflows";
+                failure_stage = SourceUpdateFailureStage::Resource;
                 return false;
             }
 
@@ -156,10 +189,12 @@ namespace SwarmController {
                || !checkedAdd(expanded_count, cube, next))
             {
                 reason = "source leaf expansion count overflows";
+                failure_stage = SourceUpdateFailureStage::Resource;
                 return false;
             }
             if(next > config_.max_voxels_per_source) {
                 reason = "source snapshot exceeds max_voxels_per_source";
+                failure_stage = SourceUpdateFailureStage::Resource;
                 return false;
             }
             expanded_count = next;
@@ -209,30 +244,60 @@ namespace SwarmController {
     }
 
     SourceUpdateResult OctoMapMerger::replaceSource(
-            const std::string & source_id, SourceSnapshot snapshot, const bool remove_entry)
+            const std::string & source_id, SourceSnapshot snapshot,
+            const bool remove_entry, SourceUpdateStageTiming timing)
     {
         const auto old_it = sources_.find(source_id);
         const SourceSnapshot * old_snapshot = old_it == sources_.end() ? nullptr : &old_it->second;
-        if(!remove_entry && old_snapshot != nullptr && recordsEqual(*old_snapshot, snapshot)) {
+
+        const auto compare_start = SteadyClock::now();
+        const bool unchanged = !remove_entry && old_snapshot != nullptr
+                               && recordsEqual(*old_snapshot, snapshot);
+        timing.snapshot_compare_seconds = elapsedSeconds(
+                compare_start, SteadyClock::now());
+        if(unchanged) {
             SourceUpdateResult result;
             result.status          = SourceUpdateStatus::AcceptedUnchanged;
             result.source_revision = source_revision_;
             result.global_revision = global_revision_;
+            result.timing           = timing;
             return result;
         }
+
+        const auto preflight_start = SteadyClock::now();
+        const auto reject_preflight = [this, &timing, preflight_start](
+                                              const std::string & reason,
+                                              const SourceUpdateFailureStage stage) {
+            timing.delta_preflight_seconds = elapsedSeconds(
+                    preflight_start, SteadyClock::now());
+            return invalidResult(reason, stage, timing);
+        };
 
         const std::size_t old_size = old_snapshot == nullptr ? 0U : old_snapshot->size();
         if(total_source_voxels_ < old_size
            || snapshot.size() > std::numeric_limits<std::size_t>::max()
                                       - (total_source_voxels_ - old_size))
         {
-            return invalidResult("total source voxel count overflows");
+            return reject_preflight(
+                    "total source voxel count overflows",
+                    SourceUpdateFailureStage::Resource);
+        }
+        if(snapshot.size() > std::numeric_limits<std::size_t>::max() - old_size) {
+            return reject_preflight(
+                    "source delta capacity overflows",
+                    SourceUpdateFailureStage::Resource);
         }
         const std::size_t projected_source_voxels =
                 total_source_voxels_ - old_size + snapshot.size();
 
         std::vector<PendingDelta> deltas;
-        deltas.reserve(old_size + snapshot.size());
+        try {
+            deltas.reserve(old_size + snapshot.size());
+        } catch(const std::bad_alloc &) {
+            return reject_preflight(
+                    "source delta allocation failed",
+                    SourceUpdateFailureStage::Resource);
+        }
         SourceUpdateResult result;
         result.status = SourceUpdateStatus::AcceptedChanged;
 
@@ -280,7 +345,9 @@ namespace SwarmController {
                                                 ? new_counts.occupied_sources
                                                 : new_counts.free_sources;
                 if(count == 0U) {
-                    return invalidResult("internal source contribution underflow");
+                    return reject_preflight(
+                            "internal source contribution underflow",
+                            SourceUpdateFailureStage::DeltaPreflight);
                 }
                 --count;
             }
@@ -289,7 +356,9 @@ namespace SwarmController {
                                                 ? new_counts.occupied_sources
                                                 : new_counts.free_sources;
                 if(count == std::numeric_limits<std::uint32_t>::max()) {
-                    return invalidResult("source contribution count overflows");
+                    return reject_preflight(
+                            "source contribution count overflows",
+                            SourceUpdateFailureStage::DeltaPreflight);
                 }
                 ++count;
             }
@@ -298,14 +367,18 @@ namespace SwarmController {
             const DerivedState new_global = derivedState(new_counts);
             if(old_global == DerivedState::Unknown && new_global != DerivedState::Unknown) {
                 if(projected_global_voxels == std::numeric_limits<std::size_t>::max()) {
-                    return invalidResult("global voxel count overflows");
+                    return reject_preflight(
+                            "global voxel count overflows",
+                            SourceUpdateFailureStage::Resource);
                 }
                 ++projected_global_voxels;
             } else if(old_global != DerivedState::Unknown
                       && new_global == DerivedState::Unknown)
             {
                 if(projected_global_voxels == 0U) {
-                    return invalidResult("internal global voxel count underflow");
+                    return reject_preflight(
+                            "internal global voxel count underflow",
+                            SourceUpdateFailureStage::DeltaPreflight);
                 }
                 --projected_global_voxels;
             }
@@ -320,46 +393,158 @@ namespace SwarmController {
         }
 
         if(projected_global_voxels > config_.max_global_voxels) {
-            return invalidResult("merged snapshot exceeds max_global_voxels");
-        }
-
-        contributions_.reserve(projected_global_voxels);
-        if(!remove_entry && old_it == sources_.end()) {
-            sources_.reserve(sources_.size() + 1U);
+            return reject_preflight(
+                    "merged snapshot exceeds max_global_voxels",
+                    SourceUpdateFailureStage::Resource);
         }
 
         std::size_t global_changed_keys = 0U;
+        std::size_t projected_occupied_count = occupied_count_;
+        std::size_t applied_global_voxels = contributions_.size();
+        std::size_t peak_global_voxels = applied_global_voxels;
         for(const PendingDelta & delta : deltas) {
-            if(delta.new_global == DerivedState::Unknown) {
-                contributions_.erase(delta.key);
-            } else {
-                contributions_.insert_or_assign(delta.key, delta.counts);
-            }
-
             if(delta.old_global == delta.new_global) {
                 continue;
             }
             ++global_changed_keys;
+            if(delta.old_global == DerivedState::Unknown) {
+                ++applied_global_voxels;
+                peak_global_voxels = std::max(
+                        peak_global_voxels, applied_global_voxels);
+            } else if(delta.new_global == DerivedState::Unknown) {
+                --applied_global_voxels;
+            }
             if(delta.old_global == DerivedState::Occupied) {
-                --occupied_count_;
+                if(projected_occupied_count == 0U) {
+                    return reject_preflight(
+                            "internal occupied voxel count underflow",
+                            SourceUpdateFailureStage::DeltaPreflight);
+                }
+                --projected_occupied_count;
             }
             if(delta.new_global == DerivedState::Occupied) {
-                ++occupied_count_;
-            }
-
-            switch(delta.new_global) {
-            case DerivedState::Unknown:
-                tree_.deleteNode(delta.key);
-                break;
-            case DerivedState::Free:
-                tree_.setNodeValue(delta.key, tree_.getClampingThresMinLog(), true);
-                break;
-            case DerivedState::Occupied:
-                tree_.setNodeValue(delta.key, tree_.getClampingThresMaxLog(), true);
-                break;
+                if(projected_occupied_count
+                   == std::numeric_limits<std::size_t>::max())
+                {
+                    return reject_preflight(
+                            "occupied voxel count overflows",
+                            SourceUpdateFailureStage::Resource);
+                }
+                ++projected_occupied_count;
             }
         }
+        if(applied_global_voxels != projected_global_voxels) {
+            return reject_preflight(
+                    "internal projected global voxel count mismatch",
+                    SourceUpdateFailureStage::DeltaPreflight);
+        }
 
+        ContributionMap prepared_new_contributions;
+        SourceMap prepared_new_source;
+        const bool inserting_new_source =
+                !remove_entry && old_it == sources_.end();
+        try {
+            if(peak_global_voxels > contributions_.size()) {
+                contributions_.reserve(peak_global_voxels);
+            }
+            std::size_t new_contribution_count = 0U;
+            for(const PendingDelta & delta : deltas) {
+                if(delta.old_global == DerivedState::Unknown
+                   && delta.new_global != DerivedState::Unknown)
+                {
+                    ++new_contribution_count;
+                }
+            }
+            prepared_new_contributions.reserve(new_contribution_count);
+            for(const PendingDelta & delta : deltas) {
+                if(delta.old_global == DerivedState::Unknown
+                   && delta.new_global != DerivedState::Unknown)
+                {
+                    prepared_new_contributions.emplace(delta.key, delta.counts);
+                }
+            }
+
+            if(inserting_new_source) {
+                sources_.reserve(sources_.size() + 1U);
+                prepared_new_source.reserve(1U);
+                prepared_new_source.emplace(source_id, std::move(snapshot));
+            }
+        } catch(const std::bad_alloc &) {
+            return reject_preflight(
+                    "merger commit preparation allocation failed",
+                    SourceUpdateFailureStage::Resource);
+        }
+        timing.delta_preflight_seconds = elapsedSeconds(
+                preflight_start, SteadyClock::now());
+
+        if(config_.commit_failure_hook) {
+            const auto hook_start = SteadyClock::now();
+            try {
+                config_.commit_failure_hook();
+            } catch(...) {
+                timing.source_commit_seconds = elapsedSeconds(
+                        hook_start, SteadyClock::now());
+                return invalidResult(
+                        "source commit hook failed",
+                        SourceUpdateFailureStage::Commit, timing);
+            }
+            timing.source_commit_seconds = elapsedSeconds(
+                    hook_start, SteadyClock::now());
+        }
+
+        const auto apply_start = SteadyClock::now();
+        // Apply known states before removals so replacing the only key never
+        // expands an empty OcTree root carrying the deleted key's old value.
+        for(const PendingDelta & delta : deltas) {
+            if(delta.old_global == delta.new_global
+               || delta.new_global == DerivedState::Unknown)
+            {
+                continue;
+            }
+            if(delta.new_global == DerivedState::Free) {
+                tree_.setNodeValue(
+                        delta.key, tree_.getClampingThresMinLog(), true);
+            } else {
+                tree_.setNodeValue(
+                        delta.key, tree_.getClampingThresMaxLog(), true);
+            }
+        }
+        for(const PendingDelta & delta : deltas) {
+            if(delta.old_global == delta.new_global
+               || delta.new_global != DerivedState::Unknown)
+            {
+                continue;
+            }
+            tree_.deleteNode(delta.key);
+        }
+
+        for(const PendingDelta & delta : deltas) {
+            if(delta.new_global == DerivedState::Unknown) {
+                contributions_.erase(delta.key);
+            } else if(delta.old_global == DerivedState::Unknown) {
+                auto prepared = prepared_new_contributions.extract(delta.key);
+                if(prepared.empty()) {
+                    throw std::logic_error(
+                            "prepared contribution missing during commit");
+                }
+                const auto inserted = contributions_.insert(std::move(prepared));
+                if(!inserted.inserted) {
+                    throw std::logic_error(
+                            "prepared contribution already exists during commit");
+                }
+            } else {
+                const auto existing = contributions_.find(delta.key);
+                if(existing == contributions_.end()) {
+                    throw std::logic_error(
+                            "existing contribution missing during commit");
+                }
+                existing->second = delta.counts;
+            }
+        }
+        timing.contribution_tree_apply_seconds = elapsedSeconds(
+                apply_start, SteadyClock::now());
+
+        const auto inner_start = SteadyClock::now();
         if(global_changed_keys > 0U) {
             if(projected_global_voxels == 0U) {
                 tree_.clear();
@@ -369,16 +554,32 @@ namespace SwarmController {
             ++global_revision_;
             result.global_changed = true;
         }
+        timing.update_inner_occupancy_seconds = elapsedSeconds(
+                inner_start, SteadyClock::now());
 
+        const auto commit_start = SteadyClock::now();
         if(remove_entry) {
             sources_.erase(source_id);
+        } else if(inserting_new_source) {
+            auto prepared = prepared_new_source.extract(source_id);
+            if(prepared.empty()) {
+                throw std::logic_error("prepared source missing during commit");
+            }
+            const auto inserted = sources_.insert(std::move(prepared));
+            if(!inserted.inserted) {
+                throw std::logic_error("prepared source already exists during commit");
+            }
         } else {
-            sources_.insert_or_assign(source_id, std::move(snapshot));
+            sources_.find(source_id)->second = std::move(snapshot);
         }
+        occupied_count_ = projected_occupied_count;
         total_source_voxels_ = projected_source_voxels;
         ++source_revision_;
         result.source_revision = source_revision_;
         result.global_revision = global_revision_;
+        timing.source_commit_seconds += elapsedSeconds(
+                commit_start, SteadyClock::now());
+        result.timing = timing;
         return result;
     }
 

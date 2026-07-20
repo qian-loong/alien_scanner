@@ -17,7 +17,7 @@
 | 多机 peer 状态可视化 | Step 3-7 | 每台 explorer 的 MarkerArray 包含自身状态和本机看到的 peer 输入 |
 | 多来源体素混合 | Step 3-8 | 完整快照替换、occupied 优先、无隐式重采样 |
 | 全局图使用边界 | Step 3-8/3-9 | `/global_map` 用于全局任务区域检测，不替代本机运动安全图 |
-| 全局 frontier 任务分配 | Step 3-9 | support-v2 已让真实 bag 产生 Region；Component 语义尚未选定最终修复，freshness 后台管线已实现并通过自动验证，尚未完成真实运行验收 |
+| 全局 frontier 任务分配 | Step 3-9 | support-v2 已让真实 bag 产生 Region；Component 语义尚未选定最终修复；freshness 后台管线及 revision 级时延诊断已实现，等待真实负载归因与验收 |
 
 ## 2. Step 3-3：本机体素状态
 
@@ -338,9 +338,94 @@ applied 193 的任一年龄超过 5 s，allocator 仍必须回到 `LocalFallback
 耗时约为 2.6～5.1 s，单 worker 还要轮询三份 local decode。receive age 尚未超过 5 s 时 freshness
 仍可能为 0，说明 applied revision 的 header stamp age 也已超限。
 
-现有诊断没有将 applied revision 的 header age、queue wait、decode、detect、worker-complete 到 timer
-apply wait 分开，尚不能唯一归因。下一步先增加绑定 revision 的有界时延诊断：阶段耗时使用 steady
-clock，header age 使用 ROS clock；在证据完成前不改 worker 调度，也不增大 timeout。
+revision 级有界时延诊断现已补齐。global map 与每份 local map 都发布最后一次 consumed revision 的：
+
+- accepted 到 worker claim 的 queue wait；
+- decode、global detect、worker 总耗时；
+- worker complete 到 timer claim/apply 的 apply wait；
+- receive 到 consume 的总延迟；
+- receive 时和 consume 时的 header age。
+
+queue/decode/detect/apply/total 使用 steady clock，header age 使用 ROS clock。当前 applied revision 另行
+发布 receive age 和 header age；失败结果会推进 consumed timing，但不会覆盖 applied revision/age。诊断
+只保留每个来源最后一次 consumed timing 和当前 applied 状态，不保存无界历史。
+
+自动测试已覆盖旧 header、失败 consumed-but-not-applied、真实 backlog 下的 pending coalescing，以及
+ROS clock rollback 后恢复前的清空中间态。该实现仍未改变单 worker round-robin、5 s freshness timeout、
+Component/方向语义或本机探索算法。下一步应在默认三机真实负载中采集这些字段，连续多个周期比较
+queue、local decode、global detect、apply wait 与 header lag 后，再决定是否需要独立评审调度修改。
+
+2026-07-19 随后完成关闭 RViz、开启 truth audit 和 detector stage timing 的 180 秒稳态采集。按
+`last_consumed_revision` 去重后共有 38 个 global revision；revision 从 72 推进到 110，
+`processing_failures=0`、`worker_failures=0`，但 181 个 allocator 周期全部为 `global_map_fresh=0`。
+关键中位数为：
+
+| 阶段 | 中位耗时/年龄 |
+|------|--------------:|
+| merger 实际重融合周期 | 4.07 s |
+| global map 到达 allocator 时的 header age | 4.80 s |
+| global queue wait | 2.56 s |
+| global decode | 0.28 s |
+| global detect | 3.41 s |
+| global apply wait | 0.76 s |
+| global receive -> consume | 7.09 s |
+| global consume 时 header age | 11.87 s |
+
+Detector 的 3.34 秒内部总耗时中，leaf scan 中位 3.17 秒；vertical、support、component 分别只有
+0.08、0.05、0.02 秒。三份 local decode 中位数分别为 0.11、0.08、0.18 秒，相加约 0.38 秒。
+因此 local round-robin 会增加延迟，但不是当前主要瓶颈。即使理想化消除全部 local decode、queue 和
+apply wait，4.80 秒的到达 header age 再加 global decode/detect 仍明显超过 5 秒。当前证据不支持先做
+local 加权调度或仅增加 worker；下一方案必须同时处理上游 merger 全量重融合和 Detector 近百万 free
+voxel 的全量 leaf scan，且不能通过重写 header stamp 或增大 timeout 隐藏观测年龄。
+
+同轮 truth audit 的 8007 个状态全部为 `Clear`。Detector 已从 1 个增长到 6 个 accepted Region，但因
+allocator 输入全程不健康，`eligible_edges` 和 `matching_cardinality` 仍为 0，不能用本轮判断最终任务
+匹配效果。原始本地证据保存于 `ws/log/allocator_freshness_capture.json`，该目录属于 colcon 忽略输出，
+不进入 Git。
+
+### Q：merger 的历史 4.07 秒具体耗在哪里，是否应先改通信拓扑？
+
+A-only 已增加独立 `merge_cycle_id` 和 source/cycle 分阶段诊断，不修改融合或发布语义。Release 默认三机
+连续采集 `181.49 s`，得到 182 个连续 cycle，全部 accepted；关键 p50/p90 为：
+
+| 阶段 | p50 | p90 |
+|------|----:|----:|
+| cycle total | 0.561 s | 0.631 s |
+| 三份 source decode | 0.134 s | 0.159 s |
+| decode cleanup | 0.088 s | 0.104 s |
+| normalize | 0.203 s | 0.230 s |
+| `updateInnerOccupancy` | 0.027 s | 0.043 s |
+| serialize | 0.091 s | 0.119 s |
+
+`decode + normalize` 占 cycle p50/p90 约 `60.1% / 61.6%`，是当前 merger 主成本；snapshot compare、
+delta/apply 和 inner update 不是主要部分。accounting remainder ratio p90 仅 `0.028%`，诊断覆盖完整。
+
+本次固定为 Release；历史 `4.07 s` 采集没有与本次冻结成相同 build profile/运行窗口，因此不能将差异
+解释为 A 的优化，A 本身不改变性能行为。Release 本轮 182 个 allocator 样本全部 `global_map_fresh=1`，
+processing/worker/resource/envelope failures 为 0，truth audit 21,801 次全部 `Clear`。
+
+这说明未来 source delta 或并行 source preparation 可能有效，但仅改 peer/Relay 拓扑不会自动减少中央
+merger 的完整 source 处理量。当前不存在 Relay 类型，本轮不实现拓扑、增量地图或边缘聚合。原计划是
+先完成 B，再用 A+B 同配置复测决定 C；该计划已被 2026-07-20 的参考基线收口决策取代，B/C 延期。
+
+2026-07-20 的 Sol 复核后，诊断实现又完成了边界收紧：cycle 前后 source/global revision 已发布到
+`DiagnosticArray`；`coalesced_before_claim` 是当前 pending slot 的计数，下一次单帧 claim 会回到 0；
+`fullMapToMsg()` 的返回失败和抛异常都保留为 `merge_applied=1/published=0/serialization_failure`，不会
+退出 merger。单一旧 key 跨位置替换时先处理新增状态，再处理删除状态，并增加反向、多 key 和最终 leaf 数
+测试，避免空 root 继承旧 occupied。
+
+异常边界遵循 3-8 既有契约：会返回 `Invalid` 的 envelope/normalize/resource/delta-preflight 以及受控
+commit hook 均在逻辑变更前拒绝；提交阶段实际 `bad_alloc` 不是可恢复业务错误，节点不捕获后继续运行，避免
+出现 contributions/tree 已变而 source snapshot/revision 未同步的“继续服务”状态。为避免诊断改变被测性能，
+未采用每个 cycle 全量复制三份状态的方案；该方案在短 Release smoke 中把 cycle p50 从 `0.561 s` 推到
+`0.928 s`，且 accounting remainder p90 达 `13.86%`。最终增量候选的 56-cycle 短 smoke 中 cycle
+p50/p90 为 `0.651/0.739 s`，contribution/tree apply p50 低于 `0.001 s`、source commit p50 约
+`7 us`、remainder ratio p90 为 `0.035%`；57 个 allocator 样本全部 fresh 且失败计数为 0。正式性能
+结论仍以固定配置的长窗口复测为准。
+
+clock launch 测试现在先确认回拨前合法 watermark，再在回拨后发送低于旧 watermark 的 stamp，断言
+envelope rejection、cycle ID、revision 和 output stamp 不变，随后用更高 stamp 验证恢复。它与纯 helper
+共同覆盖 future/epoch age invalidation，不改变原有 admission 语义。
 
 ### Q：绿色球为什么与无人机不在同一岔道，三机又为什么停止？
 
@@ -404,14 +489,82 @@ failure bins 已删除。
 component 中 8,690 个因 `min_columns` 拒绝、460 个因 direction consistency 拒绝。本轮没有降低
 阈值或修改连通，后续按既定顺序独立评审。
 
+### Q：第二次 headless 复测后，当前性能是否已经可以判定为完成？
+
+不能。第二次同配置 Release 运行 `181.589 s`，181 个连续唯一 merger cycle（45～225）的 total
+p50/p90 为 `0.702/0.801 s`，decode + normalize 仍占约 `60.4%/61.3%`；失败为 0，22,326 个 truth
+状态全部 `Clear`。allocator freshness 为 `180/182`（98.9%），其中两次 applied header age 达
+`5.02/5.64 s`。它证明 headless 三机中央式路径在该次运行中基本健康，也证明 5 s 阈值附近仍有波动，
+不能外推为所有负载下均已解决。该 bag 的 SHA-256 为
+`a1e5e83cc650612dbfca599c7920a4588a0d7f4a0886dd1d5189293c475b4a3c`。
+
+带 RViz 的后续长时间现场给出了相反压力证据：15/15 个观察样本均 non-fresh，applied header age 约
+`6.1～11.1 s`。因此收口结论是“可诊断、可复现的参考基线”，不是“性能问题完成”。
+
+### Q：三架飞机为什么会先后停住，入口左侧飞机为什么会漂到右侧后最先停？
+
+三机起始 `Y` 是不同初始位置，不是不同 yaw。它们使用同一类本机候选与短跳策略，但各自 OctoMap、
+扫描历史、peer 排斥和候选时序不同，所以会先后选择不同的横向目标。现场中 `drone_1` 在启动后约
+`50.9 s`、累计约 `6.50 m` 后停在 `(5.12,-1.40,1.50)`；另外两机分别运动约 `215.5/250.8 s`、
+约 `23.5 m` 后才停。
+
+三机最终状态都是 `ExplorationStalled/NoSafeCandidate`，body 为 `Safe`，truth audit 为 `Clear`，并非
+碰撞或 allocator 错派。当前 `ExplorationStalled` 只会在收到 Assigned/Standby 或 OcTree size 变化时
+恢复；仅有占用概率更新但 leaf 数不变时不会重新选路。横向候选、局部地图差异和这个恢复条件共同解释了
+“曾经都靠右，但只有一架留在原处”。该行为是已知本机探索限制，本轮不修改。
+
+### Q：当前完整 OctoMap bag 能否支持未来增量地图研究？
+
+可以作为输入推导，但不等于已经支持增量协议。当前三路 `/drone_i/octomap` 都是 `fullMapToMsg()` 完整
+快照。离线规范化相邻快照后，可以确定 added、removed、free/occupied flipped、dirty bounds 和 content
+hash，用来验证 keyframe + delta 是否能重建同一状态。
+
+完整快照无法恢复两次发布之间的逐 scan 更新顺序，也没有 session epoch、丢包/乱序或 Relay 路由信息。
+因此 source-level bag 是未来算法对照资产；真正上线 delta 时仍需定义协议、关键帧、重同步和传输语义。
+
+主资产改为容器内
+`/workspaces/alien-scanner/ws/log/source_level_replay_loss_debug_seed42_20260720_131653`：seed 42、Release、
+无 RViz，有效时长 `180.369575846 s`，18 个话题共 29,286 条消息，MCAP 为 `890,325,768` bytes。
+三路 `/drone_i/octomap` 分别为 359/361/359 条，实际频率约 `1.99/2.00/1.99 Hz`；`/global_map`
+为 150 条。MCAP SHA-256 为
+`0f290620968453564b741a2b1aea3a548a385fbd2ca7c256fa1eb41a01175687`；`metadata.yaml` SHA-256 为
+`2efb24146f9adc03490b46d08677384a5631836c09722445e95d25445bb736ef`。资产位于 Docker named volume，
+不进入 Git。
+
+当前 rosbag2 `0.26.10` 实际没有 `MessagesLostEvent` 消息或 event topic；上游按话题统计发布仍为 TODO。
+新包使用 `--log-level debug` 保存 recorder 自身 DDS `QOSMessageLostInfo` 回调，从而在发生丢失时记录具体
+topic。本轮没有任何 per-topic callback，也没有停止时的非零总数警告；同版本源码只在总数大于 0 时打印
+该警告，因此可确定新包 transport loss 为 0。日志也没有 duplicate publisher、non-increasing stamp、
+ERROR 或 FATAL。
+
+旧包 `/workspaces/alien-scanner/ws/log/source_level_replay_seed42_20260720_123603` 保留不清理：三路 source
+各 362 条、`/global_map` 180 条，但有 1 条无法归属话题的 transport loss。未来 snapshot/delta、边缘聚合
+和拓扑研究默认使用无 transport loss 的新包；需要更密 `/global_map` 时间序列时，旧包作为第二份对照，
+不能作为全话题逐条无损证据。
+
+### Q：为什么现在收口，而不是继续 Detector B、merger C 或通信拓扑改造？
+
+当前诊断已明确中央 merger 的主要成本是完整 source decode + normalize，Detector leaf scan 也曾在不同
+构建/负载下成为主要成本；但 headless 与 GUI 现场差异表明，尚不能用一个局部优化宣称整体闭环。同时
+当前没有 Relay 角色或增量协议，提前改 peer 拓扑不会自动降低中央 merger 对完整 source 的处理成本。
+
+因此本轮冻结中央式三机参考基线：保留 revision/原子提交/分阶段诊断、Detector oracle、allocator epoch/
+revision/lease 和安全契约；延期 B、C、Component 行为、本机 stalled 恢复、Relay/稀疏拓扑、delta/
+keyframe、EdgeAggregator、角色/编队和 `N > 3`。3-9 保持未完成，3-10 不开始。
+
 ### 决策结论
 
 - Step 3-9 support 职责修复已让真实 bag 产生 Region，但完整运行仍需验证 track、eligible edge、
-  assignment 和真实运行状态，不能据此宣称验收完成。freshness 后台执行解耦已通过自动验证，但真实
-  负载端到端 freshness 尚未闭环。
-- Component 连通/方向语义仍未选定行为修复；当前先补齐 allocator 时延诊断，不直接降低阈值或改调度。
+  assignment 和真实运行状态，不能据此宣称验收完成。freshness 后台执行解耦和 revision 级时延诊断
+  已通过自动验证，但真实负载端到端 freshness 尚未完成归因与闭环。
+- Component 连通/方向语义仍未选定行为修复；allocator 时延诊断已补齐，当前不直接降低阈值、增大
+  timeout 或修改调度。
+- 真实负载证据已排除“local round-robin 是主要瓶颈”；A-only 与重复 Release 运行确认 merger 的完整
+  source decode + normalize 是主要阶段。B/C 已延期，不在当前收口中继续实施。
 - allocator 重型检测已与 ROS 回调解耦，但端到端性能修复不能替代 detector 语义校准。
 - 任务区域证据可以重新设计；本机 first-hop、body 和 segment 安全检查不得放宽。
+- 当前成果冻结为中央式三机参考基线；3-9 不勾选，3-10 不启动。另录 source-level replay bag 供未来
+  delta/keyframe、边缘聚合和拓扑方案做同输入离线比较。
 
 ## 6. 当前阶段边界
 

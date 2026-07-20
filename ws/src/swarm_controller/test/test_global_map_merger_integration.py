@@ -16,6 +16,7 @@ from rclpy.qos import (
     QoSProfile,
     ReliabilityPolicy,
 )
+from rosgraph_msgs.msg import Clock
 from sensor_msgs.msg import PointCloud2, PointField
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Empty, Header
@@ -56,6 +57,26 @@ def generate_test_description():
             'max_serialized_bytes_per_source': 4 * 1024 * 1024,
             'max_voxels_per_source': 100000,
             'max_global_voxels': 200000,
+            'test_serialization_failures': 1,
+        }],
+    )
+    clock_merger = launch_ros.actions.Node(
+        package='swarm_controller',
+        executable='global_map_merger',
+        name='global_map_merger_clock_test',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'map_frame': 'map',
+            'source_topics': ['/clock_source/octomap'],
+            'output_topic': '/clock_global_map',
+            'diagnostics_topic': '/clock_global_map_diagnostics',
+            'resolution': 0.1,
+            'merge_rate': 0.5,
+            'source_stale_timeout': 10.0,
+            'max_serialized_bytes_per_source': 4 * 1024 * 1024,
+            'max_voxels_per_source': 100000,
+            'max_global_voxels': 200000,
         }],
     )
     late_probe = launch_ros.actions.Node(
@@ -69,6 +90,7 @@ def generate_test_description():
             _builder('source_a'),
             _builder('source_b'),
             merger,
+            clock_merger,
             late_probe,
             launch.actions.TimerAction(
                 period=1.0,
@@ -112,10 +134,14 @@ class TestGlobalMapMergerIntegration(unittest.TestCase):
             Octomap, '/source_b/octomap', transient_qos)
         self.probe_start = self.node.create_publisher(
             Empty, '/test/start_global_map_late_probe', 1)
+        self.clock_source = self.node.create_publisher(
+            Octomap, '/clock_source/octomap', transient_qos)
+        self.clock_publisher = self.node.create_publisher(Clock, '/clock', 10)
         self.source_maps = {'a': [], 'b': []}
         self.global_maps = []
         self.diagnostics = []
         self.probe_diagnostics = []
+        self.clock_diagnostics = []
         self.subscriptions = [
             self.node.create_subscription(
                 Octomap, '/source_a/octomap', self.source_maps['a'].append,
@@ -135,6 +161,12 @@ class TestGlobalMapMergerIntegration(unittest.TestCase):
                 DiagnosticArray,
                 '/test/global_map_late_probe_diagnostics',
                 self.probe_diagnostics.append,
+                transient_qos,
+            ),
+            self.node.create_subscription(
+                DiagnosticArray,
+                '/clock_global_map_diagnostics',
+                self.clock_diagnostics.append,
                 transient_qos,
             ),
         ]
@@ -194,6 +226,25 @@ class TestGlobalMapMergerIntegration(unittest.TestCase):
                 return {item.key: item.value for item in status.values}
         return {}
 
+    @staticmethod
+    def _merger_values(message):
+        for status in message.status:
+            if status.name == 'global_map_merger':
+                return {item.key: item.value for item in status.values}
+        return {}
+
+    def _clock_values(self):
+        if not self.clock_diagnostics:
+            return {}
+        return self._merger_values(self.clock_diagnostics[-1])
+
+    def _set_clock(self, stamp_ns):
+        message = Clock()
+        message.clock = rclpy.time.Time(nanoseconds=stamp_ns).to_msg()
+        for _ in range(3):
+            self.clock_publisher.publish(message)
+            rclpy.spin_once(self.node, timeout_sec=0.05)
+
     def _probe_status(self):
         for message in reversed(self.probe_diagnostics):
             for status in message.status:
@@ -216,11 +267,84 @@ class TestGlobalMapMergerIntegration(unittest.TestCase):
 
     def test_merge_coalescing_rejection_stale_and_latched_output(self):
         self._publish_until_ready()
+        self._spin_until(
+            lambda: self._values().get('merge_cycle_serialize_succeeded') == '1',
+            timeout=2.0,
+        )
+        serialization_failures = [
+            self._merger_values(item)
+            for item in self.diagnostics
+            if self._merger_values(item).get('merge_cycle_outcome')
+            == 'serialization_failure'
+        ]
+        self.assertTrue(serialization_failures)
+        serialization_failure = serialization_failures[-1]
+        self.assertEqual(
+            serialization_failure['merge_cycle_merge_applied'], '1')
+        self.assertEqual(
+            serialization_failure['merge_cycle_serialize_attempted'], '1')
+        self.assertEqual(
+            serialization_failure['merge_cycle_serialize_succeeded'], '0')
+        self.assertEqual(
+            serialization_failure['merge_cycle_publish_attempted'], '0')
+        self.assertEqual(
+            serialization_failure['merge_cycle_publish_succeeded'], '0')
+
         message = self.global_maps[-1]
         self.assertEqual(message.header.frame_id, 'map')
         self.assertEqual(message.id, 'OcTree')
         self.assertFalse(message.binary)
         self.assertTrue(message.data)
+
+        initial_values = self._values()
+        self.assertEqual(initial_values.get('merge_cycle_valid'), '1')
+        self.assertGreater(int(initial_values.get('merge_cycle_id', '0')), 0)
+        self.assertEqual(initial_values.get('merge_cycle_merge_applied'), '1')
+        self.assertEqual(initial_values.get('merge_cycle_serialize_attempted'), '1')
+        self.assertEqual(initial_values.get('merge_cycle_serialize_succeeded'), '1')
+        self.assertEqual(initial_values.get('merge_cycle_publish_attempted'), '1')
+        self.assertEqual(initial_values.get('merge_cycle_publish_succeeded'), '1')
+        self.assertGreater(
+            int(initial_values.get('merge_cycle_output_publish_sequence', '0')),
+            0,
+        )
+        self.assertLessEqual(
+            int(initial_values['merge_cycle_source_revision_before']),
+            int(initial_values['merge_cycle_source_revision_after']),
+        )
+        self.assertLessEqual(
+            int(initial_values['merge_cycle_global_revision_before']),
+            int(initial_values['merge_cycle_global_revision_after']),
+        )
+        for key in (
+                'merge_cycle_receive_to_claim_max_seconds',
+                'merge_cycle_decode_seconds',
+                'merge_cycle_decode_cleanup_seconds',
+                'merge_cycle_normalize_seconds',
+                'merge_cycle_snapshot_compare_seconds',
+                'merge_cycle_delta_preflight_seconds',
+                'merge_cycle_contribution_tree_apply_seconds',
+                'merge_cycle_update_inner_occupancy_seconds',
+                'merge_cycle_serialize_seconds',
+                'merge_cycle_total_seconds',
+                'merge_cycle_accounting_remainder_seconds'):
+            self.assertIn(key, initial_values)
+            self.assertGreaterEqual(float(initial_values[key]), 0.0)
+        self.assertLessEqual(
+            float(initial_values['merge_cycle_accounting_remainder_seconds']),
+            float(initial_values['merge_cycle_total_seconds']),
+        )
+        for index in (0, 1):
+            prefix = f'last_source_record:{index}:'
+            self.assertIn(prefix + 'topic', initial_values)
+            self.assertIn(
+                initial_values[prefix + 'outcome'],
+                ('accepted_changed', 'accepted_unchanged'),
+            )
+            self.assertGreater(
+                int(initial_values[prefix + 'admission_sequence']), 0)
+            self.assertGreaterEqual(
+                float(initial_values[prefix + 'receive_to_claim_seconds']), 0.0)
 
         previous_diagnostic_count = len(self.diagnostics)
         self._spin_until(
@@ -230,6 +354,8 @@ class TestGlobalMapMergerIntegration(unittest.TestCase):
         template = self.source_maps['a'][-1]
         template_stamp = rclpy.time.Time.from_msg(
             template.header.stamp).nanoseconds
+        cycle_before_coalescing = int(
+            self._values().get('merge_cycle_id', '0'))
         for offset in range(1, 6):
             replay = copy.deepcopy(template)
             replay.header.stamp = rclpy.time.Time(
@@ -237,12 +363,48 @@ class TestGlobalMapMergerIntegration(unittest.TestCase):
             self.replay_a.publish(replay)
             rclpy.spin_once(self.node, timeout_sec=0.05)
 
-        self._spin_until(
-            lambda: int(self._values().get('coalesced_updates', '0')) > 0,
-            timeout=3.0,
-        )
+        source_a_record_prefix = 'last_source_record:0:'
+        self._spin_until(lambda: (
+            int(self._values().get('coalesced_updates', '0')) > 0
+            and int(self._values().get('merge_cycle_id', '0'))
+            > cycle_before_coalescing
+            and int(self._values().get(
+                source_a_record_prefix + 'coalesced_before_claim', '0')) > 0
+        ), timeout=3.0)
         self.assertGreater(
             int(self._values().get('coalesced_updates', '0')), 0)
+        coalesced_values = self._values()
+        self.assertGreater(
+            int(coalesced_values[
+                source_a_record_prefix + 'coalesced_before_claim']), 0)
+        self.assertEqual(
+            coalesced_values[source_a_record_prefix + 'stamp_ns'],
+            str(template_stamp + 5),
+        )
+        self.assertEqual(
+            coalesced_values['merge_cycle_source_revision_before'],
+            coalesced_values['merge_cycle_source_revision_after'],
+        )
+        self.assertEqual(
+            coalesced_values['merge_cycle_global_revision_before'],
+            coalesced_values['merge_cycle_global_revision_after'],
+        )
+
+        cycle_before_single = int(coalesced_values['merge_cycle_id'])
+        single = copy.deepcopy(template)
+        single.header.stamp = rclpy.time.Time(
+            nanoseconds=template_stamp + 6).to_msg()
+        self.replay_a.publish(single)
+        self._spin_until(lambda: (
+            int(self._values().get('merge_cycle_id', '0')) > cycle_before_single
+            and self._values().get(source_a_record_prefix + 'stamp_ns')
+            == str(template_stamp + 6)
+        ), timeout=3.0)
+        single_values = self._values()
+        self.assertEqual(
+            single_values[source_a_record_prefix + 'coalesced_before_claim'],
+            '0',
+        )
 
         values = self._values()
         source_a_key = 'source_voxels:/source_a/octomap'
@@ -263,6 +425,8 @@ class TestGlobalMapMergerIntegration(unittest.TestCase):
             self.assertIn(key, values)
 
         rejected_before = int(self._values().get('rejected_updates', '0'))
+        cycle_before_envelope_rejection = int(
+            self._values().get('merge_cycle_id', '0'))
         invalid = copy.deepcopy(template)
         invalid.header.frame_id = 'wrong_frame'
         invalid.header.stamp = rclpy.time.Time(
@@ -275,6 +439,16 @@ class TestGlobalMapMergerIntegration(unittest.TestCase):
         )
         self.assertGreater(
             int(self._values().get('rejected_updates', '0')), rejected_before)
+        self.assertEqual(
+            self._values().get(source_a_record_prefix + 'outcome'),
+            'envelope_rejected',
+        )
+        self.assertEqual(
+            self._values().get(source_a_record_prefix + 'cycle_id'), '0')
+        self.assertEqual(
+            int(self._values().get('merge_cycle_id', '0')),
+            cycle_before_envelope_rejection,
+        )
 
         deep_rejected_before = int(
             self._values().get('rejected_updates', '0'))
@@ -291,6 +465,19 @@ class TestGlobalMapMergerIntegration(unittest.TestCase):
         self.assertGreater(
             int(self._values().get('rejected_updates', '0')),
             deep_rejected_before,
+        )
+        self.assertEqual(
+            self._values().get(source_a_record_prefix + 'outcome'),
+            'decode_failure',
+        )
+        rejected_cycle_values = self._values()
+        self.assertEqual(
+            rejected_cycle_values['merge_cycle_source_revision_before'],
+            rejected_cycle_values['merge_cycle_source_revision_after'],
+        )
+        self.assertEqual(
+            rejected_cycle_values['merge_cycle_global_revision_before'],
+            rejected_cycle_values['merge_cycle_global_revision_after'],
         )
 
         accepted_before_recovery = int(
@@ -349,12 +536,40 @@ class TestGlobalMapMergerIntegration(unittest.TestCase):
         self.assertEqual(after_empty['known_voxels'], '0')
         self.assertGreater(
             int(after_empty['global_revision']), revision_before_empty)
+        self.assertLess(
+            int(after_empty['merge_cycle_source_revision_before']),
+            int(after_empty['merge_cycle_source_revision_after']),
+        )
+        self.assertLess(
+            int(after_empty['merge_cycle_global_revision_before']),
+            int(after_empty['merge_cycle_global_revision_after']),
+        )
+        self.assertEqual(
+            after_empty['merge_cycle_source_revision_after'],
+            after_empty['source_revision'],
+        )
+        self.assertEqual(
+            after_empty['merge_cycle_global_revision_after'],
+            after_empty['global_revision'],
+        )
         self.assertGreater(len(self.global_maps), global_map_count_before_empty)
         empty_global_data = list(self.global_maps[-1].data)
         self.assertEqual(
             rclpy.time.Time.from_msg(
                 self.global_maps[-1].header.stamp).nanoseconds,
             max(empty_a_stamp, empty_b_stamp),
+        )
+
+        cycle_after_empty = int(after_empty['merge_cycle_id'])
+        diagnostics_after_empty = len(self.diagnostics)
+        self._spin_until(
+            lambda: len(self.diagnostics) >= diagnostics_after_empty + 2,
+            timeout=2.0,
+        )
+        self.assertGreaterEqual(len(self.diagnostics), diagnostics_after_empty + 2)
+        self.assertEqual(
+            int(self._values().get('merge_cycle_id', '0')),
+            cycle_after_empty,
         )
 
         self._spin_until(
@@ -387,6 +602,116 @@ class TestGlobalMapMergerIntegration(unittest.TestCase):
         self.assertFalse(late_maps[-1].binary)
         self.assertEqual(list(late_maps[-1].data), empty_global_data)
         self.node.destroy_subscription(late_subscription)
+
+        self._spin_until(
+            lambda: (
+                self.clock_source.get_subscription_count() > 0
+                and self.clock_publisher.get_subscription_count() > 0
+            ),
+            timeout=3.0,
+        )
+        self.assertGreater(self.clock_source.get_subscription_count(), 0)
+        self.assertGreater(self.clock_publisher.get_subscription_count(), 0)
+
+        future_stamp = 11_000_000_000
+        self._set_clock(10_000_000_000)
+        self.clock_source.publish(self._empty_map(future_stamp))
+        clock_prefix = 'last_source_record:0:'
+        self._spin_until(lambda: (
+            int(self._clock_values().get('merge_cycle_id', '0')) > 0
+            and self._clock_values().get(clock_prefix + 'stamp_ns')
+            == str(future_stamp)
+        ), timeout=4.0)
+        future_values = self._clock_values()
+        self.assertEqual(future_values[clock_prefix + 'outcome'], 'accepted_changed')
+        self.assertEqual(
+            future_values[clock_prefix + 'receive_header_age_valid'], '0')
+        self.assertEqual(
+            future_values[clock_prefix + 'receive_header_age_seconds'], '-1.000000')
+        self.assertEqual(
+            future_values[clock_prefix + 'claim_header_age_valid'], '0')
+        self.assertEqual(
+            future_values['merge_cycle_output_header_age_valid'], '0')
+        self.assertEqual(
+            future_values['merge_cycle_output_stamp_ns'], str(future_stamp))
+
+        previous_clock_diagnostics = len(self.clock_diagnostics)
+        self._set_clock(30_000_000_000)
+        self._spin_until(
+            lambda: len(self.clock_diagnostics) > previous_clock_diagnostics,
+            timeout=3.0,
+        )
+        cycle_before_rollback = int(
+            self._clock_values().get('merge_cycle_id', '0'))
+        accepted_after_clock_advance = 25_000_000_000
+        self.clock_source.publish(self._empty_map(accepted_after_clock_advance))
+        self._spin_until(lambda: (
+            int(self._clock_values().get('merge_cycle_id', '0'))
+            > cycle_before_rollback
+            and self._clock_values().get(clock_prefix + 'stamp_ns')
+            == str(accepted_after_clock_advance)
+        ), timeout=4.0)
+        advanced_values = self._clock_values()
+        self.assertEqual(
+            advanced_values[clock_prefix + 'receive_header_age_valid'], '1')
+        self.assertEqual(
+            advanced_values[clock_prefix + 'claim_header_age_valid'], '1')
+        self.assertEqual(
+            advanced_values[clock_prefix + 'receive_ros_epoch'],
+            advanced_values[clock_prefix + 'claim_ros_epoch'],
+        )
+
+        cycle_before_rollback_rejection = int(
+            self._clock_values().get('merge_cycle_id', '0'))
+        source_revision_before_rollback = self._clock_values()['source_revision']
+        global_revision_before_rollback = self._clock_values()['global_revision']
+        self._set_clock(20_000_000_000)
+        lower_watermark_stamp = 20_000_000_000
+        rejected_before_rollback = int(
+            self._clock_values().get('rejected_updates', '0'))
+        self.clock_source.publish(self._empty_map(lower_watermark_stamp))
+        self._spin_until(
+            lambda: int(self._clock_values().get('rejected_updates', '0'))
+            > rejected_before_rollback,
+            timeout=3.0,
+        )
+        rollback_values = self._clock_values()
+        self.assertEqual(
+            rollback_values[clock_prefix + 'outcome'], 'envelope_rejected')
+        self.assertEqual(
+            rollback_values[clock_prefix + 'cycle_id'], '0')
+        self.assertEqual(
+            int(rollback_values['merge_cycle_id']),
+            cycle_before_rollback_rejection,
+        )
+        self.assertEqual(
+            rollback_values['source_revision'], source_revision_before_rollback)
+        self.assertEqual(
+            rollback_values['global_revision'], global_revision_before_rollback)
+        self.assertEqual(
+            rollback_values['merge_cycle_output_stamp_ns'],
+            str(accepted_after_clock_advance),
+        )
+
+        recovered_after_rollback = 26_000_000_000
+        self.clock_source.publish(self._empty_map(recovered_after_rollback))
+        self._spin_until(lambda: (
+            int(self._clock_values().get('merge_cycle_id', '0'))
+            > cycle_before_rollback_rejection
+            and self._clock_values().get(clock_prefix + 'stamp_ns')
+            == str(recovered_after_rollback)
+        ), timeout=4.0)
+        recovered_values = self._clock_values()
+        self.assertEqual(
+            recovered_values[clock_prefix + 'outcome'], 'accepted_unchanged')
+        self.assertEqual(
+            recovered_values[clock_prefix + 'receive_ros_epoch'],
+            recovered_values[clock_prefix + 'claim_ros_epoch'],
+        )
+        self.assertEqual(
+            recovered_values[clock_prefix + 'receive_header_age_valid'], '0')
+        self.assertEqual(
+            recovered_values['merge_cycle_output_header_age_valid'], '0')
 
 
 @launch_testing.post_shutdown_test()
