@@ -168,6 +168,25 @@ class TestGlobalTaskAllocatorPipeline(unittest.TestCase):
         initial_sequence = int(initial['global_update_sequence'])
         initial_global_revision = int(initial['global_map_applied_revision'])
         initial_global_age = float(initial['global_map_valid_age_seconds'])
+        self.assertEqual(
+            int(initial['global_map_last_consumed_revision']),
+            int(initial['global_map_consumed_revision']),
+        )
+        self.assertEqual(initial['global_map_last_consumed_applied'], '1')
+        self.assertGreaterEqual(
+            float(initial['global_map_last_consumed_queue_wait_seconds']), 0.0)
+        self.assertGreaterEqual(
+            float(initial['global_map_last_consumed_decode_seconds']), 0.0)
+        self.assertGreaterEqual(
+            float(initial['global_map_last_consumed_detect_seconds']), 0.0)
+        self.assertGreaterEqual(
+            float(initial['global_map_last_consumed_apply_wait_seconds']), 0.0)
+        self.assertGreaterEqual(
+            float(initial['global_map_last_consumed_total_latency_seconds']), 0.0)
+        self.assertGreaterEqual(
+            float(initial['global_map_applied_receive_age_seconds']), 0.0)
+        self.assertGreaterEqual(
+            float(initial['global_map_applied_header_age_seconds']), 0.0)
 
         self._publish_when_connected(self.invalid_stamps)
         self.assertTrue(self._spin_until(
@@ -198,6 +217,15 @@ class TestGlobalTaskAllocatorPipeline(unittest.TestCase):
             int(failed_global['global_map_applied_revision']),
             initial_global_revision,
         )
+        self.assertEqual(
+            int(failed_global['global_map_last_consumed_revision']),
+            int(failed_global['global_map_consumed_revision']),
+        )
+        self.assertEqual(
+            failed_global['global_map_last_consumed_applied'], '0')
+        self.assertGreaterEqual(
+            float(failed_global[
+                'global_map_last_consumed_total_latency_seconds']), 0.0)
         self.assertGreater(
             float(failed_global['global_map_valid_age_seconds']),
             initial_global_age,
@@ -215,6 +243,12 @@ class TestGlobalTaskAllocatorPipeline(unittest.TestCase):
             int(recovered_global['global_map_applied_revision']),
             initial_global_revision,
         )
+        self.assertEqual(
+            int(recovered_global['global_map_last_consumed_revision']),
+            int(recovered_global['global_map_applied_revision']),
+        )
+        self.assertEqual(
+            recovered_global['global_map_last_consumed_applied'], '1')
         self.assertLess(
             float(recovered_global['global_map_valid_age_seconds']),
             float(failed_global['global_map_valid_age_seconds']),
@@ -231,6 +265,18 @@ class TestGlobalTaskAllocatorPipeline(unittest.TestCase):
         failed_local_revision = int(failed_local['drone_0.local_map_applied_revision'])
         failed_local_age = float(failed_local['drone_0.local_map_valid_age_seconds'])
         self.assertEqual(failed_local['drone_0.local_map_fresh'], '1')
+        self.assertEqual(
+            int(failed_local['drone_0.local_map_last_consumed_revision']),
+            int(failed_local['drone_0.local_map_consumed_revision']),
+        )
+        self.assertEqual(
+            failed_local['drone_0.local_map_last_consumed_applied'], '0')
+        self.assertGreaterEqual(
+            float(failed_local[
+                'drone_0.local_map_last_consumed_decode_seconds']), 0.0)
+        self.assertEqual(
+            float(failed_local[
+                'drone_0.local_map_last_consumed_detect_seconds']), 0.0)
         self.assertTrue(self._spin_until(
             lambda: float(self._values().get(
                 'drone_0.local_map_valid_age_seconds', '0'))
@@ -250,6 +296,13 @@ class TestGlobalTaskAllocatorPipeline(unittest.TestCase):
             and not self._values().get('drone_0.local_map_reason')
             and self._values().get('drone_0.local_map_fresh') == '1',
         ))
+        recovered_local = self._values()
+        self.assertEqual(
+            int(recovered_local['drone_0.local_map_last_consumed_revision']),
+            int(recovered_local['drone_0.local_map_applied_revision']),
+        )
+        self.assertEqual(
+            recovered_local['drone_0.local_map_last_consumed_applied'], '1')
 
 
 @launch_testing.post_shutdown_test()

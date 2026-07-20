@@ -147,6 +147,16 @@ namespace {
                     [this](const std_msgs::msg::Empty::SharedPtr) {
                         future_global_update_requested_ = true;
                     });
+            pause_inputs_subscription_ = create_subscription<std_msgs::msg::Empty>(
+                    "/test/global_task_allocator/pause_inputs", rclcpp::QoS(1),
+                    [this](const std_msgs::msg::Empty::SharedPtr) {
+                        inputs_paused_ = true;
+                    });
+            resume_inputs_subscription_ = create_subscription<std_msgs::msg::Empty>(
+                    "/test/global_task_allocator/resume_inputs", rclcpp::QoS(1),
+                    [this](const std_msgs::msg::Empty::SharedPtr) {
+                        inputs_paused_ = false;
+                    });
             for(int index = 0; index < 3; ++index) {
                 local_publishers_.push_back(create_publisher<octomap_msgs::msg::Octomap>(
                         "/drone_" + std::to_string(index) + "/octomap", qos));
@@ -166,7 +176,7 @@ namespace {
                                                    .count();
             const auto stamp = get_clock()->now()
                                - rclcpp::Duration::from_seconds(stamp_offset_seconds_);
-            if(stamp.nanoseconds() <= 0) {
+            if(stamp.nanoseconds() <= 0 || inputs_paused_) {
                 return;
             }
             bool publish_global = !controlled_global_updates_;
@@ -354,6 +364,7 @@ namespace {
         bool invalid_stamp_inputs_published_ {false};
         bool future_global_update_requested_ {false};
         bool future_global_update_published_ {false};
+        bool inputs_paused_ {false};
         std::chrono::steady_clock::time_point start_time_ {
                 std::chrono::steady_clock::now()};
         octomap::OcTree global_tree_;
@@ -377,6 +388,10 @@ namespace {
                 invalid_stamp_trigger_subscription_;
         rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr
                 future_global_trigger_subscription_;
+        rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr
+                pause_inputs_subscription_;
+        rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr
+                resume_inputs_subscription_;
         std::vector<rclcpp::Publisher<octomap_msgs::msg::Octomap>::SharedPtr>
                 local_publishers_;
         std::vector<rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr> odom_publishers_;

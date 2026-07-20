@@ -378,6 +378,13 @@ if(BUILD_TESTING)
         )
     endif()
 
+    ament_add_gtest(TestMapPipelineTiming test/TestMapPipelineTiming.cpp)
+    if(TARGET TestMapPipelineTiming)
+        target_include_directories(TestMapPipelineTiming PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
     ament_add_gtest(TestSingleDroneExplorer test/TestSingleDroneExplorer.cpp)
     if(TARGET TestSingleDroneExplorer)
         target_link_libraries(TestSingleDroneExplorer swarm_exploration)

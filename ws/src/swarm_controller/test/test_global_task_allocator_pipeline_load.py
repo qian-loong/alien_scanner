@@ -118,17 +118,62 @@ class TestGlobalTaskAllocatorPipelineLoad(unittest.TestCase):
 
     def test_all_sources_progress_while_pending_inputs_coalesce(self):
         deadline = time.time() + 12.0
+        backlog = None
         while time.time() < deadline:
             rclpy.spin_once(self.node, timeout_sec=0.05)
             values = self._values()
             if values and (
                     int(values.get('global_map_pending_coalesced', '0')) > 0
                     and int(values.get('global_map_applied_revision', '0')) > 0
+                    and int(values.get('global_map_consumed_revision', '0'))
+                    < int(values.get('global_map_latest_revision', '0'))
+                    and any(int(values.get(
+                        f'drone_{index}.local_map_pending_coalesced', '0')) > 0
+                        for index in range(3))
                     and all(int(values.get(
                         f'drone_{index}.local_map_applied_revision', '0')) > 0
                         for index in range(3))):
+                self.assertEqual(
+                    int(values['global_map_last_consumed_revision']),
+                    int(values['global_map_consumed_revision']),
+                )
+                self.assertLessEqual(
+                    int(values['global_map_consumed_revision']),
+                    int(values['global_map_latest_revision']),
+                )
+                self.assertLess(
+                    int(values['global_map_last_consumed_revision']),
+                    int(values['global_map_latest_revision']),
+                )
+                self.assertGreaterEqual(float(values[
+                    'global_map_last_consumed_total_latency_seconds']), 0.0)
+                for index in range(3):
+                    prefix = f'drone_{index}.local_map_'
+                    self.assertEqual(
+                        int(values[prefix + 'last_consumed_revision']),
+                        int(values[prefix + 'consumed_revision']),
+                    )
+                    self.assertLessEqual(
+                        int(values[prefix + 'consumed_revision']),
+                        int(values[prefix + 'latest_revision']),
+                    )
+                backlog = values
+                break
+        if backlog is None:
+            self.fail('high-rate pipeline did not expose a coalesced backlog')
+
+        consumed_revision = int(backlog['global_map_consumed_revision'])
+        deadline = time.time() + 8.0
+        while time.time() < deadline:
+            rclpy.spin_once(self.node, timeout_sec=0.05)
+            values = self._values()
+            if int(values.get('global_map_consumed_revision', '0')) > consumed_revision:
+                self.assertEqual(
+                    int(values['global_map_last_consumed_revision']),
+                    int(values['global_map_consumed_revision']),
+                )
                 return
-        self.fail('high-rate pipeline did not coalesce and apply every source')
+        self.fail('global consumed timing did not advance after backlog snapshot')
 
 
 @launch_testing.post_shutdown_test()

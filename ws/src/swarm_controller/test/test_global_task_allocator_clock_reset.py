@@ -15,6 +15,7 @@ from rclpy.qos import (
     ReliabilityPolicy,
 )
 from rosgraph_msgs.msg import Clock
+from std_msgs.msg import Empty
 
 
 def generate_test_description():
@@ -109,6 +110,10 @@ class TestGlobalTaskAllocatorClockReset(unittest.TestCase):
         )
         self.clock_publisher = self.node.create_publisher(
             Clock, '/clock', clock_qos)
+        self.pause_inputs = self.node.create_publisher(
+            Empty, '/test/global_task_allocator/pause_inputs', 1)
+        self.resume_inputs = self.node.create_publisher(
+            Empty, '/test/global_task_allocator/resume_inputs', 1)
 
     def tearDown(self):
         self.node.destroy_node()
@@ -135,6 +140,15 @@ class TestGlobalTaskAllocatorClockReset(unittest.TestCase):
                 return True
         return False
 
+    def _publish_empty_when_connected(self, publisher):
+        deadline = time.time() + 3.0
+        while time.time() < deadline and publisher.get_subscription_count() == 0:
+            rclpy.spin_once(self.node, timeout_sec=0.05)
+        self.assertGreater(publisher.get_subscription_count(), 0)
+        for _ in range(3):
+            publisher.publish(Empty())
+            rclpy.spin_once(self.node, timeout_sec=0.05)
+
     def test_lower_stamp_domain_recovers_after_clock_rollback(self):
         self.assertTrue(self._publish_clock_until(
             100,
@@ -145,7 +159,22 @@ class TestGlobalTaskAllocatorClockReset(unittest.TestCase):
                 for index in range(3)),
         ))
         first_sequence = int(self._values()['global_update_sequence'])
+        first_consumed_revision = int(
+            self._values()['global_map_consumed_revision'])
 
+        self._publish_empty_when_connected(self.pause_inputs)
+        self.assertTrue(self._publish_clock_until(
+            50,
+            lambda: int(self._values().get('ros_clock_resets', '0')) >= 1
+            and self._values().get('global_map_applied_revision') == '0'
+            and self._values().get('global_map_last_consumed_revision') == '0'
+            and float(self._values().get(
+                'global_map_applied_receive_age_seconds', '0')) == -1.0
+            and float(self._values().get(
+                'global_map_applied_header_age_seconds', '0')) == -1.0,
+        ))
+
+        self._publish_empty_when_connected(self.resume_inputs)
         self.assertTrue(self._publish_clock_until(
             50,
             lambda: int(self._values().get('ros_clock_resets', '0')) >= 1
@@ -157,6 +186,23 @@ class TestGlobalTaskAllocatorClockReset(unittest.TestCase):
                 f'drone_{index}.local_map_applied_revision', '0')) > 0
                 for index in range(3)),
         ))
+        recovered = self._values()
+        self.assertGreater(
+            int(recovered['global_map_last_consumed_revision']),
+            first_consumed_revision,
+        )
+        self.assertEqual(
+            int(recovered['global_map_last_consumed_revision']),
+            int(recovered['global_map_consumed_revision']),
+        )
+        self.assertEqual(
+            recovered['global_map_last_consumed_applied'], '1')
+        self.assertGreaterEqual(
+            float(recovered[
+                'global_map_last_consumed_receive_header_age_seconds']), 0.0)
+        self.assertGreaterEqual(
+            float(recovered[
+                'global_map_last_consumed_consume_header_age_seconds']), 0.0)
 
 
 @launch_testing.post_shutdown_test()

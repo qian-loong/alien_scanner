@@ -136,6 +136,16 @@ class TestStaleGlobalTaskAllocatorIntegration(unittest.TestCase):
         self.assertGreater(int(values['global_update_sequence']), 0)
         self.assertEqual(values['global_map_fresh'], '0')
         self.assertEqual(values['global_map_diagnostics_healthy'], '0')
+        self.assertLess(
+            float(values['global_map_applied_receive_age_seconds']), 2.0)
+        self.assertGreater(
+            float(values['global_map_applied_header_age_seconds']), 9.0)
+        self.assertGreater(
+            float(values[
+                'global_map_last_consumed_receive_header_age_seconds']), 9.0)
+        self.assertGreater(
+            float(values[
+                'global_map_last_consumed_consume_header_age_seconds']), 9.0)
 
 
 @launch_testing.post_shutdown_test()

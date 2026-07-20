@@ -1,6 +1,7 @@
 #include "swarm_controller/GlobalFrontierDetector.hpp"
 #include "swarm_controller/GlobalTaskAllocator.hpp"
 #include "swarm_controller/LatestSnapshotSlot.hpp"
+#include "swarm_controller/MapPipelineTiming.hpp"
 
 #include <algorithm>
 #include <array>
@@ -87,6 +88,40 @@ namespace SwarmController {
             return value(key, std::to_string(content));
         }
 
+        void appendMapPipelineTiming(
+                diagnostic_msgs::msg::DiagnosticStatus & status,
+                const std::string & prefix, const MapPipelineTiming & timing)
+        {
+            status.values.push_back(numericValue(
+                    prefix + "last_consumed_revision", timing.revision));
+            status.values.push_back(numericValue(
+                    prefix + "last_consumed_applied", timing.applied ? 1 : 0));
+            status.values.push_back(numericValue(
+                    prefix + "last_consumed_queue_wait_seconds",
+                    timing.queue_wait_seconds));
+            status.values.push_back(numericValue(
+                    prefix + "last_consumed_decode_seconds",
+                    timing.decode_seconds));
+            status.values.push_back(numericValue(
+                    prefix + "last_consumed_detect_seconds",
+                    timing.detect_seconds));
+            status.values.push_back(numericValue(
+                    prefix + "last_consumed_worker_seconds",
+                    timing.worker_seconds));
+            status.values.push_back(numericValue(
+                    prefix + "last_consumed_apply_wait_seconds",
+                    timing.apply_wait_seconds));
+            status.values.push_back(numericValue(
+                    prefix + "last_consumed_total_latency_seconds",
+                    timing.total_latency_seconds));
+            status.values.push_back(numericValue(
+                    prefix + "last_consumed_receive_header_age_seconds",
+                    timing.receive_header_age_seconds));
+            status.values.push_back(numericValue(
+                    prefix + "last_consumed_consume_header_age_seconds",
+                    timing.consume_header_age_seconds));
+        }
+
         std::uint64_t makeAllocatorEpoch()
         {
             const auto raw = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -117,6 +152,7 @@ namespace SwarmController {
             std::shared_ptr<octomap::OcTree> map;
             std::size_t leaf_count {};
             std::uint64_t input_sequence {};
+            MapWorkerTiming timing;
             std::string reason;
         };
 
@@ -126,6 +162,7 @@ namespace SwarmController {
             FrontierDetectionResult detection;
             std::size_t leaf_count {};
             std::uint64_t input_sequence {};
+            MapWorkerTiming timing;
             std::string reason;
 
             bool accepted() const
@@ -235,6 +272,7 @@ namespace SwarmController {
         struct MapSnapshot {
             MapMessage::SharedPtr message;
             std::uint64_t input_sequence {};
+            std::int64_t receive_ros_ns {};
         };
 
         using GlobalSnapshotSlot = LatestSnapshotSlot<
@@ -250,6 +288,7 @@ namespace SwarmController {
             std::int64_t local_map_stamp_ns {};
             double local_map_receive_seconds {-1.0};
             std::uint64_t local_map_applied_revision {};
+            MapPipelineTiming local_map_last_consumed_timing;
             std::uint64_t local_map_received_count {};
             std::uint64_t local_map_invalid_envelope_count {};
             std::uint64_t local_map_regressed_count {};
@@ -563,7 +602,9 @@ namespace SwarmController {
                                 try {
                                     const SnapshotSubmitStatus status =
                                             track.snapshot_slot.submit(
-                                                    MapSnapshot {message, input_sequence},
+                                                    MapSnapshot {
+                                                            message, input_sequence,
+                                                            now_ros_ns},
                                                     *stamp, monotonicNow());
                                     if(status == SnapshotSubmitStatus::RejectedRegressed) {
                                         ++track.local_map_regressed_count;
@@ -666,7 +707,9 @@ namespace SwarmController {
                             try {
                                 const SnapshotSubmitStatus status =
                                         global_snapshot_slot_.submit(
-                                                MapSnapshot {message, input_sequence},
+                                                MapSnapshot {
+                                                        message, input_sequence,
+                                                        now_ros_ns},
                                                 *stamp, monotonicNow());
                                 if(status == SnapshotSubmitStatus::RejectedRegressed) {
                                     ++global_map_regressed_stamp_count_;
@@ -756,6 +799,7 @@ namespace SwarmController {
                 global_map_stamp_ns_ = 0;
                 global_map_receive_seconds_ = -1.0;
                 global_map_applied_revision_ = 0U;
+                global_map_last_consumed_timing_ = {};
                 global_map_leaf_count_ = 0U;
                 regions_.clear();
                 global_map_input_reason_sequence_ = global_map_received_count_;
@@ -772,6 +816,7 @@ namespace SwarmController {
                     track.local_map_stamp_ns = 0;
                     track.local_map_receive_seconds = -1.0;
                     track.local_map_applied_revision = 0U;
+                    track.local_map_last_consumed_timing = {};
                     track.local_map_leaf_count = 0U;
                     track.local_map_input_reason_sequence =
                             track.local_map_received_count;
@@ -828,9 +873,12 @@ namespace SwarmController {
         MapProcessingResult processGlobalMap(const MapMessage & message)
         {
             MapProcessingResult result;
+            const double decode_start = monotonicNow();
             const DecodedMapResult decoded = decodeMap(
                     message, map_frame_, detector_config_.resolution,
                     max_global_serialized_bytes_, max_global_voxels_);
+            result.timing.decode_seconds = elapsedSeconds(
+                    decode_start, monotonicNow());
             result.status = decoded.status;
             result.map = decoded.map;
             result.leaf_count = decoded.leaf_count;
@@ -841,8 +889,10 @@ namespace SwarmController {
                                 ? FrontierDetectionStatus::ResourceLimit
                                 : FrontierDetectionStatus::Invalid;
                 result.detection.reason = decoded.reason;
+                result.timing.detect_seconds = 0.0;
                 return result;
             }
+            const double detect_start = monotonicNow();
             try {
                 result.detection = detector_->detect(*decoded.map);
                 result.status = result.detection.accepted()
@@ -876,14 +926,21 @@ namespace SwarmController {
                 result.detection.reason = result.reason;
                 result.map.reset();
             }
+            result.timing.detect_seconds = elapsedSeconds(
+                    detect_start, monotonicNow());
             return result;
         }
 
         DecodedMapResult processLocalMap(const MapMessage & message)
         {
-            return decodeMap(
+            const double decode_start = monotonicNow();
+            DecodedMapResult result = decodeMap(
                     message, map_frame_, detector_config_.resolution,
                     max_serialized_bytes_per_source_, max_voxels_per_source_);
+            result.timing.decode_seconds = elapsedSeconds(
+                    decode_start, monotonicNow());
+            result.timing.detect_seconds = 0.0;
+            return result;
         }
 
         bool workerHasWorkLocked() const
@@ -936,6 +993,7 @@ namespace SwarmController {
 
                 if(global_pending.has_value()) {
                     MapProcessingResult result;
+                    const double claim_seconds = monotonicNow();
                     try {
                         result = processGlobalMap(*global_pending->payload.message);
                     } catch(const std::exception & exception) {
@@ -947,6 +1005,10 @@ namespace SwarmController {
                         result.reason = "global map worker failed with an unknown exception";
                     }
                     result.input_sequence = global_pending->payload.input_sequence;
+                    result.timing.claim_seconds = claim_seconds;
+                    result.timing.complete_seconds = monotonicNow();
+                    result.timing.receive_ros_ns =
+                            global_pending->payload.receive_ros_ns;
                     const std::uint64_t input_sequence = result.input_sequence;
                     std::lock_guard<std::mutex> lock(mutex_);
                     if(stopping_) {
@@ -973,6 +1035,7 @@ namespace SwarmController {
 
                 if(local_pending.has_value()) {
                     DecodedMapResult result;
+                    const double claim_seconds = monotonicNow();
                     try {
                         result = processLocalMap(*local_pending->payload.message);
                     } catch(const std::exception & exception) {
@@ -982,6 +1045,10 @@ namespace SwarmController {
                         result.reason = "local map worker failed with an unknown exception";
                     }
                     result.input_sequence = local_pending->payload.input_sequence;
+                    result.timing.claim_seconds = claim_seconds;
+                    result.timing.complete_seconds = monotonicNow();
+                    result.timing.receive_ros_ns =
+                            local_pending->payload.receive_ros_ns;
                     const std::uint64_t input_sequence = result.input_sequence;
                     std::lock_guard<std::mutex> lock(mutex_);
                     if(stopping_) {
@@ -1016,6 +1083,9 @@ namespace SwarmController {
             }
 
             if(auto ready = global_snapshot_slot_.claimReady(); ready.has_value()) {
+                const double consumed_seconds = monotonicNow();
+                const std::int64_t consumed_ros_ns =
+                        get_clock()->now().nanoseconds();
                 const std::uint64_t revision = ready->revision;
                 bool applied = false;
                 try {
@@ -1082,6 +1152,10 @@ namespace SwarmController {
                                 "global result apply failed with an unknown exception";
                     }
                 }
+                const MapPipelineTiming timing = makeMapPipelineTiming(
+                        revision, applied, ready->stamp_ns,
+                        ready->received_seconds, ready->payload.timing,
+                        consumed_seconds, consumed_ros_ns);
                 if(!global_snapshot_slot_.acknowledgeReady(revision, applied)) {
                     ++global_map_worker_failure_count_;
                     global_map_input_reason_ =
@@ -1091,6 +1165,8 @@ namespace SwarmController {
                                     global_map_input_reason_sequence_,
                                     ready->payload.input_sequence);
                     global_snapshot_slot_.clear();
+                } else {
+                    global_map_last_consumed_timing_ = timing;
                 }
             }
 
@@ -1099,6 +1175,9 @@ namespace SwarmController {
                 if(!ready.has_value()) {
                     continue;
                 }
+                const double consumed_seconds = monotonicNow();
+                const std::int64_t consumed_ros_ns =
+                        get_clock()->now().nanoseconds();
                 DroneTrack & track = drones_[index];
                 const std::uint64_t revision = ready->revision;
                 bool applied = false;
@@ -1152,6 +1231,10 @@ namespace SwarmController {
                                 "local result apply failed with an unknown exception";
                     }
                 }
+                const MapPipelineTiming timing = makeMapPipelineTiming(
+                        revision, applied, ready->stamp_ns,
+                        ready->received_seconds, ready->payload.timing,
+                        consumed_seconds, consumed_ros_ns);
                 if(!track.snapshot_slot.acknowledgeReady(revision, applied)) {
                     ++track.local_map_failure_count;
                     track.local_map_reason = "local result acknowledgement failed";
@@ -1160,6 +1243,8 @@ namespace SwarmController {
                                     track.local_map_input_reason_sequence,
                                     ready->payload.input_sequence);
                     track.snapshot_slot.clear();
+                } else {
+                    track.local_map_last_consumed_timing = timing;
                 }
             }
             worker_cv_.notify_one();
@@ -1167,16 +1252,18 @@ namespace SwarmController {
 
         void onTimer()
         {
-            const std::int64_t now_ros_ns = get_clock()->now().nanoseconds();
-            const double now = monotonicNow();
+            const std::int64_t observed_ros_ns =
+                    get_clock()->now().nanoseconds();
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 if(stopping_) {
                     return;
                 }
-                observeRosClockLocked(now_ros_ns);
+                observeRosClockLocked(observed_ros_ns);
             }
             applyReadyMaps();
+            const std::int64_t now_ros_ns = get_clock()->now().nanoseconds();
+            const double now = monotonicNow();
             GlobalAllocationInput input;
             input.monotonic_time_seconds = now;
             bool diagnostics_healthy = false;
@@ -1187,6 +1274,7 @@ namespace SwarmController {
                 if(stopping_) {
                     return;
                 }
+                observeRosClockLocked(now_ros_ns);
                 input.regions = regions_;
                 input.global_update_sequence = global_update_sequence_;
                 diagnostics_healthy = global_diagnostics_healthy_
@@ -1305,7 +1393,8 @@ namespace SwarmController {
                 return;
             }
             diagnostic_msgs::msg::DiagnosticArray message;
-            message.header.stamp = get_clock()->now();
+            const rclcpp::Time diagnostic_now = get_clock()->now();
+            message.header.stamp = diagnostic_now;
             diagnostic_msgs::msg::DiagnosticStatus status;
             status.name = "global_task_allocator";
             status.hardware_id = "swarm";
@@ -1361,12 +1450,21 @@ namespace SwarmController {
                     "global_map_ready_blocked", global_snapshot_slot_.readyBlockedCount()));
             status.values.push_back(numericValue(
                     "global_map_leaf_count", global_map_leaf_count_));
+            const double global_applied_receive_age = elapsedSeconds(
+                    global_map_receive_seconds_, input.monotonic_time_seconds);
+            const double global_applied_header_age = rosAgeSeconds(
+                    global_map_stamp_ns_, diagnostic_now.nanoseconds());
             status.values.push_back(numericValue(
                     "global_map_valid_age_seconds",
-                    global_map_receive_seconds_ < 0.0
-                            ? -1.0
-                            : input.monotonic_time_seconds
-                                      - global_map_receive_seconds_));
+                    global_applied_receive_age));
+            status.values.push_back(numericValue(
+                    "global_map_applied_receive_age_seconds",
+                    global_applied_receive_age));
+            status.values.push_back(numericValue(
+                    "global_map_applied_header_age_seconds",
+                    global_applied_header_age));
+            appendMapPipelineTiming(
+                    status, "global_map_", global_map_last_consumed_timing_);
             status.values.push_back(numericValue(
                     "max_serialized_bytes_per_source",
                     max_serialized_bytes_per_source_));
@@ -1486,15 +1584,23 @@ namespace SwarmController {
             for(std::size_t index = 0U; index < drones_.size(); ++index) {
                 const auto & track = drones_[index];
                 const auto & drone_input = input.drones[index];
+                const double local_applied_receive_age = elapsedSeconds(
+                        track.local_map_receive_seconds,
+                        input.monotonic_time_seconds);
+                const double local_applied_header_age = rosAgeSeconds(
+                        track.local_map_stamp_ns, diagnostic_now.nanoseconds());
                 status.values.push_back(numericValue(
                         track.id + ".local_map_fresh",
                         drone_input.local_map_fresh ? 1 : 0));
                 status.values.push_back(numericValue(
                         track.id + ".local_map_valid_age_seconds",
-                        track.local_map_receive_seconds < 0.0
-                                ? -1.0
-                                : input.monotonic_time_seconds
-                                          - track.local_map_receive_seconds));
+                        local_applied_receive_age));
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_applied_receive_age_seconds",
+                        local_applied_receive_age));
+                status.values.push_back(numericValue(
+                        track.id + ".local_map_applied_header_age_seconds",
+                        local_applied_header_age));
                 status.values.push_back(numericValue(
                         track.id + ".odom_fresh",
                         drone_input.odom_fresh ? 1 : 0));
@@ -1538,6 +1644,9 @@ namespace SwarmController {
                 status.values.push_back(numericValue(
                         track.id + ".local_map_pending_coalesced",
                         track.snapshot_slot.pendingCoalescedCount()));
+                appendMapPipelineTiming(
+                        status, track.id + ".local_map_",
+                        track.local_map_last_consumed_timing);
                 status.values.push_back(value(
                         track.id + ".local_map_reason", track.local_map_reason));
             }
@@ -1635,6 +1744,7 @@ namespace SwarmController {
         std::int64_t global_map_stamp_ns_ {};
         double global_map_receive_seconds_ {-1.0};
         std::uint64_t global_map_applied_revision_ {};
+        MapPipelineTiming global_map_last_consumed_timing_;
         std::size_t global_map_leaf_count_ {};
         bool global_diagnostics_healthy_ {false};
         std::int64_t global_diagnostics_stamp_ns_ {};
