@@ -585,3 +585,26 @@ owner、lease/撤销/失效/重分配，以及真实三机 LocalFallback/Assigne
 
 3-9 当前只提供全局区域所有权和本机 known-free 短跳引导；实际运行仍处于诊断与校准阶段，
 不能与已完成验收的动态避碰、全局路径规划或复杂 3D 传感能力混淆。
+
+---
+
+## 7. 后续架构重构
+
+Phase 3 的架构限制和延期项（多 Region、唯一 owner、真实生命周期、稀疏拓扑、传感器标准化等）
+已在下一阶段重构中系统性解决：
+
+**重构规划**：
+- 路径：`.trellis/tasks/07-21-perception-swarm-architecture-refactor/`
+- 核心决策：32 个架构决策点（D-000 到 D-031）
+- 实施路径：9 个子任务（C1 到 C9b）
+- 质量评估：Fable A 级深度审查通过
+
+**核心改进**：
+- **感知接口标准化**：LaserScan/PointCloud2 替代自定义 `scan_returns`
+- **稀疏拓扑三类逻辑图**：G_comm/G_control/G_map 独立路由
+- **多 Region 任务分配**：唯一 owner + lease 机制 + 真实生命周期
+- **本机安全增强**：不可覆盖 + 分层健康门控
+- **演进路径验证**：N=3 → N=5，支持 Relay 失效切换
+
+Phase 3 冻结基线（revision、oracle、replay、allocator pipeline、KnownFreePathChecker）作为
+重构后的性能与行为比较基准。
