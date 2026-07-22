@@ -24,7 +24,7 @@ services:
     ports:
       - "64342:64342"
     volumes:
-      - ..:/workspaces/alien-scanner:cached
+      - ..:/workspaces/alien-scanner
       - alien_build:/workspaces/alien-scanner/ws/build
       - alien_install:/workspaces/alien-scanner/ws/install
       - alien_log:/workspaces/alien-scanner/ws/log
