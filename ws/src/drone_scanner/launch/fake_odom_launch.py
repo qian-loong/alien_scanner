@@ -1,5 +1,5 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
@@ -52,9 +52,14 @@ def generate_launch_description():
             name='map_to_odom',
             arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom'],
         ),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(cave_publisher_launch),
-            condition=IfCondition(LaunchConfiguration('show_cave')),
+        GroupAction(
+            scoped=True,
+            actions=[
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(cave_publisher_launch),
+                    condition=IfCondition(LaunchConfiguration('show_cave')),
+                ),
+            ],
         ),
         Node(
             package='drone_scanner',

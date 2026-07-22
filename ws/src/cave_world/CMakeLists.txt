@@ -17,6 +17,7 @@ add_library(cave_geometry STATIC
         src/ProceduralCaveField.cpp
         src/TreeCaveField.cpp
         src/CaveFieldFactory.cpp
+        src/TruthCollisionAuditor.cpp
 )
 target_include_directories(cave_geometry PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -30,6 +31,7 @@ install(
         include/cave_world/ProceduralCaveField.hpp
         include/cave_world/TreeCaveField.hpp
         include/cave_world/CaveFieldFactory.hpp
+        include/cave_world/TruthCollisionAuditor.hpp
         DESTINATION include/cave_world
 )
 install(
@@ -73,6 +75,14 @@ if(BUILD_TESTING)
     if(TARGET TestTreeCaveField)
         target_link_libraries(TestTreeCaveField cave_geometry)
         target_include_directories(TestTreeCaveField PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
+    ament_add_gtest(TestTruthCollisionAuditor test/TestTruthCollisionAuditor.cpp)
+    if(TARGET TestTruthCollisionAuditor)
+        target_link_libraries(TestTruthCollisionAuditor cave_geometry)
+        target_include_directories(TestTruthCollisionAuditor PUBLIC
                 $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         )
     endif()

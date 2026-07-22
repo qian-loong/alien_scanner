@@ -180,6 +180,7 @@ ros2 launch cave_world cave_world_launch.py
 - 扫描环在 **YZ 平面**（⊥ 前进方向）；不用 xy 水平 2D 作主路径
 - 关键话题：`/drone_0/odom`、`/drone_0/points`、`/drone_0/cloud_map`
 - 累积默认 **50 万点上限**（超出丢最早点）；**轨迹结束后停扫**，避免停飞空转占满上限
+- **Phase 3 已扩展：** 环面俯仰（`ring_pitch`）、高度自适应与全 beam `/scan_returns`；Phase 2 兼容入口仍可使用 `pitch=0`
 
 **当前预览（Phase 2 single_drone 入口 = `fake_lidar_launch.py`；双 RViz，仿真窗默认叠加洞穴真值）：**
 
@@ -194,26 +195,56 @@ ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 
 ---
 
-### Phase 3：多 drone 协同
+### Phase 3：多机未知探索与地图融合 — **重构前收口（3-1～3-8 已完成）**
 
-**目标：** 3～5 架 drone 分区探索，子图融合为全局 OctoMap。
+**分支：** `phase/3-swarm-controller`
 
-**产出：**
+**目标：** 未知探索（规划不读洞穴真值拓扑）；可俯仰垂直环 + 高度自适应；**OctoMap** 观测地图；多机任务调度；`/global_map` 融合。
 
-- 多 namespace 并行扫描
-- 全局 `/global_map` 或 OctoMap 话题
-- （可选）简单 frontier 探索：未扫描区域驱动下一目标点
+**进度摘要：**
 
-**任务清单（C++ 主体，接口标注见根 `AGENTS.md`）：**
+| 步 | 内容 | 状态 |
+|----|------|------|
+| 3-1 | 环面俯仰倾斜 `ring_pitch`（方案 A，不增 beam） | ✅ |
+| 3-2 | 高度自适应 | ✅ |
+| 3-3 | OctoMap 观测地图（含未命中 beam free 雕刻） | ✅ |
+| 3-4 | `IExplorationStrategy`（单机选目标） | ✅ |
+| 3-5 | 单机探索闭环 + 最小避障（M1） | ✅ |
+| 3-6 | 多机 launch（`num_drones:=3`）感知栈 | ✅ |
+| 3-7 | 多机探索分散（peer 启发式 + 简化前向局部规划） | ✅ |
+| 3-8 | `/global_map` 融合 | ✅ |
+| 3-9 | 全局 frontier 多机任务分配（非全局路径规划） | ⏸ 基础实现冻结，多 Region 验收延期 |
+| 3-10 | 一键 swarm + 测试验收 | ⏸ 按重构后架构重定 |
 
-- [ ] 创建 `swarm_controller` C++ 包（`ament_cmake`）
-- [ ] `IExplorationStrategy`（**接口，强烈建议**）+ 实现：`PartitionStrategy` / `FrontierStrategy` / `WaypointStrategy`；输入地图 → 输出下一目标点
-  - [ ] 单测：喂合成栅格地图，断言返回目标落在未探索区
-- [ ] `IMapMerger`（**先具体、留接口边界**）：`octomap_server` 封装 或 自写点云拼接；多机子图 → `/global_map`
-  - [ ] 单测：喂两张合成子图，断言合并覆盖并集
-- [ ] `launch/swarm.launch.xml`：参数 `num_drones:=3`
-- [ ] 命名空间：`/drone_0` … `/drone_N`
-- [ ] QoS：点云话题使用 `sensor_data` 配置，避免丢帧
+**单机探索闭环摘要：** 感知→OctoMap→固定规模前向短段目标→执行→再选；候选点机体包络
+和直线路径必须为 known-free，无安全目标时执行有限 yaw 重扫并 Hold。细节见
+[`phase-03-swarm.md`](phases/phase-03-swarm.md) Step 3-5 和 Step 3-7。
+
+**3-6 摘要：** 三机独立 namespace/TF/本机 OctoMap；goal 悬停建图；感知入口不挂 explorer。
+
+**3-7 摘要：** N×`SingleDroneExplorer` + peer 位姿软惩罚 / 有效 peer goal 硬分离；
+ROS-free `PeerStateTracker` 管理独立 position/goal 时效；全候选被 peer 占用时 Hold
+进入 `WaitingForPeer`；标准诊断可观测接线与过滤原因。默认局部规划收缩为基于 OctoMap
+的固定规模前向短段安全推进，不保存回退位姿、不发布向后恢复目标，也不执行随 frontier
+数量增长的候选邻域展开；无安全前向目标时有限 yaw 重扫后 Hold。全局地图留给 3-8，分叉所有权与
+任务分配留给 3-9。3-7 实现与自动测试已完成；无 `/global_map`；launch
+`multi_drone_exploration.launch.py`。当前 peer position 仅软惩罚、active goal 仅做目标点
+硬分离，不提供机体、路径或时间维度的动态避碰保证；该能力必须作为独立安全层后续设计。
+
+**3-9 目标：** 在 `/global_map` 上提取经单环多次观测支撑的稳定 2.5D frontier 区域，结合
+各机本机 OctoMap 的 first-hop 可执行性做唯一任务所有权分配；入口或证据不足时保持 3-7
+本地探索。任务只引导本机 known-free 短跳，不引入长距离 A*，也不把全局图当作本机安全图。
+主体、support-v2、Component 语义审计、allocator freshness 后台执行管线和 merger 分阶段诊断已实现，
+并通过自动测试与代码复核。当前冻结为中央式三机参考基线；Component 行为修改、多 Region
+`eligible_edges/matching/Assigned` 和真实三机任务生命周期验收延期到拓扑/地图数据面重构后，3-9 不视为
+完成。3-10 当前不启动。
+
+**跨 Phase 契约（摘要）：**
+
+- 真值 `ICaveField` 仅造数；规划 / 调度零拓扑真值依赖
+- 主路径观测地图 = **OctoMap**（非「纯点云不维护未知」）
+- 扫描：可俯仰垂直环；高度传感自适应；非整条预设廊道
+- 任务规划派机探索未知；不按已知出口预分配航线
 
 **建议依赖：**
 
@@ -221,16 +252,14 @@ ros2 launch drone_scanner fake_lidar_launch.py show_cave:=false
 sudo apt install -y \
   ros-jazzy-octomap \
   ros-jazzy-octomap-msgs \
-  ros-jazzy-octomap-rviz-plugins \
-  ros-jazzy-nav2-msgs
+  ros-jazzy-octomap-rviz-plugins
 ```
 
-**验收：**
+**验收（硬判据）：** 零真值依赖规划；覆盖单调；不穿已知墙；默认俯仰前视有效；多机覆盖优于单机。
 
-- 同时 3 个 fake drone 运行，CPU 可接受
-- 全局地图无明显的重复 ghosting（或 merge 参数可调）
+**详细文档：** [`docs/phases/phase-03-swarm.md`](phases/phase-03-swarm.md)
 
-**预计工作量：** 3～5 天
+**预计工作量：** 4～6 天（含 3-1 感知扩展）
 
 ---
 
@@ -354,51 +383,58 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    subgraph SWARM["各机 SLAM 感知链（Phase 3 / 4）"]
+    subgraph SWARM["各机感知与探索（Phase 3）"]
         direction LR
         subgraph D0["/drone_0"]
             direction LR
             O0["fake_odom"]
-            L0["fake_lidar"]
-            S0["slam_toolbox"]
+            L0["fake_lidar<br/>俯仰环"]
+            OCT0["octomap 更新"]
             O0 -. 位姿 .-> L0
-            L0 --> SC0(["/drone_0/scan"]) --> S0
+            L0 --> P0(["/drone_0/points"])
+            L0 --> R0(["/drone_0/scan_returns"]) --> OCT0
         end
         subgraph D1["/drone_1"]
             direction LR
             O1["fake_odom"]
             L1["fake_lidar"]
-            S1["slam_toolbox"]
+            OCT1["octomap 更新"]
             O1 -. 位姿 .-> L1
-            L1 --> SC1(["/drone_1/scan"]) --> S1
+            L1 --> P1(["/drone_1/points"])
+            L1 --> R1(["/drone_1/scan_returns"]) --> OCT1
         end
         subgraph DN["/drone_N …"]
             direction LR
             ON["fake_odom"]
             LN["fake_lidar"]
-            SN["slam_toolbox"]
+            OCTN["octomap 更新"]
             ON -. 位姿 .-> LN
-            LN --> SCN(["/drone_N/scan"]) --> SN
+            LN --> PN(["/drone_N/points"])
+            LN --> RN(["/drone_N/scan_returns"]) --> OCTN
         end
+    end
+
+    subgraph PLAN["任务规划"]
+        direction LR
+        STRAT["IExplorationStrategy<br/>+ 多机调度"]
+        G0(["goals"])
+        STRAT --> G0
     end
 
     subgraph FUSE["地图融合"]
         direction LR
-        M0(["/drone_0/map"])
-        M1(["/drone_1/map"])
-        MN(["/drone_N/map"])
-        MERGE["map_merge /<br/>octomap_server"]
+        MERGE["map merger"]
         GM(["/global_map<br/>octomap_msgs/Octomap"])
-
-        M0 --> MERGE
-        M1 --> MERGE
-        MN --> MERGE
+        OCT0 --> MERGE
+        OCT1 --> MERGE
+        OCTN --> MERGE
         MERGE --> GM
+        GM --> STRAT
     end
 
     subgraph DISPLAY["可视化输出"]
         direction LR
-        MESH["mesh_builder"]
+        MESH["mesh_builder<br/>（Phase 4）"]
         MK(["/cave_mesh<br/>visualization_msgs/Marker"])
         RVIZ["rviz2"]
 
@@ -407,27 +443,29 @@ flowchart TB
         MESH --> MK --> RVIZ
     end
 
-    S0 --> M0
-    S1 --> M1
-    SN --> MN
+    G0 -. 目标 .-> O0
+    G0 -. 目标 .-> O1
+    G0 -. 目标 .-> ON
 
     classDef node fill:#1f2933,stroke:#5c7080,color:#e8eef2;
     classDef topic fill:#22303c,stroke:#4a90d9,color:#dbeafe;
-    class O0,L0,S0,O1,L1,S1,ON,LN,SN,MERGE,MESH,RVIZ node;
-    class SC0,SC1,SCN,M0,M1,MN,GM,MK topic;
+    class O0,L0,OCT0,O1,L1,OCT1,ON,LN,OCTN,STRAT,MERGE,MESH,RVIZ node;
+    class P0,P1,PN,R0,R1,RN,G0,GM,MK topic;
 ```
 
 ### 话题一览表
 
 | 话题 | 消息类型 | 发布者 | 订阅者 |
 |------|----------|--------|--------|
-| `/cave/points` | `sensor_msgs/PointCloud2` | `cave_world` | `rviz2` |
-| `/drone_0/points` | `sensor_msgs/PointCloud2` | `fake_lidar` | `scan 累积`、RViz |
-| `/drone_0/cloud_map` | `sensor_msgs/PointCloud2` | scan 累积 | RViz |
-| `/drone_0/odom` | `nav_msgs/Odometry` | `fake_odom` | `fake_lidar`（读位姿）、累积 |
-| `/global_map` | `octomap_msgs/Octomap` | `map_merge` | `mesh_builder`, `rviz2` |
-| `/cave_mesh` | `visualization_msgs/Marker` | `mesh_builder` | `rviz2` |
-| `/tf`, `/tf_static` | `tf2_msgs/TFMessage` | `fake_odom`（odom→base_link）、累积/融合（map→odom） | 全体 |
+| `/cave/points` | `sensor_msgs/PointCloud2` | `cave_world` | `rviz2`（对照，不参与规划） |
+| `/drone_0/points` | `sensor_msgs/PointCloud2` | `fake_lidar` | 高度自适应、scan 累积、RViz |
+| `/drone_0/scan_returns` | `sensor_msgs/PointCloud2` | `fake_lidar` | 本机 OctoMap 更新 |
+| `/drone_0/cloud_map` | `sensor_msgs/PointCloud2` | scan 累积 | RViz（可选） |
+| `/drone_0/odom` | `nav_msgs/Odometry` | `fake_odom` | `fake_lidar`、探索执行 |
+| `/drone_0/octomap` | `octomap_msgs/Octomap` | `octomap_builder` | 探索策略、RViz |
+| `/global_map` | `octomap_msgs/Octomap` | map merger | 调度、`mesh_builder`、`rviz2` |
+| `/cave_mesh` | `visualization_msgs/Marker` | `mesh_builder`（Phase 4） | `rviz2` |
+| `/tf`, `/tf_static` | `tf2_msgs/TFMessage` | `fake_odom`、static TF | 全体 |
 
 ---
 
@@ -461,12 +499,17 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 [x] 0. 容器与环境（alien-scanner-dev + VcXsrv）
 [x] 1. Phase 1 — cave_world 包 + RViz2 看到洞穴
 [x] 2. Phase 2 — 3D 垂直环 fake LiDAR + fake_odom（见 docs/phases/phase-02-drone-scanner.md）
-[ ] 3. Phase 3 — 3 机 swarm + 全局 OctoMap
+[~] 3. Phase 3 — 重构前参考基线已收口；3-9 多 Region 验收延期，3-10 重定（见 docs/phases/phase-03-swarm.md）
 [ ] 4. Phase 4 — Mesh 与演示 polish
 [ ] 5. （可选）ros2 bag 录制 + README 演示 GIF
 ```
 
-**当前进度：** Phase 1、Phase 2 已完成；下一步 Phase 3（见 [`docs/phases/phase-02-drone-scanner.md`](phases/phase-02-drone-scanner.md)）。
+`[~]` 表示当前阶段已冻结参考基线但仍有保留需求延期，不表示 Phase 完成。
+
+**当前进度：** Phase 1、Phase 2 已完成；Phase 3 已完成 3-1～3-8，并将 3-9 的基础实现、诊断、测试、
+Demo 与 replay 证据冻结为重构前参考基线。3-9 的多 Region 任务分配和真实任务生命周期验收仍是强制
+需求，但延期到拓扑/地图数据面重构后；3-10 按新架构重定，不在当前中央式实现上继续（见
+[`docs/phases/phase-03-swarm.md`](phases/phase-03-swarm.md)）。
 
 ---
 
@@ -476,7 +519,7 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 |-------|------|------|
 | 1 | [`docs/phases/phase-01-cave-world.md`](phases/phase-01-cave-world.md) | 参数表、launch、拓扑、测试与验收 |
 | 2 | [`docs/phases/phase-02-drone-scanner.md`](phases/phase-02-drone-scanner.md) | 分步实现、坐标约定、Git、数据流 |
-| 3+ | （待 Phase 3 启动时创建） | 多机 OctoMap、探索策略 |
+| 3 | [`docs/phases/phase-03-swarm.md`](phases/phase-03-swarm.md) | 俯仰环、OctoMap、未知探索、多机调度 |
 
 ---
 
@@ -493,5 +536,5 @@ Jazzy 对应 **Gazebo Harmonic**，相关包名为 `ros-jazzy-ros-gz-sim` 等，
 | 字段 | 值 |
 |------|-----|
 | 创建日期 | 2026-07-06 |
-| 最后更新 | 2026-07-09 |
-| 状态 | Phase 1、Phase 2 已完成；分步细节见 `docs/phases/` |
+| 最后更新 | 2026-07-20 |
+| 状态 | Phase 1–2 已完成；Phase 3 重构前收口（3-1～3-8 已完成；3-9 多 Region 验收延期；3-10 重定）；分步细节见 `docs/phases/` |

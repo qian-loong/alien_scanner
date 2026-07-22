@@ -31,9 +31,10 @@ namespace DroneScanner {
 
         RCLCPP_INFO(
                 get_logger(),
-                "fake_lidar: %s -> %s, %.1f Hz, %ld beams, frame '%s'",
+                "fake_lidar: %s -> %s, %.1f Hz, %ld beams, ring_pitch=%.3f rad, frame '%s'",
                 map_frame_.c_str(), lidar_frame_.c_str(), scan_rate_hz_,
-                static_cast<long>(get_parameter("num_beams").as_int()), lidar_frame_.c_str());
+                static_cast<long>(get_parameter("num_beams").as_int()),
+                get_parameter("ring_pitch_rad").as_double(), lidar_frame_.c_str());
     }
 
     void FakeLidarNode::declareParameters()
@@ -47,6 +48,7 @@ namespace DroneScanner {
         declare_parameter("max_range", 30.0);
         declare_parameter("range_noise_std", 0.0);
         declare_parameter("noise_seed", 0);
+        declare_parameter("ring_pitch_rad", 0.0);
         declare_parameter("stop_scan_when_trajectory_done", true);
     }
 
@@ -62,6 +64,7 @@ namespace DroneScanner {
         config.max_range        = static_cast<float>(get_parameter("max_range").as_double());
         config.range_noise_std  = static_cast<float>(get_parameter("range_noise_std").as_double());
         config.noise_seed       = static_cast<std::uint32_t>(get_parameter("noise_seed").as_int());
+        config.ring_pitch_rad   = static_cast<float>(get_parameter("ring_pitch_rad").as_double());
         fake_lidar_             = std::make_unique<FakeLidar>(field_, config);
     }
 
@@ -73,7 +76,8 @@ namespace DroneScanner {
 
     void FakeLidarNode::initPublisher()
     {
-        publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>("points", rclcpp::SensorDataQoS());
+        publisher_         = create_publisher<sensor_msgs::msg::PointCloud2>("points", rclcpp::SensorDataQoS());
+        returns_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>("scan_returns", rclcpp::SensorDataQoS());
     }
 
     void FakeLidarNode::initOdomSubscription()
@@ -155,6 +159,48 @@ namespace DroneScanner {
         return cloud;
     }
 
+    sensor_msgs::msg::PointCloud2 FakeLidarNode::makeReturnsPointCloud(
+            const rclcpp::Time & stamp, const std::string & frame_id, const std::vector<LidarReturn> & returns)
+    {
+        sensor_msgs::msg::PointCloud2 cloud;
+        sensor_msgs::PointCloud2Modifier modifier(cloud);
+        modifier.setPointCloud2Fields(
+                6,
+                "x", 1, sensor_msgs::msg::PointField::FLOAT32,
+                "y", 1, sensor_msgs::msg::PointField::FLOAT32,
+                "z", 1, sensor_msgs::msg::PointField::FLOAT32,
+                "range", 1, sensor_msgs::msg::PointField::FLOAT32,
+                "hit", 1, sensor_msgs::msg::PointField::UINT8,
+                "intensity", 1, sensor_msgs::msg::PointField::FLOAT32);
+        modifier.resize(returns.size());
+
+        sensor_msgs::PointCloud2Iterator<float>        iter_x(cloud, "x");
+        sensor_msgs::PointCloud2Iterator<float>        iter_y(cloud, "y");
+        sensor_msgs::PointCloud2Iterator<float>        iter_z(cloud, "z");
+        sensor_msgs::PointCloud2Iterator<float>        iter_range(cloud, "range");
+        sensor_msgs::PointCloud2Iterator<std::uint8_t> iter_hit(cloud, "hit");
+        sensor_msgs::PointCloud2Iterator<float>        iter_intensity(cloud, "intensity");
+        for(const LidarReturn & ret : returns) {
+            *iter_x         = ret.x;
+            *iter_y         = ret.y;
+            *iter_z         = ret.z;
+            *iter_range     = ret.range;
+            *iter_hit       = ret.hit ? 1U : 0U;
+            *iter_intensity = ret.hit ? 1.0F : 0.0F;
+            ++iter_x;
+            ++iter_y;
+            ++iter_z;
+            ++iter_range;
+            ++iter_hit;
+            ++iter_intensity;
+        }
+
+        cloud.header.stamp    = stamp;
+        cloud.header.frame_id = frame_id;
+        cloud.is_dense        = true;
+        return cloud;
+    }
+
     void FakeLidarNode::onTimer()
     {
         if(scanning_stopped_) {
@@ -170,6 +216,8 @@ namespace DroneScanner {
                 lidar_frame_.c_str(), ex.what());
             return;
         }
+        const bool transform_stamp_is_zero = transform.header.stamp.sec == 0 && transform.header.stamp.nanosec == 0;
+        const rclcpp::Time scan_stamp = transform_stamp_is_zero ? now : rclcpp::Time(transform.header.stamp);
 
         Pose3D pose;
         pose.x   = static_cast<float>(transform.transform.translation.x);
@@ -179,8 +227,16 @@ namespace DroneScanner {
         // fake_odom 仅绕 Z 发布 yaw；与 yawToQuaternion 互逆
         pose.yaw = static_cast<float>(2.0 * std::atan2(rot.z, rot.w));
 
-        const auto hits = fake_lidar_->scan(pose);
-        publisher_->publish(makePointCloud(now, lidar_frame_, hits));
+        const auto returns = fake_lidar_->scanReturns(pose);
+        std::vector<LidarPoint> hits;
+        hits.reserve(returns.size());
+        for(const LidarReturn & ret : returns) {
+            if(ret.hit) {
+                hits.push_back(LidarPoint {ret.x, ret.y, ret.z});
+            }
+        }
+        publisher_->publish(makePointCloud(scan_stamp, lidar_frame_, hits));
+        returns_publisher_->publish(makeReturnsPointCloud(scan_stamp, lidar_frame_, returns));
     }
 
 }// namespace DroneScanner
