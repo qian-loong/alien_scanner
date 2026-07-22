@@ -145,3 +145,38 @@
 - Phase 验收完成前**不在 `main` 上堆多个阶段内 commit**；步骤历史保留在阶段分支，便于逐步 diff / revert。
 - 需要回到某步时，在阶段分支上用 commit hash 或可选 tag（例：`phase2-step1`），**不要**依赖长期 `commit --amend` 链代替步骤记录。
 - 推送：阶段分支可推送备份；**合并进 `main` 在用户确认 Phase 验收后进行**。
+
+### 5.2 Phase 分步开发流程
+
+计划中的每个功能 Step 默认遵循以下流程：
+
+1. 明确本步目标、边界、依赖、风险和验收标准。
+2. 输出详细实施方案，交由**方案审核模型**评审。
+3. 根据评审修订方案并写入对应 Phase 文档；用户确认后再实现。
+4. 按「ROS-free 算法库 + 薄节点」分层实现，完成相应 gtest、集成测试和必要目检。
+5. 交由**代码审核模型**评审实现；修复问题后复核，直至无待修高置信问题。
+6. 只同步**当前 Step** 的实现状态、运行方法和验收结果；不得提前把下一 Step 的设计改动混入本步提交。
+7. 汇报改动与验证结果，等待用户验收；提交仍严格遵循 §5.0 的明确授权规则。
+
+审核模型不写死：方案审核与代码审核可使用不同模型，以用户当次指定为准；未指定时沿用最近一次明确约定。指定模型不可用时先报告并询问，**不得擅自换模型**。
+<!-- TRELLIS:START -->
+# Trellis Instructions
+
+These instructions are for AI assistants working in this project.
+
+This project is managed by Trellis. The working knowledge you need lives under `.trellis/`:
+
+- `.trellis/workflow.md` — development phases, when to create tasks, skill routing
+- `.trellis/spec/` — package- and layer-scoped coding guidelines (read before writing code in a given layer)
+- `.trellis/workspace/` — per-developer journals and session traces
+- `.trellis/tasks/` — active and archived tasks (PRDs, research, jsonl context)
+
+If a Trellis command is available on your platform (e.g. `/trellis:finish-work`, `/trellis:continue`), prefer it over manual steps. Not every platform exposes every command.
+
+If you're using Codex or another agent-capable tool, additional project-scoped helpers may live in:
+- `.agents/skills/` — reusable Trellis skills
+- `.codex/agents/` — optional custom subagents
+
+Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
+
+<!-- TRELLIS:END -->
