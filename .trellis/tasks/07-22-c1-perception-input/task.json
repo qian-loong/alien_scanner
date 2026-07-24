@@ -1,0 +1,28 @@
+{
+  "id": "c1-perception-input",
+  "name": "c1-perception-input",
+  "title": "感知输入与观测数据模型",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "loong",
+  "assignee": "loong",
+  "createdAt": "2026-07-22",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "phase/4-perception-swarm-refactor",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-23-perception-cmake-source-index"
+  ],
+  "parent": "07-21-perception-swarm-architecture-refactor",
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
