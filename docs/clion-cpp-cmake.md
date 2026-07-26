@@ -10,7 +10,7 @@
 
 | 目标 | 实现方式 |
 |------|----------|
-| CLion 跳转 / 补全 | 根 `CMakeLists.txt` 对包 `add_subdirectory` |
+| CLion 跳转 / 补全 | 根 `CMakeLists.txt` 按 colcon 拓扑对包 `add_subdirectory` |
 | 一键 colcon 安装 | 每包 `colcon_build_<pkg>` custom target |
 | 工作区分离 | 源码在 `ws/src/`，根目录保留 Docker / Dev Container |
 
@@ -43,11 +43,49 @@
 
 ### `ROS2_PACKAGES_SELECT`
 
-| 默认 | 空 = 加载全部 `ament_cmake` 包 |
+| 默认 | 与 `ROS2_PACKAGE_ROOTS` 均为空时，加载全部 `ament_cmake` 包 |
 |------|--------------------------------|
 | 示例 | `cave_world` 或 `cave_world;drone_scanner` |
 
-过滤的是 `package.xml` 的 `<name>`，不是目录名。
+参数是 `package.xml` 的 `<name>`，不是目录名。非空时按
+`colcon list --packages-up-to` 语义加载选中包及其工作区递归依赖，随后按
+`--topological-order` 顺序执行 `add_subdirectory`。
+
+### `ROS2_PACKAGE_ROOTS`
+
+按目录选择包。路径默认相对 `${ROS2_WS_DIR}/src`，也接受 `ws/src` 内的
+绝对路径。根 CMake 使用 colcon 递归发现每个目录下的 ROS 包，再加载这些
+包及其工作区递归依赖。
+
+例如，以下选项会自动发现 `ws/src/alien_perception/` 下的 Core、Adapter、
+Interfaces、Input Node 和 Fixtures，无需逐个列出包名：
+
+```text
+-DROS2_PACKAGE_ROOTS=alien_perception
+```
+
+多个目录使用分号分隔：
+
+```text
+-DROS2_PACKAGE_ROOTS=alien_perception;swarm_controller
+```
+
+`ROS2_PACKAGE_ROOTS` 与 `ROS2_PACKAGES_SELECT` 可以同时使用，二者的包集合
+合并后再执行 `--packages-up-to`。目录不存在、超出 `ws/src`，或目录内没有
+可发现的 ROS 包时，CMake 配置会明确失败。
+
+从包名模式切换到目录模式时，应在 CLion profile 中清空旧的
+`ROS2_PACKAGES_SELECT`；否则旧包名会按上表的合并语义继续生效。
+
+| `ROS2_PACKAGE_ROOTS` | `ROS2_PACKAGES_SELECT` | 加载结果 |
+|----------------------|------------------------|----------|
+| 空 | 空 | 全部工作区 `ament_cmake` 包 |
+| 非空 | 空 | 目录下的包及其工作区依赖 |
+| 空 | 非空 | 指定包及其工作区依赖 |
+| 非空 | 非空 | 两者合并后的包及其工作区依赖 |
+
+包目录增删由无限层级的 `package.xml` 变更监听触发 CMake 重新配置；实际包
+发现、ignore 处理和拓扑排序仍以 colcon 输出为准。
 
 ### `ROS2_COLCON_BUILD_TARGETS` / `ROS2_COLCON_TEST_TARGETS`
 
@@ -67,7 +105,7 @@
 
 ## Reload CMake 后
 
-1. 确认 CMake 日志中有 `Add ament package: cave_world` 等
+1. 确认 CMake 日志中依赖包先于消费包出现，例如 `perception_core` 先于 `perception_adapters`
 2. Build `colcon_build_<pkg>` 安装到 `ws/install`
 3. 终端：`source ws/install/setup.bash` 后 `ros2 run …`
 
