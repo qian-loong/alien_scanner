@@ -83,3 +83,38 @@ Completed the C1 perception input implementation and corrected deterministic LiD
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Complete C1 perception input
+
+**Date**: 2026-07-27
+**Task**: Complete C1 perception input
+**Branch**: `phase/4-perception-swarm-refactor`
+
+### Summary
+
+Completed and validated C1 perception input, ray-evidence capability, deterministic YZ tunnel debug view, coverage gates, architecture planning, and source indexing; archived C1 after 88 passing tests and user RViz acceptance.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a61fb93` | (see git log) |
+| `56274ea` | (see git log) |
+| `f5aedf6` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
