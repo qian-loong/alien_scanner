@@ -5,13 +5,34 @@
 #include <cmath>
 #include <gtest/gtest.h>
 #include <iostream>
+#include <limits>
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
+#include <stdexcept>
 
 using namespace Perception;
 using namespace Perception::Adapters;
+
+namespace {
+
+    sensor_msgs::msg::PointCloud2 make_valid_xyz_cloud(
+            const std::string & frame_id = "lidar_top_link")
+    {
+        sensor_msgs::msg::PointCloud2 message;
+        message.header.frame_id = frame_id;
+        sensor_msgs::PointCloud2Modifier modifier(message);
+        modifier.setPointCloud2Fields(
+                3,
+                "x", 1, sensor_msgs::msg::PointField::FLOAT32,
+                "y", 1, sensor_msgs::msg::PointField::FLOAT32,
+                "z", 1, sensor_msgs::msg::PointField::FLOAT32);
+        modifier.resize(1);
+        return message;
+    }
+
+}// namespace
 
 // Test LaserScanAdapter
 TEST(LaserScanAdapterTest, BasicConversion)
@@ -25,7 +46,7 @@ TEST(LaserScanAdapterTest, BasicConversion)
     msg.header.stamp.nanosec = 500000000;
     msg.angle_min            = -M_PI;
     msg.angle_max            = M_PI;
-    msg.angle_increment      = M_PI / 180.0;// 1 degree
+    msg.angle_increment      = M_PI / 2.0;
     msg.range_min            = 0.1;
     msg.range_max            = 30.0;
     msg.ranges               = {1.0, 2.0, 3.0, 4.0, 5.0};
@@ -55,6 +76,7 @@ TEST(LaserScanAdapterTest, BasicConversion)
     EXPECT_EQ(obs.frame_id, "lidar_front_link");
     EXPECT_EQ(obs.clock_domain, "vehicle_steady_clock");
     EXPECT_EQ(obs.origin_stamp.nanoseconds, 10500000000LL);
+    EXPECT_EQ(obs.ray_evidence, RayEvidenceCapability::HitOnly);
     EXPECT_TRUE(obs.is_2d());
     EXPECT_EQ(obs.point_count(), 5);
 
@@ -105,6 +127,163 @@ TEST(LaserScanAdapterTest, Validation)
     EXPECT_FALSE(result.valid);
 }
 
+TEST(LaserScanAdapterTest, LocksRayMetadataForFreeSpaceCapabilities)
+{
+    LaserScanAdapter            adapter;
+    sensor_msgs::msg::LaserScan msg;
+    msg.header.frame_id = "lidar_front_link";
+    msg.angle_min       = -1.0F;
+    msg.angle_max       = 1.0F;
+    msg.angle_increment = 1.0F;
+    msg.range_min       = 0.1F;
+    msg.range_max       = 30.0F;
+    msg.ranges          = {1.0F, 2.0F, 3.0F};
+
+    SensorDescriptor descriptor {
+            SensorID {"lidar_front"},
+            SensorType::LIDAR_2D,
+            "lidar_front_link",
+            Eigen::Vector3d::Zero(),
+            Eigen::Quaterniond::Identity(),
+            FieldOfView {-1.0, 1.0, 0.0, 0.0},
+            1.0,
+            0.1,
+            30.0,
+            RayEvidenceCapability::FullRay};
+
+    EXPECT_TRUE(adapter.validate(msg, descriptor).valid);
+    EXPECT_EQ(
+            adapter.convert(msg, descriptor, SessionID {1, 2}).ray_evidence,
+            RayEvidenceCapability::FullRay);
+
+    auto drifted = msg;
+    drifted.range_min += 0.01F;
+    EXPECT_FALSE(adapter.validate(drifted, descriptor).valid);
+    drifted = msg;
+    drifted.range_max += 0.01F;
+    EXPECT_FALSE(adapter.validate(drifted, descriptor).valid);
+    drifted = msg;
+    drifted.angle_min += 0.01F;
+    EXPECT_FALSE(adapter.validate(drifted, descriptor).valid);
+    drifted = msg;
+    drifted.angle_max -= 0.01F;
+    EXPECT_FALSE(adapter.validate(drifted, descriptor).valid);
+    drifted = msg;
+    drifted.angle_increment += 0.01F;
+    EXPECT_FALSE(adapter.validate(drifted, descriptor).valid);
+
+    descriptor.ray_evidence = RayEvidenceCapability::HitRay;
+    EXPECT_TRUE(adapter.validate(msg, descriptor).valid);
+
+    descriptor.ray_evidence          = RayEvidenceCapability::HitOnly;
+    descriptor.range_max_m           = 40.0;
+    descriptor.fov.horizontal_min_rad = -2.0;
+    descriptor.angular_resolution_rad = 0.5;
+    EXPECT_TRUE(adapter.validate(msg, descriptor).valid);
+}
+
+TEST(LaserScanAdapterTest, RejectsInvalidBaseMetadataAtEveryCapability)
+{
+    LaserScanAdapter            adapter;
+    sensor_msgs::msg::LaserScan msg;
+    msg.header.frame_id = "lidar_front_link";
+    msg.angle_min       = -1.0F;
+    msg.angle_max       = 1.0F;
+    msg.angle_increment = 1.0F;
+    msg.range_min       = 0.1F;
+    msg.range_max       = 30.0F;
+    msg.ranges          = {1.0F, 2.0F, 3.0F};
+
+    SensorDescriptor descriptor {
+            SensorID {"lidar_front"},
+            SensorType::LIDAR_2D,
+            "lidar_front_link",
+            Eigen::Vector3d::Zero(),
+            Eigen::Quaterniond::Identity(),
+            FieldOfView {-1.0, 1.0, 0.0, 0.0},
+            1.0,
+            0.1,
+            30.0};
+
+    for(const auto capability : {
+                RayEvidenceCapability::HitOnly,
+                RayEvidenceCapability::HitRay,
+                RayEvidenceCapability::FullRay}) {
+        descriptor.ray_evidence = capability;
+
+        auto invalid = msg;
+        invalid.range_min = std::numeric_limits<float>::quiet_NaN();
+        EXPECT_FALSE(adapter.validate(invalid, descriptor).valid);
+        invalid           = msg;
+        invalid.range_max = std::numeric_limits<float>::infinity();
+        EXPECT_FALSE(adapter.validate(invalid, descriptor).valid);
+        invalid                 = msg;
+        invalid.angle_increment = 0.0F;
+        EXPECT_FALSE(adapter.validate(invalid, descriptor).valid);
+        invalid           = msg;
+        invalid.angle_min = -std::numeric_limits<float>::infinity();
+        EXPECT_FALSE(adapter.validate(invalid, descriptor).valid);
+    }
+}
+
+TEST(LaserScanAdapterTest, DirectConvertCannotBypassValidation)
+{
+    LaserScanAdapter            adapter;
+    sensor_msgs::msg::LaserScan message;
+    message.header.frame_id = "lidar_front_link";
+    message.angle_min       = -1.0F;
+    message.angle_max       = 1.0F;
+    message.angle_increment = 1.0F;
+    message.range_min       = 0.1F;
+    message.range_max       = 30.0F;
+    message.ranges          = {1.0F, 2.0F, 3.0F};
+    message.intensities     = {1.0F, 1.0F, 1.0F};
+
+    SensorDescriptor descriptor {
+            SensorID {"lidar_front"},
+            SensorType::LIDAR_2D,
+            "lidar_front_link",
+            Eigen::Vector3d::Zero(),
+            Eigen::Quaterniond::Identity(),
+            FieldOfView {-1.0, 1.0, 0.0, 0.0},
+            1.0,
+            0.1,
+            30.0,
+            RayEvidenceCapability::FullRay};
+    const SessionID session {1, 2};
+
+    auto invalid_message = message;
+    invalid_message.header.frame_id = "wrong_frame";
+    EXPECT_THROW(adapter.convert(invalid_message, descriptor, session), std::invalid_argument);
+
+    auto invalid_descriptor = descriptor;
+    invalid_descriptor.type = SensorType::LIDAR_3D;
+    EXPECT_THROW(adapter.convert(message, invalid_descriptor, session), std::invalid_argument);
+
+    invalid_message = message;
+    invalid_message.range_max = std::numeric_limits<float>::infinity();
+    EXPECT_THROW(adapter.convert(invalid_message, descriptor, session), std::invalid_argument);
+
+    invalid_message = message;
+    invalid_message.ranges.clear();
+    EXPECT_THROW(adapter.convert(invalid_message, descriptor, session), std::invalid_argument);
+
+    invalid_message = message;
+    invalid_message.intensities.pop_back();
+    EXPECT_THROW(adapter.convert(invalid_message, descriptor, session), std::invalid_argument);
+
+    invalid_message = message;
+    invalid_message.angle_increment = 0.5F;
+    EXPECT_THROW(adapter.convert(invalid_message, descriptor, session), std::invalid_argument);
+
+    invalid_descriptor = descriptor;
+    invalid_descriptor.ray_evidence = static_cast<RayEvidenceCapability>(3);
+    EXPECT_THROW(adapter.convert(message, invalid_descriptor, session), std::invalid_argument);
+
+    invalid_descriptor.ray_evidence = static_cast<RayEvidenceCapability>(255);
+    EXPECT_THROW(adapter.convert(message, invalid_descriptor, session), std::invalid_argument);
+}
+
 // Test PointCloud2Adapter
 TEST(PointCloud2AdapterTest, BasicConversion)
 {
@@ -142,7 +321,7 @@ TEST(PointCloud2AdapterTest, BasicConversion)
     field_intensity.datatype = sensor_msgs::msg::PointField::FLOAT32;
     field_intensity.count    = 1;
 
-    msg.fields     = {field_x, field_y, field_z, field_intensity};
+    msg.fields     = {field_z, field_x, field_intensity, field_y};
     msg.point_step = 16;
     msg.row_step   = msg.point_step * msg.width;
     msg.data.resize(msg.row_step * msg.height);
@@ -194,6 +373,7 @@ TEST(PointCloud2AdapterTest, BasicConversion)
     // Verify
     EXPECT_EQ(obs.sensor_id.value, "lidar_top");
     EXPECT_EQ(obs.frame_id, "lidar_top_link");
+    EXPECT_EQ(obs.ray_evidence, RayEvidenceCapability::HitOnly);
     EXPECT_TRUE(obs.is_3d());
     EXPECT_EQ(obs.point_count(), 3);
 
@@ -208,18 +388,7 @@ TEST(PointCloud2AdapterTest, BasicConversion)
 TEST(PointCloud2AdapterTest, Validation)
 {
     PointCloud2Adapter adapter;
-
-    sensor_msgs::msg::PointCloud2 msg;
-    msg.header.frame_id = "lidar_top_link";
-    msg.height          = 1;
-    msg.width           = 3;
-
-    // Add XYZ fields
-    sensor_msgs::msg::PointField field_x, field_y, field_z;
-    field_x.name = "x";
-    field_y.name = "y";
-    field_z.name = "z";
-    msg.fields   = {field_x, field_y, field_z};
+    const auto msg = make_valid_xyz_cloud();
 
     SensorDescriptor descriptor {
             SensorID {"lidar_top"},
@@ -239,6 +408,82 @@ TEST(PointCloud2AdapterTest, Validation)
     descriptor.type = SensorType::LIDAR_2D;
     result          = adapter.validate(msg, descriptor);
     EXPECT_FALSE(result.valid);
+}
+
+TEST(PointCloud2AdapterTest, FailsClosedForRayEvidenceAboveHitOnly)
+{
+    PointCloud2Adapter              adapter;
+    const auto msg = make_valid_xyz_cloud();
+
+    SensorDescriptor descriptor {
+            SensorID {"lidar_top"},
+            SensorType::LIDAR_3D,
+            "lidar_top_link",
+            Eigen::Vector3d::Zero(),
+            Eigen::Quaterniond::Identity(),
+            FieldOfView {-M_PI, M_PI, -M_PI / 4, M_PI / 4},
+            0.01,
+            0.1,
+            50.0};
+
+    for(const auto capability : {
+                RayEvidenceCapability::HitRay,
+                RayEvidenceCapability::FullRay,
+                static_cast<RayEvidenceCapability>(3),
+                static_cast<RayEvidenceCapability>(255)}) {
+        descriptor.ray_evidence = capability;
+        const auto validation   = adapter.validate(msg, descriptor);
+        EXPECT_FALSE(validation.valid);
+        EXPECT_NE(validation.error_message.find("hit_only"), std::string::npos);
+        EXPECT_THROW(
+                adapter.convert(msg, descriptor, SessionID {1, 2}),
+                std::invalid_argument);
+    }
+}
+
+TEST(PointCloud2AdapterTest, DirectConvertCannotBypassLayoutValidation)
+{
+    PointCloud2Adapter adapter;
+    const auto         message = make_valid_xyz_cloud();
+    SensorDescriptor descriptor {
+            SensorID {"lidar_top"},
+            SensorType::LIDAR_3D,
+            "lidar_top_link",
+            Eigen::Vector3d::Zero(),
+            Eigen::Quaterniond::Identity(),
+            FieldOfView {-M_PI, M_PI, -M_PI / 4, M_PI / 4},
+            0.01,
+            0.1,
+            50.0};
+    const SessionID session {1, 2};
+
+    auto malformed = message;
+    malformed.data.clear();
+    EXPECT_FALSE(adapter.validate(malformed, descriptor).valid);
+    EXPECT_THROW(adapter.convert(malformed, descriptor, session), std::invalid_argument);
+
+    malformed = message;
+    malformed.row_step = 0;
+    EXPECT_FALSE(adapter.validate(malformed, descriptor).valid);
+    EXPECT_THROW(adapter.convert(malformed, descriptor, session), std::invalid_argument);
+
+    malformed = message;
+    malformed.fields.front().datatype = sensor_msgs::msg::PointField::FLOAT64;
+    EXPECT_FALSE(adapter.validate(malformed, descriptor).valid);
+    EXPECT_THROW(adapter.convert(malformed, descriptor, session), std::invalid_argument);
+
+    malformed = message;
+    malformed.fields.front().offset = malformed.point_step;
+    EXPECT_FALSE(adapter.validate(malformed, descriptor).valid);
+    EXPECT_THROW(adapter.convert(malformed, descriptor, session), std::invalid_argument);
+
+    auto wrong_descriptor = descriptor;
+    wrong_descriptor.type = SensorType::LIDAR_2D;
+    EXPECT_THROW(adapter.convert(message, wrong_descriptor, session), std::invalid_argument);
+
+    malformed = message;
+    malformed.header.frame_id = "wrong_frame";
+    EXPECT_THROW(adapter.convert(malformed, descriptor, session), std::invalid_argument);
 }
 
 // Test OdometryAdapter

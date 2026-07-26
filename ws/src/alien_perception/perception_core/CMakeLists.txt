@@ -24,6 +24,7 @@ set(PERCEPTION_CORE_HEADER_FILES
         include/perception_core/health/mapper_input_contract.hpp
         include/perception_core/observation/lidar_observation.hpp
         include/perception_core/observation/pose_estimate.hpp
+        include/perception_core/observation/ray_evidence_capability.hpp
         include/perception_core/observation/sensor_descriptor.hpp
         include/perception_core/types/identity.hpp
         include/perception_core/types/timestamp.hpp

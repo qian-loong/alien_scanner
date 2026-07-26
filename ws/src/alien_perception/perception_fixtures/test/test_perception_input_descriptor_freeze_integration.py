@@ -19,7 +19,7 @@ import launch
 import launch_ros.actions
 import launch_testing
 import rclpy
-from perception_interfaces.msg import LidarObservation
+from perception_interfaces.msg import HealthState, LidarObservation
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import LaserScan
 
@@ -33,10 +33,12 @@ def generate_test_description():
             {
                 "sensor_ids": ["front"],
                 "requires_pose": False,
-                "minimum_lidar_type": "3d",
+                "minimum_lidar_type": "2d",
                 "minimum_lidar_count": 1,
+                "minimum_lidar_ray_evidence": "hit_ray",
                 "degraded_lidar_type": "2d",
                 "degraded_lidar_count": 1,
+                "degraded_lidar_ray_evidence": "hit_ray",
                 "recovery_stability_samples": 1,
                 "sensor_timeout_s": 0.4,
                 "health_period_s": 0.1,
@@ -62,6 +64,8 @@ class TestPerceptionInputDescriptorFreezeIntegration(unittest.TestCase):
         cls.node = rclpy.create_node("perception_input_descriptor_freeze_integration_test")
         cls.observations = []
         cls.observation_event = Event()
+        cls.health_event = Event()
+        cls.latest_health = None
         sensor_qos = QoSProfile(depth=10)
         sensor_qos.reliability = ReliabilityPolicy.BEST_EFFORT
         cls.scan_publisher = cls.node.create_publisher(
@@ -75,6 +79,12 @@ class TestPerceptionInputDescriptorFreezeIntegration(unittest.TestCase):
             cls._on_observation,
             observation_qos,
         )
+        cls.node.create_subscription(
+            HealthState,
+            "perception/health",
+            cls._on_health,
+            10,
+        )
 
     @classmethod
     def tearDownClass(cls):
@@ -85,6 +95,12 @@ class TestPerceptionInputDescriptorFreezeIntegration(unittest.TestCase):
     def _on_observation(cls, message):
         cls.observations.append(message)
         cls.observation_event.set()
+
+    @classmethod
+    def _on_health(cls, message):
+        cls.latest_health = message
+        if message.active_sensor_count == 1:
+            cls.health_event.set()
 
     def _spin(self, duration_seconds):
         deadline = time.monotonic() + duration_seconds
@@ -111,6 +127,12 @@ class TestPerceptionInputDescriptorFreezeIntegration(unittest.TestCase):
             rclpy.spin_once(self.node, timeout_sec=0.05)
         return len(self.observations) >= minimum_count
 
+    def _spin_until(self, event, timeout_seconds):
+        deadline = time.monotonic() + timeout_seconds
+        while not event.is_set() and time.monotonic() < deadline:
+            rclpy.spin_once(self.node, timeout_sec=0.05)
+        return event.is_set()
+
     def _session_key(self, message):
         return (message.session_boot_time_ns, message.session_random_suffix)
 
@@ -128,6 +150,21 @@ class TestPerceptionInputDescriptorFreezeIntegration(unittest.TestCase):
             self.observations[0].data_type,
             LidarObservation.DATA_TYPE_SCAN_2D,
         )
+        self.assertEqual(
+            self.observations[0].ray_evidence,
+            LidarObservation.RAY_EVIDENCE_HIT_ONLY,
+        )
+        self.assertTrue(
+            self._spin_until(self.health_event, 5.0),
+            "expected health after the default hit_only sensor became active",
+        )
+        self.assertEqual(
+            self.latest_health.state,
+            HealthState.STATE_UNAVAILABLE,
+            "hit_only must satisfy neither the hit_ray minimum nor degraded contract",
+        )
+        self.assertFalse(self.latest_health.has_free_space_hit_rays)
+        self.assertFalse(self.latest_health.has_full_no_return_rays)
 
         # Keep publishing matching scans so freeze is durable and session stays stable.
         for _ in range(5):

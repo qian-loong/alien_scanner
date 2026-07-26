@@ -38,6 +38,7 @@ namespace {
     using Perception::MapperHealthGate;
     using Perception::MapperInputContract;
     using Perception::PoseEstimate;
+    using Perception::RayEvidenceCapability;
     using Perception::SensorDescriptor;
     using Perception::SensorHealth;
     using Perception::SensorHealthStatus;
@@ -73,6 +74,19 @@ namespace {
                 return perception_interfaces::msg::HealthState::STATE_UNAVAILABLE;
         }
         return perception_interfaces::msg::HealthState::STATE_UNAVAILABLE;
+    }
+
+    uint8_t to_ros_ray_evidence(RayEvidenceCapability capability)
+    {
+        switch(capability) {
+            case RayEvidenceCapability::HitOnly:
+                return perception_interfaces::msg::LidarObservation::RAY_EVIDENCE_HIT_ONLY;
+            case RayEvidenceCapability::HitRay:
+                return perception_interfaces::msg::LidarObservation::RAY_EVIDENCE_HIT_RAY;
+            case RayEvidenceCapability::FullRay:
+                return perception_interfaces::msg::LidarObservation::RAY_EVIDENCE_FULL_RAY;
+        }
+        throw std::invalid_argument("Unknown ray evidence capability");
     }
 
 }// namespace
@@ -201,6 +215,10 @@ private:
         const auto          degraded_type  = declare_parameter<std::string>("degraded_lidar_type", "2d");
         const auto          minimum_count  = declare_parameter<int64_t>("minimum_lidar_count", 1);
         const auto          degraded_count = declare_parameter<int64_t>("degraded_lidar_count", 1);
+        const auto minimum_ray_evidence = parse_ray_evidence(declare_parameter<std::string>(
+                "minimum_lidar_ray_evidence", "hit_only"));
+        const auto degraded_ray_evidence = parse_ray_evidence(declare_parameter<std::string>(
+                "degraded_lidar_ray_evidence", "hit_only"));
         contract.requires_pose             = declare_parameter<bool>("requires_pose", true);
         contract.pose_freshness_threshold  = Duration::from_seconds(pose_timeout_);
         if(!std::isfinite(minimum_pose_quality_) || minimum_pose_quality_ < 0.0
@@ -217,12 +235,14 @@ private:
         contract.minimum_viable.push_back(
                 SensorRequirement {parse_sensor_type(minimum_type),
                                    static_cast<std::size_t>(std::max<int64_t>(1, minimum_count)),
-                                   {}});
+                                   {},
+                                   minimum_ray_evidence});
         contract.degraded_combinations.push_back(
                 Perception::DegradedCombination {
                         {SensorRequirement {parse_sensor_type(degraded_type),
                                             static_cast<std::size_t>(std::max<int64_t>(1, degraded_count)),
-                                            {}}},
+                                            {},
+                                            degraded_ray_evidence}},
                         "Configured degraded lidar combination"});
         health_gate_ = std::make_unique<MapperHealthGate>(std::move(contract));
     }
@@ -289,7 +309,9 @@ private:
                         declare_parameter<double>(prefix + "fov_vertical_max_rad", default_vertical_max)},
                 declare_parameter<double>(prefix + "angular_resolution_rad", 0.01),
                 declare_parameter<double>(prefix + "range_min_m", 0.1),
-                declare_parameter<double>(prefix + "range_max_m", 30.0)};
+                declare_parameter<double>(prefix + "range_max_m", 30.0),
+                parse_ray_evidence(declare_parameter<std::string>(
+                        prefix + "ray_evidence", "hit_only"))};
     }
 
     static SensorType parse_sensor_type(const std::string & value)
@@ -303,6 +325,22 @@ private:
         throw std::invalid_argument("Unsupported lidar type '" + value + "'; expected 2d or 3d");
     }
 
+    static RayEvidenceCapability parse_ray_evidence(const std::string & value)
+    {
+        if(value == "hit_only") {
+            return RayEvidenceCapability::HitOnly;
+        }
+        if(value == "hit_ray") {
+            return RayEvidenceCapability::HitRay;
+        }
+        if(value == "full_ray") {
+            return RayEvidenceCapability::FullRay;
+        }
+        throw std::invalid_argument(
+                "Unsupported ray evidence '" + value
+                + "'; expected hit_only, hit_ray, or full_ray");
+    }
+
     void on_laser_scan(
             const sensor_msgs::msg::LaserScan::SharedPtr & msg,
             const SensorID &                               sensor_id)
@@ -313,15 +351,18 @@ private:
             return;
         }
 
-        const auto validation = scan_adapter_.validate(*msg, *descriptor);
-        if(!validation.valid) {
-            RCLCPP_WARN(
-                    get_logger(), "Rejecting LaserScan from '%s': %s", sensor_id.value.c_str(),
-                    validation.error_message.c_str());
+        try {
+            publish_observation(
+                    scan_adapter_.convert(*msg, *descriptor, session_id_, clock_domain_));
+        }
+        catch(const std::invalid_argument & error) {
+            RCLCPP_WARN_THROTTLE(
+                    get_logger(), *get_clock(), 5000,
+                    "Rejecting LaserScan from '%s': %s", sensor_id.value.c_str(),
+                    error.what());
             return;
         }
 
-        publish_observation(scan_adapter_.convert(*msg, *descriptor, session_id_, clock_domain_));
         mark_sensor_active(sensor_id);
         if(!session_manager_.is_frozen()) {
             session_manager_.freeze();
@@ -339,15 +380,18 @@ private:
             return;
         }
 
-        const auto validation = cloud_adapter_.validate(*msg, *descriptor);
-        if(!validation.valid) {
-            RCLCPP_WARN(
-                    get_logger(), "Rejecting PointCloud2 from '%s': %s", sensor_id.value.c_str(),
-                    validation.error_message.c_str());
+        try {
+            publish_observation(
+                    cloud_adapter_.convert(*msg, *descriptor, session_id_, clock_domain_));
+        }
+        catch(const std::invalid_argument & error) {
+            RCLCPP_WARN_THROTTLE(
+                    get_logger(), *get_clock(), 5000,
+                    "Rejecting PointCloud2 from '%s': %s", sensor_id.value.c_str(),
+                    error.what());
             return;
         }
 
-        publish_observation(cloud_adapter_.convert(*msg, *descriptor, session_id_, clock_domain_));
         mark_sensor_active(sensor_id);
         if(!session_manager_.is_frozen()) {
             session_manager_.freeze();
@@ -434,6 +478,7 @@ private:
         message.session_boot_time_ns  = observation.session_id.boot_time_ns;
         message.session_random_suffix = observation.session_id.random_suffix;
         message.clock_domain          = observation.clock_domain;
+        message.ray_evidence          = to_ros_ray_evidence(observation.ray_evidence);
 
         if(observation.is_2d()) {
             const auto & scan       = observation.as_scan_2d();
@@ -504,6 +549,8 @@ private:
         message.has_2d_lidar        = capabilities.has_2d_lidar;
         message.has_3d_lidar        = capabilities.has_3d_lidar;
         message.has_fresh_pose      = capabilities.has_fresh_pose;
+        message.has_free_space_hit_rays = capabilities.has_free_space_hit_rays;
+        message.has_full_no_return_rays = capabilities.has_full_no_return_rays;
         message.active_sensor_count = static_cast<uint32_t>(std::min<std::size_t>(
                 capabilities.active_sensor_count, std::numeric_limits<uint32_t>::max()));
         health_publisher_->publish(message);
@@ -513,7 +560,14 @@ private:
 int main(int argc, char ** argv)
 {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<PerceptionInputNode>());
+    int exit_code = 0;
+    try {
+        rclcpp::spin(std::make_shared<PerceptionInputNode>());
+    }
+    catch(const std::exception & error) {
+        RCLCPP_FATAL(rclcpp::get_logger("perception_input_node"), "%s", error.what());
+        exit_code = 1;
+    }
     rclcpp::shutdown();
-    return 0;
+    return exit_code;
 }

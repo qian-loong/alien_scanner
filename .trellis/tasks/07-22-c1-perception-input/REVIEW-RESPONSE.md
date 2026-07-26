@@ -131,15 +131,15 @@
 
 ---
 
-### 💡 优化 5：固定 ROS 2 Humble 具体 patch 版本
+### 💡 优化 5：统一 ROS 2 发行版边界
 
-**建议**：
-- 在 `package.xml` 中明确最低版本要求
-- 避免不同 patch 版本的消息格式差异
+**原建议**：
+- 在 `package.xml` 中固定 ROS 2 Humble 的最低 patch 版本
 
-**状态**：⏸️ 暂不修订规划文档
-- 原因：实施细节
-- 记录：在阶段 4 创建 package.xml 时明确版本要求
+**状态**：✅ 按仓库实际环境修订
+- 本仓库开发、构建和测试环境统一为 ROS 2 Jazzy 容器；
+- 不在 `package.xml` 中加入与实际环境冲突的 Humble 版本钉死；
+- Jazzy 依赖版本由 `alien-scanner-jazzy:latest` 镜像统一。
 
 ---
 

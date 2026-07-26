@@ -7,9 +7,11 @@
 #include "perception_core/types/identity.hpp"
 #include "perception_core/types/timestamp.hpp"
 #include <chrono>
+#include <cmath>
 #include <gtest/gtest.h>
 #include <iostream>
 #include <limits>
+#include <stdexcept>
 
 using namespace Perception;
 
@@ -137,6 +139,66 @@ TEST(SensorDescriptorTest, Equality)
 
     desc2.range_max_m = 20.0;
     EXPECT_NE(desc1, desc2);
+
+    desc2              = desc1;
+    desc2.ray_evidence = RayEvidenceCapability::HitRay;
+    EXPECT_NE(desc1, desc2);
+}
+
+TEST(RayEvidenceCapabilityTest, IsMonotonic)
+{
+    EXPECT_TRUE(is_valid_ray_evidence(RayEvidenceCapability::HitOnly));
+    EXPECT_TRUE(is_valid_ray_evidence(RayEvidenceCapability::HitRay));
+    EXPECT_TRUE(is_valid_ray_evidence(RayEvidenceCapability::FullRay));
+    EXPECT_TRUE(provides_at_least(
+            RayEvidenceCapability::HitOnly, RayEvidenceCapability::HitOnly));
+    EXPECT_FALSE(provides_at_least(
+            RayEvidenceCapability::HitOnly, RayEvidenceCapability::HitRay));
+    EXPECT_TRUE(provides_at_least(
+            RayEvidenceCapability::HitRay, RayEvidenceCapability::HitOnly));
+    EXPECT_FALSE(provides_at_least(
+            RayEvidenceCapability::HitRay, RayEvidenceCapability::FullRay));
+    EXPECT_TRUE(provides_at_least(
+            RayEvidenceCapability::FullRay, RayEvidenceCapability::HitRay));
+}
+
+TEST(RayEvidenceCapabilityTest, UnknownValuesFailClosed)
+{
+    const auto unknown_three = static_cast<RayEvidenceCapability>(3);
+    const auto unknown_255   = static_cast<RayEvidenceCapability>(255);
+
+    EXPECT_FALSE(is_valid_ray_evidence(unknown_three));
+    EXPECT_FALSE(is_valid_ray_evidence(unknown_255));
+    EXPECT_FALSE(provides_at_least(unknown_three, RayEvidenceCapability::HitOnly));
+    EXPECT_FALSE(provides_at_least(unknown_255, RayEvidenceCapability::FullRay));
+    EXPECT_FALSE(provides_at_least(RayEvidenceCapability::FullRay, unknown_three));
+    EXPECT_FALSE(provides_at_least(RayEvidenceCapability::FullRay, unknown_255));
+}
+
+TEST(Scan2DTest, ClassifiesReturnsWithoutChangingPayload)
+{
+    Scan2D scan;
+    scan.range_min_m = 0.1;
+    scan.range_max_m = 30.0;
+    scan.ranges      = {
+            0.1F,
+            30.0F,
+            std::nextafter(0.1F, 0.0F),
+            std::nextafter(30.0F, std::numeric_limits<float>::infinity()),
+            std::numeric_limits<float>::infinity(),
+            -std::numeric_limits<float>::infinity(),
+            std::numeric_limits<float>::quiet_NaN()};
+
+    const auto * payload = scan.ranges.data();
+    EXPECT_EQ(scan.return_kind(0), RayReturnKind::Hit);
+    EXPECT_EQ(scan.return_kind(1), RayReturnKind::Hit);
+    EXPECT_EQ(scan.return_kind(2), RayReturnKind::Invalid);
+    EXPECT_EQ(scan.return_kind(3), RayReturnKind::Invalid);
+    EXPECT_EQ(scan.return_kind(4), RayReturnKind::NoReturn);
+    EXPECT_EQ(scan.return_kind(5), RayReturnKind::Invalid);
+    EXPECT_EQ(scan.return_kind(6), RayReturnKind::Invalid);
+    EXPECT_EQ(scan.ranges.data(), payload);
+    EXPECT_THROW(scan.return_kind(scan.ranges.size()), std::out_of_range);
 }
 
 // Test LidarObservation with Scan2D
@@ -162,6 +224,7 @@ TEST(LidarObservationTest, Scan2DConstruction)
     EXPECT_TRUE(obs.is_2d());
     EXPECT_FALSE(obs.is_3d());
     EXPECT_EQ(obs.point_count(), 5);
+    EXPECT_EQ(obs.ray_evidence, RayEvidenceCapability::HitOnly);
 
     const auto & scan_data = obs.as_scan_2d();
     EXPECT_EQ(scan_data.ranges.size(), 5);
@@ -239,6 +302,9 @@ TEST(MapperInputContractTest, DefaultContract)
 
     EXPECT_EQ(contract.minimum_viable.size(), 1);
     EXPECT_TRUE(contract.requires_pose);
+    EXPECT_EQ(
+            contract.minimum_viable.front().minimum_ray_evidence,
+            RayEvidenceCapability::HitOnly);
 }
 
 // Test MapperHealthGate
@@ -463,6 +529,50 @@ TEST(MapperHealthGateTest, HonorsSensorCountsAndSpecificSensorRequirements)
             make_health("front", SensorHealthStatus::Stale),
             make_health("rear", SensorHealthStatus::Active)};
     EXPECT_EQ(rear_only_gate.evaluate(descriptors, rear_only, std::nullopt), HealthState::Healthy);
+}
+
+TEST(MapperHealthGateTest, EnforcesMinimumRayEvidenceAndReportsCapabilities)
+{
+    MapperInputContract contract;
+    contract.minimum_viable = {
+            SensorRequirement {
+                    SensorType::LIDAR_2D, 1, {}, RayEvidenceCapability::FullRay}};
+    contract.degraded_combinations = {
+            DegradedCombination {
+                    {SensorRequirement {
+                            SensorType::LIDAR_2D, 1, {}, RayEvidenceCapability::HitRay}},
+                    "Hit rays only"}};
+    contract.requires_pose = false;
+
+    const std::vector<SensorHealth> health = {
+            make_health("front", SensorHealthStatus::Active)};
+
+    auto hit_only_descriptor         = make_descriptor("front", SensorType::LIDAR_2D);
+    hit_only_descriptor.ray_evidence = RayEvidenceCapability::HitOnly;
+    MapperHealthGate hit_only_gate(contract);
+    EXPECT_EQ(
+            hit_only_gate.evaluate({hit_only_descriptor}, health, std::nullopt),
+            HealthState::Unavailable);
+    EXPECT_FALSE(hit_only_gate.current_capability().has_free_space_hit_rays);
+    EXPECT_FALSE(hit_only_gate.current_capability().has_full_no_return_rays);
+
+    auto hit_ray_descriptor         = hit_only_descriptor;
+    hit_ray_descriptor.ray_evidence = RayEvidenceCapability::HitRay;
+    MapperHealthGate hit_ray_gate(contract);
+    EXPECT_EQ(
+            hit_ray_gate.evaluate({hit_ray_descriptor}, health, std::nullopt),
+            HealthState::Degraded);
+    EXPECT_TRUE(hit_ray_gate.current_capability().has_free_space_hit_rays);
+    EXPECT_FALSE(hit_ray_gate.current_capability().has_full_no_return_rays);
+
+    auto full_ray_descriptor         = hit_only_descriptor;
+    full_ray_descriptor.ray_evidence = RayEvidenceCapability::FullRay;
+    MapperHealthGate full_ray_gate(contract);
+    EXPECT_EQ(
+            full_ray_gate.evaluate({full_ray_descriptor}, health, std::nullopt),
+            HealthState::Healthy);
+    EXPECT_TRUE(full_ray_gate.current_capability().has_free_space_hit_rays);
+    EXPECT_TRUE(full_ray_gate.current_capability().has_full_no_return_rays);
 }
 
 TEST(MapperHealthGateTest, AppliesCompleteTransitionAndRecoveryPath)

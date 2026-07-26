@@ -7,7 +7,7 @@ import launch
 import launch_ros.actions
 import launch_testing
 import rclpy
-from perception_interfaces.msg import LidarObservation
+from perception_interfaces.msg import HealthState, LidarObservation
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
 
@@ -43,17 +43,28 @@ def generate_test_description():
                 "requires_pose": False,
                 "minimum_lidar_type": "3d",
                 "minimum_lidar_count": 1,
+                "minimum_lidar_ray_evidence": "hit_only",
                 "degraded_lidar_type": "2d",
                 "degraded_lidar_count": 1,
+                "degraded_lidar_ray_evidence": "full_ray",
                 "sensor.front.type": "2d",
                 "sensor.front.frame_id": "fixture_scan_link",
                 "sensor.front.topic": "fixture/scan/front",
+                "sensor.front.ray_evidence": "full_ray",
+                "sensor.front.fov_horizontal_min_rad": -math.pi / 2.0,
+                "sensor.front.fov_horizontal_max_rad": math.pi / 2.0,
+                "sensor.front.angular_resolution_rad": math.pi / 180.0,
                 "sensor.rear.type": "2d",
                 "sensor.rear.frame_id": "fixture_scan_link",
                 "sensor.rear.topic": "fixture/scan/rear",
+                "sensor.rear.ray_evidence": "full_ray",
+                "sensor.rear.fov_horizontal_min_rad": -math.pi / 2.0,
+                "sensor.rear.fov_horizontal_max_rad": math.pi / 2.0,
+                "sensor.rear.angular_resolution_rad": math.pi / 180.0,
                 "sensor.top.type": "3d",
                 "sensor.top.frame_id": "fixture_lidar_link",
                 "sensor.top.topic": "fixture/points",
+                "sensor.top.ray_evidence": "hit_only",
             }
         ],
         output="screen",
@@ -72,7 +83,9 @@ class TestPerceptionInputMixedIntegration(unittest.TestCase):
         rclpy.init()
         cls.node = rclpy.create_node("perception_input_mixed_integration_test")
         cls.observation_event = Event()
+        cls.health_event = Event()
         cls.observations = {}
+        cls.latest_health = None
         observation_qos = QoSProfile(depth=10)
         observation_qos.reliability = ReliabilityPolicy.BEST_EFFORT
         cls.node.create_subscription(
@@ -80,6 +93,12 @@ class TestPerceptionInputMixedIntegration(unittest.TestCase):
             "perception/observations",
             cls._on_observation,
             observation_qos,
+        )
+        cls.node.create_subscription(
+            HealthState,
+            "perception/health",
+            cls._on_health,
+            10,
         )
 
     @classmethod
@@ -93,12 +112,21 @@ class TestPerceptionInputMixedIntegration(unittest.TestCase):
         if {"front", "rear", "top"}.issubset(cls.observations):
             cls.observation_event.set()
 
+    @classmethod
+    def _on_health(cls, message):
+        cls.latest_health = message
+        if message.active_sensor_count == 3:
+            cls.health_event.set()
+
     def test_mixed_sensor_identity_and_payloads_are_preserved(self):
         deadline = time.monotonic() + 8.0
-        while not self.observation_event.is_set() and time.monotonic() < deadline:
+        while (
+            not self.observation_event.is_set() or not self.health_event.is_set()
+        ) and time.monotonic() < deadline:
             rclpy.spin_once(self.node, timeout_sec=0.1)
 
         self.assertTrue(self.observation_event.is_set())
+        self.assertTrue(self.health_event.is_set())
         self.assertEqual(set(self.observations), {"front", "rear", "top"})
         for sensor_id in ("front", "rear"):
             observation = self.observations[sensor_id]
@@ -107,6 +135,10 @@ class TestPerceptionInputMixedIntegration(unittest.TestCase):
                 LidarObservation.DATA_TYPE_SCAN_2D,
             )
             self.assertEqual(observation.header.frame_id, "fixture_scan_link")
+            self.assertEqual(
+                observation.ray_evidence,
+                LidarObservation.RAY_EVIDENCE_FULL_RAY,
+            )
             self.assertEqual(len(observation.ranges), 181)
             self.assertAlmostEqual(observation.angle_min, -math.pi / 2.0, places=6)
             self.assertAlmostEqual(observation.angle_max, math.pi / 2.0, places=6)
@@ -127,6 +159,12 @@ class TestPerceptionInputMixedIntegration(unittest.TestCase):
         cloud = self.observations["top"]
         self.assertEqual(cloud.data_type, LidarObservation.DATA_TYPE_CLOUD_3D)
         self.assertEqual(cloud.header.frame_id, "fixture_lidar_link")
+        self.assertEqual(
+            cloud.ray_evidence,
+            LidarObservation.RAY_EVIDENCE_HIT_ONLY,
+        )
+        self.assertTrue(self.latest_health.has_free_space_hit_rays)
+        self.assertTrue(self.latest_health.has_full_no_return_rays)
         self.assertEqual(len(cloud.points), 12)
         self.assertEqual(len(cloud.point_intensities), 12)
 

@@ -1,0 +1,92 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 0
+    Name: Displays
+    Tree Height: 600
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.35
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 120; 120; 120
+      Enabled: true
+      Name: YZCrossSectionGrid
+      Plane: YZ
+      Reference Frame: map
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: RayEvidence
+      Namespaces:
+        ray_evidence/hit_endpoints: true
+        ray_evidence/hit_free: true
+        ray_evidence/invalid: true
+        ray_evidence/no_return_free: true
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /perception/debug/ray_evidence
+      Value: true
+    - Alpha: 0.2
+      Class: rviz_default_plugins/LaserScan
+      Color: 255; 255; 255
+      Enabled: false
+      Name: RawDebugScan
+      Size (m): 0.03
+      Style: Points
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /fixture/debug/scan
+      Value: false
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Frame Timeout: 15
+      Marker Scale: 0.5
+      Name: DebugSensorTF
+      Show Arrows: true
+      Show Axes: false
+      Show Names: true
+      Update Interval: 0
+      Value: true
+    - Class: rviz_default_plugins/Axes
+      Enabled: true
+      Length: 3
+      Name: MapRightHandAxes
+      Radius: 0.14
+      Reference Frame: map
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 14
+      Focal Point:
+        X: 0
+        Y: 3
+        Z: 0
+      Name: Current View
+      Pitch: -1.05
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 6.05
+Window Geometry:
+  Height: 900
+  Width: 1400

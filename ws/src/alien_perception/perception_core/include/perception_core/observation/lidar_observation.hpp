@@ -1,13 +1,23 @@
 #ifndef PERCEPTION_CORE_INCLUDE_PERCEPTION_CORE_OBSERVATION_LIDAR_OBSERVATION_HPP
 #define PERCEPTION_CORE_INCLUDE_PERCEPTION_CORE_OBSERVATION_LIDAR_OBSERVATION_HPP
 
+#include "perception_core/observation/ray_evidence_capability.hpp"
 #include "perception_core/types/identity.hpp"
 #include "perception_core/types/timestamp.hpp"
+#include <cmath>
+#include <cstdint>
 #include <string>
 #include <variant>
 #include <vector>
 
 namespace Perception {
+
+    enum class RayReturnKind : std::uint8_t
+    {
+        Hit,
+        NoReturn,
+        Invalid
+    };
 
     /// 2D laser scan data
     struct Scan2D {
@@ -22,6 +32,20 @@ namespace Perception {
         size_t point_count() const
         {
             return ranges.size();
+        }
+
+        RayReturnKind return_kind(std::size_t index) const
+        {
+            const float range = ranges.at(index);
+            if(std::isinf(range) && range > 0.0F) {
+                return RayReturnKind::NoReturn;
+            }
+            if(std::isfinite(range)
+               && range >= range_min_m
+               && range <= range_max_m) {
+                return RayReturnKind::Hit;
+            }
+            return RayReturnKind::Invalid;
         }
     };
 
@@ -62,6 +86,7 @@ namespace Perception {
 
         // Actual data (interpreted based on descriptor.type)
         std::variant<Scan2D, Cloud3D> data;
+        RayEvidenceCapability ray_evidence = RayEvidenceCapability::HitOnly;
 
         // Get point count
         size_t point_count() const

@@ -12,6 +12,12 @@ uint8 DATA_TYPE_SCAN_2D = 0
 uint8 DATA_TYPE_CLOUD_3D = 1
 uint8 data_type
 
+# Ray evidence capability
+uint8 RAY_EVIDENCE_HIT_ONLY = 0
+uint8 RAY_EVIDENCE_HIT_RAY = 1
+uint8 RAY_EVIDENCE_FULL_RAY = 2
+uint8 ray_evidence
+
 # 2D scan data (used if data_type == SCAN_2D)
 float64 angle_min
 float64 angle_max

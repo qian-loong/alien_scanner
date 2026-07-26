@@ -1,1 +1,9 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"ROS 2 CMake、launch/integration test 与 perception fixture 的项目质量契约"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"射线能力跨 ROS-free core、adapter、ROSIDL message、node 与测试传播"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"新增 capability 枚举和映射时保持单一语义来源并搜索全部消费者"}
+{"file":".trellis/tasks/07-22-c1-perception-input/research/superseded-c1-draft-merge.md","reason":"旧 C1 草案迁移边界、Q-C1-01 决议和 AC-09 精确语义"}
+{"file": ".trellis/tasks/07-22-c1-perception-input/research/ray-evidence-debug-view-plan.md", "reason": "阶段 8 审核后边界、禁止旧 scan_returns、调试 Marker 语义与验收矩阵"}
+{"file": ".trellis/spec/backend/perception-ray-evidence-contract.md", "reason": "射线证据闭合枚举、fail-closed、跨层字段和测试契约"}
+{"file": "docs/ament-cmake-conventions.md", "reason": "修改 ament_cmake 包目标、依赖、安装与导出前必须遵守"}
+{"file": "docs/clion-cpp-cmake.md", "reason": "新增 C++ 头源文件时保持根 CMake/CLion 索引约定"}
+{"file": "docs/perception-input-testing.md", "reason": "现有 fixture、RViz、测试统计和运行方法，需增量更新且保留性能报告"}

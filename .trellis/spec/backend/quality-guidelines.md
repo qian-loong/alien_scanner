@@ -382,6 +382,9 @@ parameters, public launch files, or observation round-trip tests.
 - 2D default profile: 181 samples from `-pi/2` through `+pi/2` in the
   sensor-frame XY plane; `scan_point_count >= 2` remains configurable and the
   publisher computes the increment from the actual count.
+- `FixtureSceneConfig` owns the 2D count, angle bounds, and range bounds. The
+  publisher copies all five values, plus the derived increment, from the
+  validated config instead of maintaining message-side literals.
 - 3D cloud: `cloud_azimuth_sample_count`, `cloud_range_m`, and
   `elevation_angles_rad`.
 - Default 3D profile: 16 elevations from `-15` to `+15` degrees in 2-degree
@@ -405,6 +408,19 @@ parameters, public launch files, or observation round-trip tests.
   launch files must not duplicate it.
 - The generic fixture is deterministic test input, not a replay of the legacy
   `drone_scanner::FakeLidar` vertical-ring geometry.
+- The default 181-beam range profile retains the legacy float-arithmetic
+  values and is locked by representative exact golden samples, not only by
+  comparing two generated frames.
+- Scan construction rejects counts below two, non-finite angle/range bounds,
+  `angle_min >= angle_max`, `range_min < 0`, and `range_min >= range_max`.
+- Debug-return injection is a fixed 360-beam `[-pi, pi)` profile with
+  `[0.1, 10]` m range. It first generates the local-X/Y ellipse with half axes
+  3 m and 4 m, then writes `+inf` at indices `[255,285]`, then writes NaN,
+  `-inf`, below-min, and above-max at `44/136/180/316`.
+- The debug launch derives fixture and frozen descriptor parameters from one
+  Python constant group. Its `map -> debug_scan_link` `Ry(+pi/2)` transform
+  maps local +Z to map +X and the scan plane to map YZ; the default runtime
+  fixture is 2D-only.
 - Visualization uses one RViz config with `base_link` as Fixed Frame. Flat 2D,
   tilted 2D, multi-line 3D, and TF displays remain independently selectable;
   mixed views are display combinations, not separate RViz configs.
@@ -430,6 +446,7 @@ parameters, public launch files, or observation round-trip tests.
 | Tilted 3D installation | Keep raw elevation rings in the sensor frame; apply the complete installation rotation in TF |
 | Settled RViz subscription is Reliable | Fix the display QoS; Best Effort publishers cannot send to it |
 | GUI is unavailable during smoke | Launch with `show_rviz:=false`; do not skip publisher and TF checks |
+| Debug injection uses any other count, angle, or range layout | Reject construction instead of shifting fixed branch/invalid indices |
 
 ### 5. Good / Base / Bad Cases
 
@@ -460,6 +477,13 @@ parameters, public launch files, or observation round-trip tests.
 - Assert the default tilted transform maps sensor-local +X to a positive
   `base_link` Z component; checking only that the transform exists is not
   sufficient to lock the installation direction.
+- Assert the legacy 181-beam exact golden values, all 360 debug directions,
+  the ellipse equation, the exact branch/invalid index sets, disjoint sets,
+  and non-repeated first/last directions.
+- Launch-test the debug scene at `beam_stride=1`; assert Marker point-count
+  relations and subscribe to `/tf_static` to verify all three transformed
+  basis vectors. Inject Cloud3D hit-only directly on the authoritative
+  observation topic instead of adding it to the default debug fixture.
 - Start real RViz once, assert settled subscriptions are Best Effort/Volatile,
   and visually check nonblank flat 2D, tilted 2D, multi-line 3D, and TF output.
 

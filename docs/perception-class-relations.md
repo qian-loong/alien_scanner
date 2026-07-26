@@ -1,7 +1,7 @@
 # 感知输入类关系与功能说明
 
 本文说明当前感知输入实现中的主要 C++ 类、值对象、数据转换关系和运行时数据流。
-内容已同步到 2026-07-25 完成自动测试和 RViz 人工验收后的实现。
+内容已同步到 2026-07-26 AC-09 安全加固与 AC-10 可选射线证据调试视图后的实现。
 
 范围包括：
 
@@ -22,7 +22,7 @@ C++ 命名空间和 CMake target 命名空间是两套概念：
 | 核心领域模型 | `Perception` | `perception_core::perception_core` |
 | ROS 消息适配器 | `Perception::Adapters` | `perception_adapters::perception_adapters` |
 | 输入节点 | `Perception::Input` | `perception_input_node`、`sensor_session_manager` |
-| 测试数据源 | `Perception::Fixtures` | `fixture_scene`、`perception_fixture_publisher` |
+| 测试数据与证据调试 | `Perception::Fixtures` | `fixture_scene`、`perception_fixture_publisher`、`ray_evidence_debug_node` |
 
 构建依赖方向为：
 
@@ -33,6 +33,9 @@ perception_core
 
 perception_interfaces
     -> perception_input_node
+
+perception_core + perception_interfaces
+    -> perception_fixtures
 ```
 
 `perception_core` 不依赖 `rclcpp`，因此领域数据和健康判断可以脱离 ROS 使用和测试。
@@ -44,7 +47,10 @@ flowchart LR
     subgraph Fixtures[perception_fixtures]
         Scene[FixtureScene<br/>确定性场景数据]
         Publisher[FixturePublisher<br/>ROS 发布节点]
+        DebugBuilder[RayEvidenceDebugGeometryBuilder<br/>ROS-free 证据几何]
+        DebugNode[RayEvidenceDebugNode<br/>薄 Marker 节点]
         Scene --> Publisher
+        DebugBuilder --> DebugNode
     end
 
     subgraph ROSInput[ROS 输入]
@@ -77,6 +83,8 @@ flowchart LR
         HealthMsg[HealthState.msg]
     end
 
+    MarkerArray[visualization_msgs/MarkerArray]
+
     Publisher --> Laser
     Publisher --> Cloud
     Laser --> InputNode
@@ -101,6 +109,8 @@ flowchart LR
     InputNode --> ObservationMsg
     InputNode --> PoseMsg
     InputNode --> HealthMsg
+    ObservationMsg --> DebugNode
+    DebugNode --> MarkerArray
 ```
 
 ## 3. 类关系图
@@ -117,12 +127,14 @@ classDiagram
     class Timestamp
     class Duration
     class SensorType
+    class RayEvidenceCapability
     class SensorDescriptor
     class FieldOfView
     class SensorHealth
     class SensorHealthStatus
 
     class Scan2D
+    class RayReturnKind
     class Cloud3D
     class LidarObservation
     class PoseEstimate
@@ -142,13 +154,18 @@ classDiagram
     class FixtureSceneConfig
     class FixtureScene
     class FixturePublisher
+    class RayEvidenceDebugGeometry
+    class RayEvidenceDebugGeometryBuilder
+    class RayEvidenceDebugNode
 
     RclcppNode <|-- PerceptionInputNode
     RclcppNode <|-- FixturePublisher
+    RclcppNode <|-- RayEvidenceDebugNode
 
     SensorDescriptor *-- SensorID
     SensorDescriptor *-- FieldOfView
     SensorDescriptor --> SensorType
+    SensorDescriptor --> RayEvidenceCapability
     SensorHealth *-- SensorID
     SensorHealth *-- Timestamp
     SensorHealth --> SensorHealthStatus
@@ -158,12 +175,15 @@ classDiagram
     LidarObservation *-- Timestamp
     LidarObservation *-- Scan2D
     LidarObservation *-- Cloud3D
+    LidarObservation --> RayEvidenceCapability
+    Scan2D ..> RayReturnKind
     PoseEstimate *-- SourceID
     PoseEstimate *-- SessionID
     PoseEstimate *-- Timestamp
     PoseEstimate *-- Duration
 
     SensorRequirement --> SensorType
+    SensorRequirement --> RayEvidenceCapability
     DegradedCombination *-- SensorRequirement
     MapperInputContract *-- SensorRequirement
     MapperInputContract *-- DegradedCombination
@@ -197,6 +217,10 @@ classDiagram
 
     FixtureScene *-- FixtureSceneConfig
     FixturePublisher *-- FixtureScene
+    RayEvidenceDebugGeometryBuilder ..> LidarObservation
+    RayEvidenceDebugGeometryBuilder ..> RayEvidenceDebugGeometry
+    RayEvidenceDebugNode *-- RayEvidenceDebugGeometryBuilder
+    RayEvidenceDebugNode ..> RayEvidenceDebugGeometry
 ```
 
 图中关系含义：
@@ -236,6 +260,11 @@ classDiagram
 - 安装位置和姿态；
 - 视场角和角分辨率；
 - 最小、最大测距范围。
+- 射线证据等级 `HitOnly`、`HitRay` 或 `FullRay`。
+
+`RayEvidenceCapability` 是单调有序的闭合枚举：`HitOnly < HitRay < FullRay`。
+该字段参与 `SensorDescriptor` equality，因此运行中提升或降低能力都会触发
+inventory freeze 拒绝，必须建立新的 vehicle session。
 
 `SensorHealth` 描述动态状态：
 
@@ -262,7 +291,17 @@ LidarObservation
 └── Cloud3D
 ```
 
-它通过 `std::variant` 保存二维扫描或三维点云，并提供 `is_2d()`、`is_3d()` 和 `point_count()` 等查询函数。
+它通过 `std::variant` 保存二维扫描或三维点云，并提供 `is_2d()`、`is_3d()` 和
+`point_count()` 等查询函数；每批 observation 还从 descriptor 复制同一
+`ray_evidence`，使下游不需要从 ROS 消息类型猜测证据能力。
+
+冻结 descriptor 的检查发生在 C1 发布前。成功发布的 observation 是该批次的
+权威输入，已经携带 frame、stamp、session、证据等级和完整 payload 元数据；
+C2 继续按 sensor/session 溯源，但不需要额外 descriptor topic 重新解释该批次。
+
+`Scan2D::return_kind()` 在原始 `ranges` 上按需返回 `Hit`、`NoReturn` 或
+`Invalid`，不复制 payload。量程内有限值为 `Hit`，正无穷为 `NoReturn`，
+NaN、负无穷和量程外有限值为 `Invalid`。
 
 `PoseEstimate` 保存位置、姿态、协方差、质量、新鲜度和重置代数。`is_fresh()` 根据传入的时间阈值判断位姿是否仍可用于建图。
 
@@ -277,6 +316,7 @@ LidarObservation
 
 - 最小可用传感器组合；
 - 允许的降级组合；
+- 每个 `SensorRequirement` 的最低射线证据等级；
 - 是否要求位姿；
 - 位姿新鲜度阈值；
 - 恢复所需的稳定样本数。
@@ -291,6 +331,10 @@ Unavailable 无法满足最小输入要求
 
 故障状态立即生效，恢复状态需要满足稳定采样窗口。`degradation_reason()` 保存当前状态的诊断原因，节点会将它发布到健康消息中。
 
+健康门只统计同时满足 type、可选 sensor ID 和最低射线证据等级的 active
+descriptor。`CapabilitySet` 分别暴露 `has_free_space_hit_rays` 与
+`has_full_no_return_rays`，避免用单一 healthy 布尔值代替证据语义。
+
 ## 6. perception_adapters：输入格式转换
 
 适配器头文件位于 [`perception_adapters/include`](../ws/src/alien_perception/perception_adapters/include)。
@@ -304,7 +348,10 @@ sensor_msgs/LaserScan
     -> LidarObservation(Scan2D)
 ```
 
-`validate()` 检查消息和 `SensorDescriptor` 是否匹配，`convert()` 将 ROS 扫描数据转换为核心层的 `Scan2D`，并补充传感器 ID、会话 ID、frame 和时间信息。
+`validate()` 检查消息和 `SensorDescriptor` 是否匹配，`convert()` 将 ROS 扫描
+数据转换为核心层的 `Scan2D`，并补充传感器 ID、会话 ID、frame、时间和证据
+等级。所有能力都要求基础 range/angle 元数据有效；`HitRay/FullRay` 还要求
+消息 range、FOV 和角分辨率与冻结 descriptor 一致。
 
 ### 6.2 PointCloud2Adapter
 
@@ -315,7 +362,10 @@ sensor_msgs/PointCloud2
     -> LidarObservation(Cloud3D)
 ```
 
-它检查点云字段、数据结构和坐标有效性，然后提取 `x/y/z/intensity` 生成 `Cloud3D`。
+它检查点云 type、frame、FLOAT32 字段、point/row step 和 data 长度，然后按
+row/column 边界提取 `x/y/z/intensity` 生成 `Cloud3D`。当前 schema 没有方向
+索引或 no-return 条目，因此只支持 `HitOnly`；直接 `convert()` 也先执行完整
+验证，对畸形存储和更高等级都 fail closed。
 
 ### 6.3 OdometryAdapter
 
@@ -358,7 +408,9 @@ SessionID
 - `can_reconnect()`：判断传感器是否可以按原描述重连；
 - `descriptors()`：返回当前传感器列表。
 
-首次有效数据到达后，节点冻结 descriptor inventory。冻结后，同 ID 且描述完全一致的传感器可以重连，但修改了 frame、类型、安装姿态或量程的传感器会被拒绝。
+首次有效数据到达后，节点冻结 descriptor inventory。冻结后，同 ID 且描述
+完全一致的传感器可以重连，但修改了 frame、类型、安装姿态、量程或射线证据
+等级的传感器会被拒绝。
 
 ## 8. PerceptionInputNode：ROS 接线节点
 
@@ -385,6 +437,11 @@ PerceptionInputNode
 3. 从参数加载传感器描述。
 4. 注册传感器并创建对应订阅。
 5. 创建观测、位姿和健康状态发布器。
+
+mapper contract 解析 `minimum_lidar_ray_evidence` 与
+`degraded_lidar_ray_evidence`，每个 descriptor 解析
+`sensor.<id>.ray_evidence`。三者默认 `hit_only`；非法闭合集值在创建订阅前
+终止启动。
 
 运行阶段：
 
@@ -419,7 +476,10 @@ Odometry
 - [`HealthState.msg`](../ws/src/alien_perception/perception_interfaces/msg/HealthState.msg)：传输聚合健康状态和 capability set；
 - [`SensorHealth.msg`](../ws/src/alien_perception/perception_interfaces/msg/SensorHealth.msg)：描述单个传感器状态。
 
-这些 `.msg` 文件是通信协议，不承担领域逻辑。节点在 `publish_observation()`、`publish_pose()` 和 `publish_health()` 中完成核心对象到 ROS 消息的字段映射。
+这些 `.msg` 文件是通信协议，不承担领域逻辑。节点在 `publish_observation()`、
+`publish_pose()` 和 `publish_health()` 中完成核心对象到 ROS 消息的字段映射。
+`LidarObservation.msg` 携带每批 `ray_evidence` 枚举；`HealthState.msg` 分别携带
+当前是否存在 hit free-space ray 和完整 no-return ray。
 
 当前节点发布聚合的 `HealthState`，`SensorHealth.msg` 已定义但尚未单独发布每个传感器的健康消息。
 
@@ -430,6 +490,8 @@ Odometry
 - [`FixtureScene.hpp`](../ws/src/alien_perception/perception_fixtures/include/perception_fixtures/FixtureScene.hpp)
 - [`FixtureScene.cpp`](../ws/src/alien_perception/perception_fixtures/src/FixtureScene.cpp)
 - [`FixturePublisher.cpp`](../ws/src/alien_perception/perception_fixtures/src/FixturePublisher.cpp)
+- [`RayEvidenceDebugGeometryBuilder.hpp`](../ws/src/alien_perception/perception_fixtures/include/perception_fixtures/RayEvidenceDebugGeometryBuilder.hpp)
+- [`RayEvidenceDebugNode.cpp`](../ws/src/alien_perception/perception_fixtures/src/RayEvidenceDebugNode.cpp)
 
 `FixtureSceneConfig` 保存 2D 扫描点数、每条 3D 仰角通道的方位采样数、点云径向距离、仰角数组和随机种子。默认仰角为厂商无关的 16 线 profile（`-15°` 到 `+15°`，步长 `2°`）。`FixtureScene` 根据配置生成确定性的二维扫描和标准多线三维点云：零仰角位于传感器 XY 平面，零方位沿 +X，正方位朝 +Y，正仰角朝 +Z。
 
@@ -446,6 +508,19 @@ Odometry
 3. 按配置周期发布。
 
 它不参与适配、健康判断或会话管理。
+
+`RayEvidenceDebugGeometryBuilder` 同样属于 ROS-free 算法库。它只消费权威
+`LidarObservation`：2D 按 `HitOnly < HitRay < FullRay` 生成红色命中端点、
+绿色 hit free segment、青色 no-return free segment 和灰色 invalid 短方向段；
+Cloud3D 只接受 `HitOnly` 并只生成有限命中端点。`beam_stride` 只选择显示 beam，
+不改变返回分类或能力权限。
+
+`RayEvidenceDebugNode` 是薄 ROS 节点，只订阅
+`perception_interfaces/LidarObservation`，显式闭合集解析 `data_type` 和
+`ray_evidence`，调用几何构建器后发布 `MarkerArray`。Marker 保留原 frame/stamp、
+使用稳定 sensor marker ID 和有限 lifetime。未知枚举、交叉 payload、非法 2D
+元数据或非有限 Cloud3D 整批拒绝；节点不写 occupancy，也不订阅旧
+`/drone_0/scan_returns`。
 
 `fixture_visualization.launch.py` 复用三个 `FixturePublisher` 实例，分别发布
 水平 2D、倾斜 2D 和标准多线 3D 数据，并用 `tf2_ros` 将三个传感器 frame
@@ -490,5 +565,5 @@ perception_core      定义稳定的领域对象和健康规则
 perception_adapters  将 ROS 输入转换为领域对象
 perception_input_node负责订阅、调用、状态维护和发布
 perception_interfaces定义跨进程传输格式
-perception_fixtures 生成可重复的输入数据
+perception_fixtures 生成可重复输入，并提供独立的证据调试视图
 ```

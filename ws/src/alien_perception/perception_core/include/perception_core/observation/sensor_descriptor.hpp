@@ -1,6 +1,7 @@
 #ifndef PERCEPTION_CORE_INCLUDE_PERCEPTION_CORE_OBSERVATION_SENSOR_DESCRIPTOR_HPP
 #define PERCEPTION_CORE_INCLUDE_PERCEPTION_CORE_OBSERVATION_SENSOR_DESCRIPTOR_HPP
 
+#include "perception_core/observation/ray_evidence_capability.hpp"
 #include "perception_core/types/identity.hpp"
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -44,10 +45,11 @@ namespace Perception {
         double      angular_resolution_rad;// Angular resolution
         double      range_min_m;           // Minimum valid range
         double      range_max_m;           // Maximum valid range
+        RayEvidenceCapability ray_evidence = RayEvidenceCapability::HitOnly;
 
         bool operator==(const SensorDescriptor & other) const
         {
-            return sensor_id == other.sensor_id && type == other.type && frame_id == other.frame_id && mounting_position.isApprox(other.mounting_position, 1e-6) && mounting_orientation.isApprox(other.mounting_orientation, 1e-6) && fov == other.fov && std::abs(angular_resolution_rad - other.angular_resolution_rad) < 1e-9 && std::abs(range_min_m - other.range_min_m) < 1e-6 && std::abs(range_max_m - other.range_max_m) < 1e-6;
+            return sensor_id == other.sensor_id && type == other.type && frame_id == other.frame_id && mounting_position.isApprox(other.mounting_position, 1e-6) && mounting_orientation.isApprox(other.mounting_orientation, 1e-6) && fov == other.fov && std::abs(angular_resolution_rad - other.angular_resolution_rad) < 1e-9 && std::abs(range_min_m - other.range_min_m) < 1e-6 && std::abs(range_max_m - other.range_max_m) < 1e-6 && ray_evidence == other.ray_evidence;
         }
 
         bool operator!=(const SensorDescriptor & other) const { return !(*this == other); }

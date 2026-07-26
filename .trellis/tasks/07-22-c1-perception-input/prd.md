@@ -1,6 +1,6 @@
 # C1：感知输入与观测数据模型
 
-> 子任务状态：planning
+> 子任务状态：in_progress（C1 功能与验收已收口，仅剩提交、批准进入 C2 与归档流程）
 > 父任务：07-21-perception-swarm-architecture-refactor
 > 创建时间：2026-07-22
 
@@ -57,7 +57,7 @@
 
 **内容**：
 - 同一 **vehicle session** 内，传感器 descriptor inventory **冻结**
-- Descriptor 包括：geometry（安装位置/朝向）、capability（视场角/分辨率）、type（2D/3D）
+- Descriptor 包括：geometry（安装位置/朝向）、capability（视场角/分辨率与射线证据等级）、type（2D/3D）
 - 相同 ID 和 descriptor 的 producer 可以掉线后重连
 - 增删传感器或改变 descriptor 必须建立**新 vehicle session** 并重新 registration
 
@@ -148,14 +148,51 @@
 ### R-08：降级能力显式声明
 
 **内容**：
-- 如果 mapper 缺少某项查询能力（如"邻居遍历"），必须**显式声明**
-- 不能静默失败或返回错误结果
+- 每个 sensor descriptor 和每批 `LidarObservation` 必须声明射线证据等级：
+  - `HitOnly`：只证明命中端点，不得产生 free-space 证据；
+  - `HitRay`：可使用从可靠 origin 到命中端点的 free-space 证据，但没有完整 no-return 射线；
+  - `FullRay`：可区分 `Hit`、`NoReturn`、`Invalid`，并对合法 hit/no-return 射线提供完整 free-space 证据。
+- `LaserScan` 保留原生 ranges，并按标准数值语义确定性分类：量程内有限值为 `Hit`，正无穷为 `NoReturn`，NaN、负无穷和量程外有限值为 `Invalid`。
+- 当前 `PointCloud2` adapter 只保留 XYZ 命中点，因此只允许声明 `HitOnly`；不得根据点序、安装 TF 或量程参数静默补造 no-return 射线。
+- `PointCloud2Adapter::convert()` 自身必须 fail closed，不能依赖调用方先执行 `validate()`；直接传入 `HitRay`/`FullRay` descriptor 也不得返回 observation。
+- `HitRay`/`FullRay` LaserScan 必须在转换前验证消息量程、角边界和角增量均有限有效，并与冻结 descriptor 在明确容差内一致；元数据漂移时拒绝整批 observation。
+- Active mapper 的输入要求可以声明最低射线证据等级；当前有效能力和每批 observation 的证据等级必须可由 ROS-free 消费者及 ROS 消息读取。
+- 节点运行时配置必须分别声明 minimum/degraded input 的最低射线等级；非法枚举值启动失败，未配置时保守使用 `HitOnly`。
+- Descriptor 的射线证据等级属于冻结 inventory；运行中改变该等级必须建立新 vehicle session。
 
 **理由**：
-- 支持后续替换 OctoMap 后端
-- 上游算法（如 Frontier Detector）可根据能力声明选择策略
+- C2 必须知道哪些观测可以清理 free space，不能从消息类型猜测证据语义
+- hit-only 点云若被当作完整射线会制造不存在的 known-free 区域，破坏本机安全门
+- 保留原生 payload 并按需查询分类，避免为统一 ray array 强制复制大型点云
 
-**依赖决策**：D-008（后端无关 occupancy 契约）
+**依赖决策**：D-008（后端无关 occupancy 契约）、D-021（mapper 输入契约）、D-025（vehicle-local mapper）
+
+---
+
+### R-09：可选射线证据调试视图
+
+**内容**：
+- 提供独立可选 RViz 调试入口，只消费正式
+  `perception_interfaces/LidarObservation`，把命中端点、hit free-space、完整
+  no-return free-space 和 invalid measurement 显式区分；
+- 调试视图不得写 occupancy、发布地图或成为 mapper，不得改变现有 fixture
+  几何验收入口；
+- 2D 视图严格按 `HitOnly < HitRay < FullRay` 控制可显示的空间证据；3D
+  hit-only 点云只显示命中端点，不得画 origin-to-point free ray；
+- 确定性调试 fixture 在固定 beam 注入 Hit、正无穷、NaN、负无穷及量程外有限
+  值，且不改变现有 fixture 的默认几何数据；
+- 默认 RViz 调试场景使用洞轴沿 map `+X` 的 360° `YZ` 椭圆隧道截面：洞壁为
+  有限 `Hit`，固定岔口扇区为 `+inf/NoReturn`，四条独立 beam 分别表达 NaN、
+  `-inf`、低于最小量程和高于最大量程；默认画面不混入 Cloud3D 散点；
+- 运行时不得订阅、桥接或恢复旧 `/drone_0/scan_returns`；首版不引入旧地图
+  静态快照，旧地图只能在未来通过正式新接口离线生成可复现参考资产；
+- `LaserScanAdapter::convert()` 的完整验证不可绕过，未知 ray-evidence 数值必须
+  fail closed，防止调试消费者或未来 C2 把非法枚举提升为 `FullRay`。
+
+**理由**：
+- 让 C1 证据语义可以目检，同时不混入 C2 occupancy 行为；
+- 只验证正式新数据流，避免调试工具反向延长已废弃接口寿命；
+- 在进入 C2 前封闭两个可绕过的 free-space 权限边界。
 
 ---
 
@@ -170,7 +207,8 @@
 - [x] 每个 observation 携带 sensor ID、session、frame、stamp
 - [x] 多个传感器的 observation 不被错误合并
 - [x] producer 进程重启后 SessionID 变化，重启后的数据不复用旧 SessionID
-- [ ] 旧 session 由 observation/map 消费者拒绝（C2 消费边界）
+
+**C2 deferred（非 C1 验收门）**：旧 session 由 observation/map 消费者拒绝。
 
 ### AC-03：Sensor descriptor inventory 冻结
 - [x] Vehicle session 启动时冻结 descriptor inventory
@@ -185,7 +223,8 @@
 - [x] Pose quality 低于配置阈值时触发门控
 - [x] Pose 时间回退时递增 reset epoch 并触发相应门控状态
 - [x] Pose 位置跳变（> 5m in < 1s）时递增 reset epoch
-- [ ] Pose reset epoch 变化时触发 map epoch 重建（接口定义，逻辑留给 C2）
+
+**C2 deferred（非 C1 验收门）**：消费 reset epoch 并触发 map epoch 重建。
 
 ### AC-05：Mapper 输入声明
 - [x] Mapper 启动时声明 minimum viable input
@@ -204,7 +243,8 @@
 
 ### AC-07：Vehicle-local 自主性
 - [x] 不启动任何 fleet 组件时，本机仍可连续产出 observation
-- [ ] 断开 fleet 链路后，本机仍可产出 local map（接口定义，逻辑留给 C2）
+
+**C2 deferred（非 C1 验收门）**：断开 fleet 链路后继续产出 local map。
 
 ### AC-08：确定性 fixture
 - [x] 提供 2D LaserScan fixture
@@ -214,8 +254,21 @@
 - [x] 固定 RViz 输出可目检
 
 ### AC-09：降级能力显式声明
-- [ ] Mapper 缺失 free-ray 能力时显式声明（不静默失败）
-- [ ] 缺失能力的声明可被上游读取（接口定义，使用留给后续子任务）
+- [x] ROS-free descriptor/observation 使用闭合枚举声明 `HitOnly`、`HitRay`、`FullRay`，且 capability 变化参与 descriptor equality/freeze 判断
+- [x] `Scan2D` 对 `Hit`、`NoReturn`、`Invalid` 提供无额外 payload 复制的确定性查询；边界值、NaN 和正负无穷均有 contract tests
+- [x] 当前 `PointCloud2` adapter 对高于 `HitOnly` 的声明 fail closed，并有测试证明不会伪造 free-space/no-return 证据
+- [x] `HitRay`/`FullRay` LaserScan 的 range/FOV/resolution 与冻结 descriptor 不一致时整批拒绝；量程边界和元数据漂移均有测试
+- [x] `MapperInputContract` 及运行时 minimum/degraded 配置可声明最低射线证据；非法值启动失败，聚合健康状态和 `LidarObservation.msg` 可被上游读取并区分 free-hit-ray 与 full no-return-ray 能力
+
+### AC-10：可选射线证据调试视图
+- [x] `LaserScanAdapter::convert()` 直接调用也执行完整验证，非法元数据不产生 observation
+- [x] 未知 `RayEvidenceCapability` 数值在能力比较和 ROS 消费边界均 fail closed
+- [x] 调试节点只消费 `LidarObservation`，ROS graph 中没有 `/drone_0/scan_returns` 依赖
+- [x] MarkerArray 分别编码红色 hit endpoint、绿色 hit free、青色 full no-return free 和灰色 invalid 指示
+- [x] `HitOnly`/`HitRay`/`FullRay` 的 Marker 输出严格遵守能力上限；Cloud3D hit-only 不画 free ray
+- [x] 独立 launch 可关闭 RViz 做自动化验证，现有 fixture visualization 默认行为不变
+- [x] 默认 RViz 以 map `+X` 方向观察 360° `YZ` 隧道环切面，洞壁、岔口 no-return 扇区和四类 invalid 清晰可辨；map 红色 X 轴为截面法向，绿色 Y/蓝色 Z 轴位于截面内。用户于 2026-07-26 确认截图 `C:\Users\loong\AppData\Local\Temp\alien-c1-ac10-tunnel-rviz-20260726-11.png` 目检通过
+- [x] 调试视图不发布 occupancy/OctoMap，首版不提交旧地图静态快照
 
 ---
 
@@ -238,6 +291,9 @@
 | 健康状态转换逻辑复杂 | 明确状态机；单元测试覆盖所有转换路径 |
 | Descriptor 冻结限制灵活性 | 明确重启边界；提供清晰的错误诊断 |
 | Pose reset 触发逻辑不明确 | 接口定义在 C1，实际触发逻辑留给 C2 地图子任务 |
+| hit-only 点云被错误提升为 free-ray | PointCloud2 adapter 只接受 `HitOnly`；能力提升必须由未来具有可靠 ray schema 的独立 adapter 实现 |
+| 调试工具延长旧接口寿命 | 只订阅 `LidarObservation`；集成测试断言 ROS graph 中不存在 `/drone_0/scan_returns` |
+| 未知枚举获得高权限 | 所有比较和 ROS 解析先验证闭合枚举，未知值统一 fail closed |
 
 ---
 
@@ -246,11 +302,12 @@
 - 父任务：`.trellis/tasks/07-21-perception-swarm-architecture-refactor/`
 - 决策总览：`docs/decisions/perception-and-swarm-architecture-refactor.md`
 - Phase 3 基线：`docs/decisions/phase-03-swarm-qa.md`
+- 旧草案迁移记录：`research/superseded-c1-draft-merge.md`
 
 ---
 
 ## 7. Notes
 
-- **这是一个复杂任务**，需要在 `task.py start` 之前补充 `design.md`（技术设计）和 `implement.md`（实施计划）
+- 任务已进入实施；本轮收口 AC-09 安全边界并增加 AC-10 可选调试视图，不把旧草案中未采用的 `ObservationWindow`、缓存和 replay 扩展重新塞入 C1
 - PRD 聚焦需求、约束和验收标准，不包含实现细节
-- 实施顺序和回滚策略将在 `implement.md` 中详细说明
+- 实施顺序和回滚策略见 `implement.md`

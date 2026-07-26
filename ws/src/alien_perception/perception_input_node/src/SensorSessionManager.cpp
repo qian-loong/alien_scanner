@@ -99,6 +99,7 @@ namespace Perception::Input {
         oss << "{sensor_id=" << descriptor.sensor_id.value
             << ", type=" << (descriptor.type == SensorType::LIDAR_2D ? "2d" : "3d")
             << ", frame_id=" << descriptor.frame_id
+            << ", ray_evidence=" << ray_evidence_name(descriptor.ray_evidence)
             << ", range=[" << descriptor.range_min_m << ", " << descriptor.range_max_m << "]}";
         return oss.str();
     }

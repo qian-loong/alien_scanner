@@ -128,6 +128,13 @@ enum class SensorType {
     LIDAR_3D
 };
 
+// 单调递增的射线证据等级；较高等级满足较低等级要求。
+enum class RayEvidenceCapability : std::uint8_t {
+    HitOnly = 0,  // 只有命中端点，不产生 free-space 证据
+    HitRay = 1,   // origin 到命中端点的 free-space 证据
+    FullRay = 2   // 还包含可靠的 no-return 射线和最大量程 free-space 证据
+};
+
 struct FieldOfView {
     double horizontal_min_rad;  // 水平视场角最小值
     double horizontal_max_rad;  // 水平视场角最大值
@@ -138,6 +145,7 @@ struct FieldOfView {
 struct SensorDescriptor {
     SensorID sensor_id;
     SensorType type;
+    RayEvidenceCapability ray_evidence;
     std::string frame_id;              // TF 坐标系名称
 
     // 安装位姿（相对 base_link）
@@ -162,6 +170,12 @@ struct SensorDescriptor {
 // observation/lidar_observation.hpp
 namespace perception {
 
+enum class RayReturnKind : std::uint8_t {
+    Hit,
+    NoReturn,
+    Invalid
+};
+
 // 2D 激光扫描
 struct Scan2D {
     double angle_min_rad;
@@ -171,6 +185,10 @@ struct Scan2D {
     double range_max_m;
     std::vector<float> ranges;         // 距离数组
     std::vector<float> intensities;    // 强度数组（可选）
+
+    // 不复制 ranges：量程内有限值为 Hit，+inf 为 NoReturn，
+    // NaN/-inf/量程外有限值为 Invalid。
+    RayReturnKind return_kind(std::size_t index) const;
 };
 
 // 3D 点云
@@ -186,6 +204,7 @@ struct Cloud3D {
 struct LidarObservation {
     SensorID sensor_id;
     SessionID session_id;
+    RayEvidenceCapability ray_evidence;
     std::string frame_id;
     std::string clock_domain;          // 时钟域标识（如 "vehicle_steady_clock", "gps_time"）
     Timestamp origin_stamp;            // 观测产生时间
@@ -280,6 +299,9 @@ struct SensorRequirement {
 
     // 可选：特定传感器 ID
     std::optional<std::vector<SensorID>> specific_sensors;
+
+    // 该要求允许消费的最低射线证据等级。
+    RayEvidenceCapability minimum_ray_evidence = RayEvidenceCapability::HitOnly;
 };
 
 // 降级配置
@@ -337,6 +359,8 @@ public:
         bool has_expected_pose_frame;
         bool has_sufficient_pose_quality;
         bool has_usable_pose;
+        bool has_free_space_hit_rays;
+        bool has_full_no_return_rays;
         size_t active_sensor_count;
     };
     CapabilitySet current_capability() const;
@@ -415,6 +439,29 @@ private:
 
 }  // namespace perception::adapters
 ```
+
+当前 adapter 的 `PointCloud2` 公共契约只有 XYZ/intensity 命中点，不包含每束
+ray 的方向索引或 no-return 条目，因此 `validate()` 只接受 `HitOnly` descriptor。
+未来如果某种有组织点云 schema 能完整恢复 origin/direction/range，应新增独立
+adapter 并通过同一 conformance suite，而不是在当前 adapter 中按点序猜测。
+`convert()` 必须执行同一完整验证；即使调用方跳过 `validate()`，错误 type、
+frame、XYZ 字段布局、步长、data 长度或高于 `HitOnly` 的 descriptor 都不得产出
+observation。当前 API 保持返回值形态，违规直接抛出 `std::invalid_argument`。
+ROS 节点直接调用 `convert()` 并在 subscription callback 内捕获该输入异常，避免
+重复验证同一批消息，同时保证异常不会逃出 callback。
+
+`LaserScanAdapter` 可以承载三种等级：descriptor 决定下游允许使用的证据上限，
+`Scan2D::return_kind()` 只负责对原生 ranges 做确定性分类。即使 payload 中出现
+`+inf`，`HitOnly` 或 `HitRay` descriptor 也不能把它提升为最大量程 free-space。
+对 `HitRay`/`FullRay`，`validate()` 还要求：`range_min/range_max` 有限且
+`0 <= min < max`，angle min/max 有限，angle increment 有限且大于 0，并且
+消息 range min/max、angle min/max、angle increment 与冻结 descriptor 的
+range、水平 FOV、角分辨率分别在绝对容差 `1e-5` 内一致。不一致时拒绝整批；
+`HitOnly` 仍需通过基础有限性和正增量检查，但不据 descriptor 生成 free-space。
+`convert()` 必须内部调用同一完整验证并在失败时抛出 `std::invalid_argument`，
+因此任何直接库调用都不能绕过 range/FOV/resolution、frame、类型或数组检查。
+ROS 节点同样只调用一次 `convert()` 并捕获输入异常，不在 callback 中先做第二次
+等价 `validate()`。
 
 ### 3.3 OdometryAdapter
 
@@ -707,6 +754,38 @@ topic 契约一致即可。
 生成新 SessionID，后续观测不得复用旧值。C1 负责产生和传播新 SessionID；
 旧 session 的拒绝策略由 C2 observation/map 消费者实现。
 
+### D-C1-008：原生 payload + 显式射线证据等级
+
+**决策**：解决旧草案 Q-C1-01，保留 `Scan2D`/`Cloud3D` 原生 payload，并以
+闭合的 `RayEvidenceCapability` 表达 `HitOnly < HitRay < FullRay`。不建立强制
+统一 ray array，也不为 hit-only `PointCloud2` 伪造射线。
+
+**边界映射**：
+
+- descriptor 是静态权威声明，能力变化参与 equality 和 inventory freeze；
+- observation 从 descriptor 复制同一等级，使每批输入可以独立审计；
+- `LidarObservation.msg` 传输每批等级；`HealthState.msg` 分别发布当前是否存在
+  hit free-space ray 与完整 no-return ray，不能用一个模糊 healthy 布尔值替代；
+- `SensorRequirement.minimum_ray_evidence` 允许 mapper 声明最低等级，健康门只
+  统计同时满足 sensor type、identity 和证据等级的 active sensor；
+- C2 决定如何把合法 ray 写入 occupancy，本任务不实现地图更新。
+
+`RayEvidenceCapability` 的闭合性不能只依赖字符串配置。所有能力比较必须先用
+集中式 `is_valid_ray_evidence()` 验证 actual/required；未知底层值（例如 3、255）
+统一返回“不满足”，ROS 消费边界必须用显式 switch 解析，禁止直接
+`static_cast<RayEvidenceCapability>(message.ray_evidence)`。
+
+冻结 descriptor 是 C1 producer 侧的发布前验证边界。adapter 和 session manager
+验证成功后发布的 `LidarObservation` 是该批次的权威输入，携带自身所需的
+frame/stamp/session、2D 射线元数据或 3D hit-only payload。C2 仍按 sensor/session
+溯源，但不要求额外 descriptor topic，也不得绕过 observation 自带能力重新推断。
+
+**配置**：每个 `sensor.<id>.ray_evidence` 接受 `hit_only`、`hit_ray`、
+`full_ray`；未配置时所有类型都保守使用 `hit_only`。mapper contract 使用
+`minimum_lidar_ray_evidence` 与 `degraded_lidar_ray_evidence`，同样只接受上述
+闭合集并默认 `hit_only`。仓库 fixture 配置必须显式写出 descriptor 和 contract
+等级：2D=`full_ray`，当前 3D=`hit_only`。任何非法值都使节点启动失败。
+
 ---
 
 ## 7. 错误处理
@@ -768,15 +847,24 @@ topic 契约一致即可。
 
 ### 9.1 单元测试
 - `LidarObservation` 构造和访问
+- `Scan2D` 的 Hit/NoReturn/Invalid 分类及 NaN/正负无穷/量程边界
 - `SensorDescriptor` 相等性比较
-- `MapperHealthGate` 状态转换
-- Adapter 转换正确性
+- `MapperHealthGate` 状态转换和最低射线证据匹配
+- Adapter 转换正确性；直接调用 PointCloud2 convert 也不能绕过 hit-only 门
+- HitRay/FullRay LaserScan 的量程、FOV、角增量漂移拒绝，以及 exact min/max、相邻越界、NaN/正负无穷分类
+- 直接调用 LaserScan `convert()` 也拒绝所有 validate 失败路径
+- `RayEvidenceCapability` 未知底层值 `3/255` 在比较中 fail closed
+- ROS-free 调试几何覆盖三档能力、所有返回分类、抽样和 Cloud3D hit-only
 
 ### 9.2 集成测试
 - 多传感器并行输入
 - 传感器掉线后重连
 - Descriptor 冻结后拒绝新传感器
 - 位姿 reset epoch 检测
+- 2D/3D/mixed observation 消息携带正确射线等级，健康消息显式区分两类 free-ray 能力
+- 运行时 minimum/degraded ray evidence 配置覆盖 HitOnly 不满足 HitRay、HitRay 不满足 FullRay、恢复路径及非法值启动失败
+- 调试节点仅由 `LidarObservation` 驱动，Marker 的 namespace、颜色、点数、frame、stamp 和 lifetime 可断言
+- 调试 launch 关闭 RViz 后端到端通过，且 ROS graph 不出现 `/drone_0/scan_returns`
 
 ### 9.3 回归测试
 - 标准 2D XY / 多线 3D 仰角 fixture
@@ -791,10 +879,12 @@ topic 契约一致即可。
 - `LidarObservation`
 - `PoseEstimate`
 - `HealthState`
+- 每批 observation 的 `RayEvidenceCapability` 与 2D `RayReturnKind` 查询
 
 **约定**：
 - C2 不直接订阅 ROS 传感器消息
 - C2 只消费 ROS-free 观测数据
+- 冻结 descriptor 校验由 C1 在发布前完成；C2 以成功发布的 observation 为权威批次，不需要另一个 descriptor topic
 
 ---
 
@@ -846,3 +936,75 @@ topic 契约一致即可。
 ### 11.3 传感器故障诊断
 当前：简单的超时检测
 未来：详细的故障分类（硬件故障 vs 遮挡 vs 环境干扰）
+
+---
+
+## 12. 可选射线证据调试视图
+
+### 12.1 数据流与包边界
+
+```text
+deterministic debug fixture
+    -> perception_input_node
+    -> perception_interfaces/LidarObservation
+    -> RayEvidenceDebugNode
+    -> visualization_msgs/MarkerArray
+    -> RViz
+```
+
+首版放在 `perception_fixtures`：ROS-free `RayEvidenceDebugGeometryBuilder` 与现有
+fixture 算法库一起编译，薄节点只做 ROS message 转换和 Marker 发布。当前没有
+第二个产品级可视化消费者，不新建 `perception_visualization` 包。
+
+运行时明确禁止 `/drone_0/scan_returns`、旧 FakeLidar 和旧 OctoMapBuilder。
+首版也不提交旧地图快照；待 C2 正式 consumer 完成后，再用新接口生成带来源、
+固定 seed 和数值校验的参考地图资产。
+
+### 12.2 几何语义
+
+- 红色 `SPHERE_LIST/POINTS`：所有有限 Cloud3D 点及 Scan2D `Hit` endpoint；
+- 绿色 `LINE_LIST`：capability 至少为 `HitRay` 时的 origin-to-hit；
+- 青色 `LINE_LIST`：只有 `FullRay` 的 `NoReturn` 才延伸到 `range_max`；
+- 灰色短 `LINE_LIST`：`Invalid` 只表示 beam 方向，固定短长度，不使用无效 range；
+- Marker 继承 observation frame/stamp 并设置有限 lifetime，历史帧不累积；
+- `beam_stride` 只降显示密度，不改变被选 beam 的分类或权限。
+
+### 12.3 ROS 消费安全门
+
+节点对 `data_type` 和 `ray_evidence` 使用闭合集 switch。未知枚举、2D 元数据非法、
+payload 与 data_type 不一致时整批拒绝 Marker 并限频诊断。Cloud3D 无论消息中
+错误声明何种高等级都不得画 free ray；正式输入节点已保证当前 Cloud3D 只发布
+`HitOnly`，调试节点仍做第二道 fail-closed 防线。
+
+### 12.4 Launch
+
+新增独立 `ray_evidence_debug.launch.py`，可通过 `show_rviz:=false` 做自动化测试。
+调试 fixture 用专用参数在固定 beam 注入 Hit、`+inf`、NaN、`-inf`、低于 min 和
+高于 max；原 `fixture_visualization.launch.py` 及默认 fixture 输出保持不变。
+
+### 12.5 隧道环切面视觉场景
+
+默认调试 launch 使用解析且确定的 2D-only 场景，不从旧地图或
+`/drone_0/scan_returns` 取样：
+
+- 洞轴为 map `+X`；`map -> debug_scan_link` 使用 `Ry(+pi/2)`，使 local `+Z`
+  映射到 map `+X`，local XY 扫描面落在 map YZ；RViz Fixed Frame 使用 `map`；
+- `N=360`、`angle_min=-pi`、`angle_increment=2*pi/N`、
+  `angle_max=angle_min+(N-1)*angle_increment=pi-angle_increment`，首尾不重复；
+- local X/Y 半轴分别为 `a=3m`、`b=4m`，普通 beam 使用
+  `r(theta)=1/sqrt(cos^2(theta)/a^2+sin^2(theta)/b^2)`；经 TF 后 `a` 是 map Z
+  半高，`b` 是 map Y 半宽，`range_max=10m`；
+- 索引 `[255,285]` 是连续 `+inf/NoReturn` 岔口扇区，对应约 `+75` 至
+  `+105` 度并朝 map `+Y`；索引 `44/136/180/316` 分别覆盖 NaN、`-inf`、
+  below-min 和 above-max，且与岔口不相交；量程外有限值仍是 `Invalid`，不得
+  当作 no-return free-space；
+- 生成顺序固定为椭圆 hit、岔口 `+inf`、四条 invalid 覆盖。RViz 默认
+  `beam_stride=2`，所有 invalid 索引均为偶数；自动化测试使用 stride 1；
+- 默认 debug launch 不发布 Cloud3D，RViz 配置删除无来源的 RawDebugCloud 和
+  `debug_cloud_link`。Cloud3D hit-only 仍由 geometry gtest 和向正式 observation
+  topic 的集成注入验证。
+
+`FixtureSceneConfig` 是 scan count/angle/range 的算法与消息单一来源；debug launch
+在同一 Python 常量组中派生 fixture 参数和 input-node descriptor，避免跨进程字面量
+漂移。`inject_debug_returns=false` 的默认 181-beam fixture 必须由 golden 代表值锁定，
+不能只用“两次生成相等”证明未回归。

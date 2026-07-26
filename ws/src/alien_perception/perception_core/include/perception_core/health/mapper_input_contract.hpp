@@ -18,6 +18,8 @@ namespace Perception {
 
         // Optional: specific sensor IDs
         std::optional<std::vector<SensorID>> specific_sensors;
+
+        RayEvidenceCapability minimum_ray_evidence = RayEvidenceCapability::HitOnly;
     };
 
     /// Degraded combination specification

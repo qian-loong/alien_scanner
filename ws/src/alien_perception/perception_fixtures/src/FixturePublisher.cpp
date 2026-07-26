@@ -26,8 +26,20 @@ namespace {
     FixtureSceneConfig make_scene_config(rclcpp::Node & node)
     {
         FixtureSceneConfig config;
-        config.scan_point_count = static_cast<std::size_t>(std::max<int64_t>(
-                2, node.declare_parameter<int64_t>("scan_point_count", 181)));
+        const auto scan_point_count = node.declare_parameter<int64_t>(
+                "scan_point_count", static_cast<int64_t>(config.scan_point_count));
+        if(scan_point_count < 2) {
+            throw std::invalid_argument("scan_point_count must be at least two");
+        }
+        config.scan_point_count = static_cast<std::size_t>(scan_point_count);
+        config.scan_angle_min_rad = node.declare_parameter<double>(
+                "scan_angle_min_rad", config.scan_angle_min_rad);
+        config.scan_angle_max_rad = node.declare_parameter<double>(
+                "scan_angle_max_rad", config.scan_angle_max_rad);
+        config.scan_range_min_m = node.declare_parameter<double>(
+                "scan_range_min_m", config.scan_range_min_m);
+        config.scan_range_max_m = node.declare_parameter<double>(
+                "scan_range_max_m", config.scan_range_max_m);
         config.cloud_azimuth_sample_count = static_cast<std::size_t>(std::max<int64_t>(
                 1, node.declare_parameter<int64_t>("cloud_azimuth_sample_count", 360)));
         config.cloud_range_m = static_cast<float>(node.declare_parameter<double>("cloud_range_m", 5.0));
@@ -40,6 +52,7 @@ namespace {
             config.elevation_angles_rad.push_back(static_cast<float>(elevation));
         }
         config.seed = static_cast<std::uint32_t>(node.declare_parameter<int64_t>("seed", 17));
+        config.inject_debug_returns = node.declare_parameter<bool>("inject_debug_returns", false);
         return config;
     }
 
@@ -97,15 +110,16 @@ namespace {
 
         sensor_msgs::msg::LaserScan make_scan(const std::string & frame_id) const
         {
+            const auto &                config = scene_.config();
             const auto                  ranges = scene_.scan_ranges();
             sensor_msgs::msg::LaserScan message;
             message.header.stamp    = get_clock()->now();
             message.header.frame_id = frame_id;
-            message.angle_min       = -0.5F * 3.14159265358979323846F;
-            message.angle_max       = 0.5F * 3.14159265358979323846F;
-            message.angle_increment = 3.14159265358979323846F / static_cast<float>(ranges.size() - 1);
-            message.range_min       = 0.1F;
-            message.range_max       = 30.0F;
+            message.angle_min       = static_cast<float>(config.scan_angle_min_rad);
+            message.angle_max       = static_cast<float>(config.scan_angle_max_rad);
+            message.angle_increment = static_cast<float>(config.scan_angle_increment_rad());
+            message.range_min       = static_cast<float>(config.scan_range_min_m);
+            message.range_max       = static_cast<float>(config.scan_range_max_m);
             message.ranges          = ranges;
             message.intensities.resize(ranges.size(), 1.0F);
             return message;

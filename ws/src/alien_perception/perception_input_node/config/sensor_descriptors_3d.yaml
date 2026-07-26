@@ -4,12 +4,15 @@ perception_input_node:
     requires_pose: false
     minimum_lidar_type: "3d"
     minimum_lidar_count: 1
+    minimum_lidar_ray_evidence: "hit_only"
     degraded_lidar_type: "2d"
     degraded_lidar_count: 1
+    degraded_lidar_ray_evidence: "hit_only"
     recovery_stability_samples: 3
     "sensor.top.type": "3d"
     "sensor.top.frame_id": "fixture_lidar_link"
     "sensor.top.topic": "fixture/points"
+    "sensor.top.ray_evidence": "hit_only"
     "sensor.top.range_min_m": 0.2
     "sensor.top.range_max_m": 50.0
     "sensor.top.angular_resolution_rad": 0.02

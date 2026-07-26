@@ -28,6 +28,12 @@ namespace Perception {
             if(health_it != sensor_health.end() && health_it->is_healthy()) {
                 current_capability_.active_sensor_count++;
                 active_descriptors.push_back(desc);
+                current_capability_.has_free_space_hit_rays =
+                        current_capability_.has_free_space_hit_rays
+                        || provides_at_least(desc.ray_evidence, RayEvidenceCapability::HitRay);
+                current_capability_.has_full_no_return_rays =
+                        current_capability_.has_full_no_return_rays
+                        || provides_at_least(desc.ray_evidence, RayEvidenceCapability::FullRay);
 
                 if(desc.type == SensorType::LIDAR_2D) {
                     current_capability_.has_2d_lidar = true;
@@ -133,6 +139,10 @@ namespace Perception {
             size_t available_count = 0;
             for(const auto & descriptor : active_descriptors) {
                 if(descriptor.type != req.type) {
+                    continue;
+                }
+
+                if(!provides_at_least(descriptor.ray_evidence, req.minimum_ray_evidence)) {
                     continue;
                 }
 

@@ -13,4 +13,6 @@ string degradation_reason
 bool has_2d_lidar
 bool has_3d_lidar
 bool has_fresh_pose
+bool has_free_space_hit_rays
+bool has_full_no_return_rays
 uint32 active_sensor_count

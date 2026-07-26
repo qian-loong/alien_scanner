@@ -27,6 +27,8 @@ namespace Perception {
             bool   has_expected_pose_frame     = false;
             bool   has_sufficient_pose_quality = false;
             bool   has_usable_pose             = false;
+            bool   has_free_space_hit_rays     = false;
+            bool   has_full_no_return_rays     = false;
             size_t active_sensor_count         = 0;
             size_t active_2d_lidar_count       = 0;
             size_t active_3d_lidar_count       = 0;

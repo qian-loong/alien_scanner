@@ -1,3 +1,4 @@
+import math
 import time
 import unittest
 from threading import Event
@@ -35,14 +36,20 @@ def generate_test_description():
             {
                 "sensor_ids": ["front"],
                 "requires_pose": False,
-                "minimum_lidar_type": "3d",
+                "minimum_lidar_type": "2d",
                 "minimum_lidar_count": 1,
+                "minimum_lidar_ray_evidence": "full_ray",
                 "degraded_lidar_type": "2d",
                 "degraded_lidar_count": 1,
+                "degraded_lidar_ray_evidence": "hit_ray",
                 "recovery_stability_samples": 3,
                 "sensor.front.type": "2d",
                 "sensor.front.frame_id": "front_link",
                 "sensor.front.topic": "fixture/scan/front",
+                "sensor.front.ray_evidence": "hit_ray",
+                "sensor.front.fov_horizontal_min_rad": -math.pi / 2.0,
+                "sensor.front.fov_horizontal_max_rad": math.pi / 2.0,
+                "sensor.front.angular_resolution_rad": math.pi / 180.0,
             }
         ],
         output="screen",
@@ -109,6 +116,10 @@ class TestPerceptionInputIntegration(unittest.TestCase):
         )
         self.assertEqual(len(self.latest_observation.ranges), 181)
         self.assertEqual(self.latest_observation.header.frame_id, "front_link")
+        self.assertEqual(
+            self.latest_observation.ray_evidence,
+            LidarObservation.RAY_EVIDENCE_HIT_RAY,
+        )
 
     def test_health_reaches_degraded_after_recovery_window(self):
         self.assertTrue(self._spin_until(self.health_event, 8.0))
@@ -120,3 +131,5 @@ class TestPerceptionInputIntegration(unittest.TestCase):
             rclpy.spin_once(self.node, timeout_sec=0.1)
         self.assertEqual(self.latest_health.state, HealthState.STATE_DEGRADED)
         self.assertEqual(self.latest_health.active_sensor_count, 1)
+        self.assertTrue(self.latest_health.has_free_space_hit_rays)
+        self.assertFalse(self.latest_health.has_full_no_return_rays)

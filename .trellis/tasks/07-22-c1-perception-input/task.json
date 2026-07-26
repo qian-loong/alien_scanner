@@ -19,7 +19,8 @@
   "pr_url": null,
   "subtasks": [],
   "children": [
-    "07-23-perception-cmake-source-index"
+    "07-23-perception-cmake-source-index",
+    "07-25-c1-perception-resource-profiling"
   ],
   "parent": "07-21-perception-swarm-architecture-refactor",
   "relatedFiles": [],

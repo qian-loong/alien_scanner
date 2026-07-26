@@ -73,3 +73,21 @@ TEST(SensorSessionManagerTest, RejectsChangedDescriptorBeforeAndAfterFreeze)
     EXPECT_FALSE(manager.can_reconnect(changed, &diagnostic));
     EXPECT_NE(diagnostic.find("changed descriptor"), std::string::npos);
 }
+
+TEST(SensorSessionManagerTest, TreatsRayEvidenceAsFrozenDescriptorState)
+{
+    SensorSessionManager manager(SessionID {10, 20});
+    auto original         = make_descriptor("front", SensorType::LIDAR_2D, "front_link");
+    original.ray_evidence = RayEvidenceCapability::HitOnly;
+    auto elevated         = original;
+    elevated.ray_evidence = RayEvidenceCapability::FullRay;
+
+    EXPECT_TRUE(manager.register_sensor(original).accepted);
+    manager.freeze();
+
+    const auto result = manager.register_sensor(elevated);
+    EXPECT_FALSE(result.accepted);
+    EXPECT_NE(result.diagnostic.find("ray_evidence=hit_only"), std::string::npos);
+    EXPECT_NE(result.diagnostic.find("ray_evidence=full_ray"), std::string::npos);
+    EXPECT_FALSE(manager.can_reconnect(elevated));
+}
