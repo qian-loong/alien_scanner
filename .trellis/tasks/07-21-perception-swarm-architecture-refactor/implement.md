@@ -40,11 +40,11 @@
 - [x] 确定 D-029：领域 envelope 验证 identity/session/authority/sequence/credential/replay；未认证或过期消息只能诊断，不能改变控制状态；真实 PKI 下放部署子任务。
 - [x] 确定 D-030：运行状态默认 ephemeral，进程重启推进新 session/epoch 并 resync 重建；C9a 复制控制前缀，C9b 外部持久 authority term；持久化地图/日志留作扩展。
 - [x] 确定 D-031：分级仿真验收策略；C1-C8 在 Level 0（FakeLidar/FakeOdom/确定性适配器）验收，Level 1（Gazebo）可选，Level 2/3（半物理/实物）留作扩展。
-- [ ] 对 PRD 做 convergence pass，删除重复事实和已解决问题。
-- [ ] 对总体模块、数据契约、迁移顺序和子任务边界进行指定模型方案评审。
-- [ ] 根据评审修订父任务产物，并由用户确认规划基线。
-- [ ] 将稳定结论同步回 `docs/decisions/` 总览文档。
-- [ ] 按依赖只创建近期要实施的子任务，首先是 C1 感知输入与观测数据模型。
+- [x] 对 PRD 做 convergence pass，删除重复事实和已解决问题。
+- [x] 对总体模块、数据契约、迁移顺序和子任务边界进行指定模型方案评审。
+- [x] 根据评审修订父任务产物，并由用户确认规划基线。
+- [x] 将稳定结论同步回 `docs/decisions/` 总览文档。
+- [x] 按依赖只创建近期要实施的子任务，首先是 C1 感知输入与观测数据模型。
 
 父任务没有直接业务代码产出时不执行 `task.py start`；真正实施时启动拥有该交付物的子任务。
 
