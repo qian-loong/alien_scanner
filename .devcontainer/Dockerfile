@@ -7,6 +7,13 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         gdb \
+        babeltrace2 \
+        heaptrack \
+        linux-tools-common \
+        linux-tools-generic \
+        smem \
+        sysstat \
+        valgrind \
         x11-apps \
         curl \
         unzip \
@@ -21,7 +28,8 @@ RUN set -eux; \
         ros-jazzy-octomap-msgs \
         ros-jazzy-octomap-server \
         ros-jazzy-octomap-rviz-plugins \
-        ros-jazzy-launch-testing-ament-cmake; \
+        ros-jazzy-launch-testing-ament-cmake \
+        ros-jazzy-ros2trace; \
     rm -rf /var/lib/apt/lists/*
 
 ENV ROS_DISTRO=jazzy

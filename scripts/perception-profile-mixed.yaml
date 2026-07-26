@@ -1,0 +1,59 @@
+perception_fixture_publisher:
+  ros__parameters:
+    mode: mixed
+    scan_topic_front: fixture/scan/front
+    scan_topic_rear: fixture/scan/rear
+    cloud_topic: fixture/points
+    scan_frame: fixture_scan_link
+    cloud_frame: fixture_lidar_link
+    publish_period_s: 0.1
+    scan_point_count: 181
+    cloud_azimuth_sample_count: 360
+    cloud_range_m: 5.0
+    elevation_angles_rad:
+      - -0.2617993878
+      - -0.2268928028
+      - -0.1919862177
+      - -0.1570796327
+      - -0.1221730476
+      - -0.0872664626
+      - -0.0523598776
+      - -0.0174532925
+      - 0.0174532925
+      - 0.0523598776
+      - 0.0872664626
+      - 0.1221730476
+      - 0.1570796327
+      - 0.1919862177
+      - 0.2268928028
+      - 0.2617993878
+    seed: 17
+
+perception_input_node:
+  ros__parameters:
+    sensor_ids: [front, rear, top]
+    requires_pose: false
+    minimum_lidar_type: 3d
+    minimum_lidar_count: 1
+    degraded_lidar_type: 2d
+    degraded_lidar_count: 1
+    recovery_stability_samples: 3
+    observation_topic: perception/observations
+    sensor.front.type: 2d
+    sensor.front.frame_id: fixture_scan_link
+    sensor.front.topic: fixture/scan/front
+    sensor.front.range_min_m: 0.1
+    sensor.front.range_max_m: 30.0
+    sensor.front.angular_resolution_rad: 0.01
+    sensor.rear.type: 2d
+    sensor.rear.frame_id: fixture_scan_link
+    sensor.rear.topic: fixture/scan/rear
+    sensor.rear.range_min_m: 0.1
+    sensor.rear.range_max_m: 30.0
+    sensor.rear.angular_resolution_rad: 0.01
+    sensor.top.type: 3d
+    sensor.top.frame_id: fixture_lidar_link
+    sensor.top.topic: fixture/points
+    sensor.top.range_min_m: 0.2
+    sensor.top.range_max_m: 50.0
+    sensor.top.angular_resolution_rad: 0.02

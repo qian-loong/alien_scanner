@@ -29,6 +29,7 @@ services:
       - alien_install:/workspaces/alien-scanner/ws/install
       - alien_log:/workspaces/alien-scanner/ws/log
     cap_add:
+      - PERFMON
       - SYS_PTRACE
     security_opt:
       - seccomp:unconfined

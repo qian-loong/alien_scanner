@@ -233,6 +233,143 @@ class TestInput(unittest.TestCase):
         ...
 ```
 
+## External Resource Profiling Contracts
+
+### 1. Scope / Trigger
+
+These rules apply when a ROS 2 node is measured with external CPU, tracing,
+heap, sanitizer, or process-memory tools. They prevent an empty workload, a
+different process, or a truncated profiler run from being reported as a valid
+baseline.
+
+### 2. Signatures
+
+- Unified runner: `scripts/profile-perception.sh <mode> <install-prefix>
+  <new-output-dir> <duration-seconds>`.
+- Supported mode names are explicit and closed; an unknown mode or an existing
+  output directory is an error.
+- Repeated memory analysis consumes exactly three normally completed,
+  independently captured run directories:
+  `scripts/analyze-perception-profile.py <run-a> <run-b> <run-c>`.
+
+### 3. Contracts
+
+- Record the exact installed target ELF, SHA-256, build ID, source revision,
+  image, tool versions, RMW, affinity, cgroup, and role-specific PIDs in every
+  run manifest. Require the host image identity in `sha256:<64 hex>` form and
+  hash the runner, workload config, and analysis script themselves.
+- Treat launcher, profiler/tool, tracee, fixture, preflight sink, measurement
+  sink, and samplers as distinct roles. Validate each real PID from `/proc`,
+  and never infer the tracee from an unrelated wrapper PID. Poll until wrapper
+  `exec()` identity and the isolated PGID have stabilized before recording a
+  role.
+- Give created process trees isolated process groups. Before group signaling,
+  reject the runner's own PGID. During the formal window, check every required
+  PID, `/proc/<pid>/stat` starttime, and zombie state at least once per second.
+- Prove workload before measurement with a preflight sink. Start a fresh
+  measurement sink, wait until every sensor ID has arrived, and count only CSV
+  rows between recorded `t0` and `t1` offsets. Require the declared exact
+  publisher/subscriber cardinality so a domain collision cannot add foreign
+  endpoints unnoticed.
+- A perf attach starts disabled and becomes valid only after enable and disable
+  control FIFO acknowledgements. Freeze and re-check the target TID set, keep
+  profiler and workload windows nested, and require non-empty workspace symbols
+  plus an explicit unknown/lost-sample gate.
+- Heaptrack, Valgrind, sanitizers, and ROS tracing must use their tool-specific
+  PID and normal-stop semantics. A forced stop, missing report section, missing
+  trace category, or ambiguous target makes the run invalid; a complete
+  Memcheck report with a configured finding exit code remains valid evidence of
+  a finding.
+- `normal_completion=true` requires reaching the full stop/finalization state
+  with no forced signal escalation, PID/starttime/PGID mismatch, premature role
+  exit, or unexpected role exit code. Keep this independent from `valid`: a
+  normally finalized but incomplete report can be invalid without pretending
+  that the process state machine failed.
+- Require exactly one Heaptrack, Massif, or Memcheck primary artifact and prove
+  its target/runtime/summary contract before parsing metrics. Repeated memory
+  analysis requires three distinct 300-second `plain-sample` directories whose
+  `(tracee_pid, t0_monotonic_ns, t1_monotonic_ns)` evidence identities are
+  pairwise distinct, and recomputes workload and expected pidstat/smem sample
+  completeness from raw data rather than trusting copied summary flags.
+- Write role exit codes, `valid`, `normal_completion`, actual duration,
+  per-source workload counts, invalid reasons, and SHA-256 for every raw
+  artifact. A report may cite only runs where both validity flags are true.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Target ELF, PID role, or runtime parameter is ambiguous | Stop and mark the run invalid |
+| Package prefix resolves outside the requested profiling install | Stop before starting workload |
+| Host image ID is missing, lacks the `sha256:` prefix, or has the wrong length | Stop before starting workload |
+| Fixture, target, sink, profiler, or sampler exits during `t0-t1` | Mark invalid even if a partial artifact exists |
+| PID starttime changes or a required process becomes a zombie | Mark invalid as PID reuse/premature exit |
+| Measurement sink never observes every required sensor ID | Do not start the profiling window |
+| Topic endpoint cardinality differs from the fixed workload | Reject the run as a domain collision or foreign endpoint |
+| Same-window total or per-sensor count is below its declared threshold | Mark invalid |
+| perf enable/disable acknowledgement, samples, symbols, or lost-sample evidence is missing | Mark the perf run invalid |
+| Trace cannot filter callback/take/publish by the target vpid | Mark the trace run invalid |
+| Heap/Memcheck/Massif summary is incomplete or the tool was force-killed | Mark invalid and rerun |
+| Memcheck exits with the dedicated finding code and has a complete matching summary | Keep a valid run and record the finding |
+| The same plain-sample evidence is copied under different run directories | Reject it as duplicate evidence |
+| Fewer than three valid steady-state memory runs are available | Do not issue a sustained-growth conclusion |
+
+### 5. Good / Base / Bad Cases
+
+- Good: perf is attached to a verified target after preflight, both control ACKs
+  surround the counted workload, every role survives the window, and the final
+  manifest plus hashes are complete.
+- Base: unsupported hardware PMU events are reported as unavailable while an
+  independently valid software-event run remains usable.
+- Bad: using wall-clock sleep plus a topic publisher count without proving the
+  target PID, profiler state, or same-window output.
+- Bad: accepting a report written after SIGKILL, treating Memcheck's finding
+  exit code as tool failure, or inferring a leak from one RSS curve.
+
+### 6. Tests Required
+
+- Run `bash -n` and a short valid smoke for every runner mode.
+- Fault-inject target, fixture, sink, profiler, and sampler termination during
+  the formal window; assert `valid=false`, non-normal role exit evidence, and a
+  specific invalid reason.
+- Delay wrapper `exec()`/`setsid()` in a startup probe; assert the runner waits
+  for the target identity and isolated PGID instead of recording the wrapper or
+  its parent process group.
+- Pass a non-sanitized ELF to sanitizer modes and assert rejection before the
+  formal window.
+- For perf, assert both ACKs, frozen TIDs, a non-zero workspace sample count,
+  bounded unknown ratio, explicit lost-sample count, and same-window workload.
+- For tracing and memory tools, assert required event/report sections and
+  normal tool finalization before accepting the run.
+- Recompute three steady windows from raw pidstat/smem/smaps data and assert the
+  documented means, percentiles, slopes, sample counts, and aggregate growth
+  decision.
+- Run synthetic positive and negative parser fixtures for perf control/lost
+  samples, Heaptrack quantities, Massif stack-aware peak detail, Memcheck target
+  identity, duplicate plain paths or evidence identities, low workload, and
+  incomplete sampler output.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```bash
+sleep "${DURATION}"
+kill -KILL "${profiler_pid}"
+echo "valid=true"
+```
+
+Correct:
+
+```bash
+verify_roles_and_workload
+perf_control enable   # require ACK before t0
+monitor_formal_window # PID, starttime, zombie, workload roles
+perf_control disable  # require ACK after t1
+finalize_tool_normally
+validate_reports_and_hashes
+```
+
 ## Perception Fixture LiDAR Geometry Contracts
 
 ### 1. Scope / Trigger
