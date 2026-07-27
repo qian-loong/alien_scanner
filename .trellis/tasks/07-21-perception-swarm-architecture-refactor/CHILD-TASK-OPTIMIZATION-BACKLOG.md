@@ -17,7 +17,7 @@
 
 ---
 
-## 未追踪的优化建议（10 项）
+## 未追踪的优化建议与后续 TODO（11 项）
 
 ### C2-OPT-1：pose reset 与 alignment invalidation 的优先级顺序
 
@@ -30,7 +30,7 @@
 
 **来源**：`ARCHITECTURE-REVIEW.md` §4.1
 
-**状态**：⏸️ 待 C2 创建时引用
+**状态**：📌 已引用到子任务 `07-27-c2-local-observation-map`
 
 ---
 
@@ -45,7 +45,7 @@
 
 **来源**：`ARCHITECTURE-REVIEW.md` §6.5
 
-**状态**：⏸️ 待 C2 创建时引用
+**状态**：📌 已引用到子任务 `07-27-c2-local-observation-map`
 
 ---
 
@@ -61,7 +61,24 @@
 
 **来源**：`ARCHITECTURE-REVIEW.md` §6.9
 
-**状态**：⏸️ 待 C2/C6 创建时引用
+**状态**：📌 C2 部分已引用到 `07-27-c2-local-observation-map`；C6 仍待创建时引用
+
+---
+
+### C3-TODO-1：地图共享与静态 alignment 端到端验证
+
+**目标子任务**：C3（地图状态与增量更新）定义协议证据；C8（总集成）完成多进程
+与 RViz 验收。
+
+**TODO**：
+- 使用至少两个 source-local map 和版本化静态 alignment 聚合 shared/global view；
+- 验证 pose reset/alignment revoke 后旧贡献失效，随后通过 keyframe/resync 重建；
+- 验证跨 source occupied/free/unknown 对齐结果及 RViz 可视效果；
+- 该项不阻塞 C2 本机地图验收，C2 只交付 alignment epoch/revision 绑定与失效边界。
+
+**来源**：C2 规划期间用户明确决定“地图共享留待后续验证”。
+
+**状态**：⏸️ 待 C3/C8 创建时引用
 
 ---
 
@@ -209,4 +226,4 @@ C5 是最复杂的子任务，建议拆分为 4 个独立子任务：
 
 ## 完成标准
 
-当所有 10 项建议的状态都不再是 `⏸️ 待子任务创建时引用` 时，本回溯任务完成。
+当所有 11 项建议/TODO 的状态都不再是 `⏸️ 待子任务创建时引用` 时，本回溯任务完成。

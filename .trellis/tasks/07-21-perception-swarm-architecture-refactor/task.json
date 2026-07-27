@@ -19,7 +19,8 @@
   "pr_url": null,
   "subtasks": [],
   "children": [
-    "07-22-c1-perception-input"
+    "07-22-c1-perception-input",
+    "07-27-c2-local-observation-map"
   ],
   "parent": null,
   "relatedFiles": [],

@@ -4,6 +4,7 @@
 #include "perception_adapters/odometry_adapter.hpp"
 #include "perception_adapters/point_cloud2_adapter.hpp"
 #include "perception_core/health/health_state.hpp"
+#include "perception_core/health/MapperContractFingerprint.hpp"
 #include "perception_core/health/mapper_health_gate.hpp"
 #include "perception_core/health/mapper_input_contract.hpp"
 #include "perception_core/observation/lidar_observation.hpp"
@@ -37,6 +38,7 @@ namespace {
     using Perception::LidarObservation;
     using Perception::MapperHealthGate;
     using Perception::MapperInputContract;
+    using Perception::MapperContractFingerprint;
     using Perception::PoseEstimate;
     using Perception::RayEvidenceCapability;
     using Perception::SensorDescriptor;
@@ -98,6 +100,7 @@ public:
         : Node("perception_input_node")
         , session_id_(generate_session_id())
         , session_manager_(session_id_)
+        , producer_source_id_(declare_parameter<std::string>("producer_source_id", "perception_input"))
         , source_id_ {declare_parameter<std::string>("pose_source_id", "odom")}
         , pose_input_type_(declare_parameter<std::string>("pose_input_type", "odometry"))
         , expected_pose_frame_(declare_parameter<std::string>("expected_pose_frame", ""))
@@ -113,8 +116,12 @@ public:
         , tf_topic_(declare_parameter<std::string>("tf_topic", "/tf"))
         , tf_child_frame_(declare_parameter<std::string>("tf_child_frame", "base_link"))
     {
+        if(producer_source_id_.empty()) {
+            throw std::runtime_error("producer_source_id must not be empty");
+        }
         load_contract();
         load_sensor_descriptors();
+        contract_fingerprint_ = MapperContractFingerprint::compute(descriptors_, mapper_contract_);
 
         observation_publisher_ = create_publisher<perception_interfaces::msg::LidarObservation>(
                 observation_topic_, rclcpp::SensorDataQoS());
@@ -149,6 +156,7 @@ private:
     std::vector<SensorHealth>               sensor_health_;
     std::vector<SensorSubscriptions>        sensor_subscriptions_;
 
+    std::string producer_source_id_;
     SourceID    source_id_;
     std::string pose_input_type_;
     std::string expected_pose_frame_;
@@ -165,6 +173,8 @@ private:
     std::string tf_child_frame_;
 
     std::unique_ptr<MapperHealthGate> health_gate_;
+    MapperInputContract               mapper_contract_;
+    MapperContractFingerprint         contract_fingerprint_;
     std::optional<PoseEstimate>       latest_pose_;
 
     HealthState last_published_state_ = HealthState::Unavailable;
@@ -244,7 +254,8 @@ private:
                                             {},
                                             degraded_ray_evidence}},
                         "Configured degraded lidar combination"});
-        health_gate_ = std::make_unique<MapperHealthGate>(std::move(contract));
+        mapper_contract_ = std::move(contract);
+        health_gate_ = std::make_unique<MapperHealthGate>(mapper_contract_);
     }
 
     void load_sensor_descriptors()
@@ -544,6 +555,11 @@ private:
         const auto                              capabilities = health_gate_->current_capability();
         perception_interfaces::msg::HealthState message;
         message.header.stamp        = static_cast<builtin_interfaces::msg::Time>(get_clock()->now());
+        message.producer_source_id = producer_source_id_;
+        message.producer_session_boot_time_ns = session_id_.boot_time_ns;
+        message.producer_session_random_suffix = session_id_.random_suffix;
+        message.mapper_contract_schema_version = contract_fingerprint_.schema_version;
+        message.mapper_contract_fingerprint = contract_fingerprint_.hex_digest;
         message.state               = to_ros_health_state(state);
         message.degradation_reason  = reason;
         message.has_2d_lidar        = capabilities.has_2d_lidar;

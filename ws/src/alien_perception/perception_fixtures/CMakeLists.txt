@@ -18,7 +18,9 @@ if(NOT TARGET perception_interfaces__rosidl_typesupport_cpp)
 endif()
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 
@@ -26,6 +28,7 @@ add_library(fixture_scene
         src/FixtureScene.cpp
         src/RayEvidenceDebugGeometryBuilder.cpp
 )
+add_library(${PROJECT_NAME}::fixture_scene ALIAS fixture_scene)
 target_sources(fixture_scene
         PRIVATE
         include/perception_fixtures/FixtureScene.hpp
@@ -46,7 +49,7 @@ target_include_directories(perception_fixture_publisher PRIVATE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 target_link_libraries(perception_fixture_publisher fixture_scene)
-ament_target_dependencies(perception_fixture_publisher rclcpp sensor_msgs)
+ament_target_dependencies(perception_fixture_publisher rclcpp sensor_msgs nav_msgs)
 
 add_executable(ray_evidence_debug_node
         src/RayEvidenceDebugNode.cpp
@@ -73,14 +76,31 @@ if(perception_interfaces_FOUND)
     ament_target_dependencies(ray_evidence_debug_node perception_interfaces)
 endif()
 
+add_executable(pose_gated_laser_scan_relay
+        src/PoseGatedLaserScanRelay.cpp
+)
+if(TARGET perception_interfaces__rosidl_typesupport_cpp)
+    target_link_libraries(pose_gated_laser_scan_relay
+            perception_interfaces__rosidl_typesupport_cpp
+    )
+endif()
+ament_target_dependencies(pose_gated_laser_scan_relay
+        rclcpp diagnostic_msgs sensor_msgs
+)
+if(perception_interfaces_FOUND)
+    ament_target_dependencies(pose_gated_laser_scan_relay perception_interfaces)
+endif()
+
 install(DIRECTORY include/
         DESTINATION include
 )
 install(TARGETS fixture_scene
+        EXPORT export_${PROJECT_NAME}
         ARCHIVE DESTINATION lib
         LIBRARY DESTINATION lib
 )
 install(TARGETS perception_fixture_publisher ray_evidence_debug_node
+        pose_gated_laser_scan_relay
         RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 install(DIRECTORY launch config
@@ -104,6 +124,11 @@ if(BUILD_TESTING)
     add_launch_test(test/test_perception_input_performance_integration.py TIMEOUT 90)
     add_launch_test(test/test_perception_input_invalid_ray_evidence.py TIMEOUT 30)
     add_launch_test(test/test_ray_evidence_debug_integration.py TIMEOUT 60)
+    add_launch_test(test/test_pose_gated_laser_scan_relay.py TIMEOUT 30)
 endif()
+
+ament_export_include_directories(include)
+ament_export_dependencies(perception_core)
+ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 
 ament_package()

@@ -20,6 +20,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 | [Perception Ray Evidence Contract](./perception-ray-evidence-contract.md) | LiDAR hit/free-ray capability, validation, and cross-layer propagation | Active |
+| [Local Observation Map Contract](./local-observation-map-contract.md) | C2 pose/health gates, epoch/revision semantics, and revision-locked reads | Active |
 
 ---
 

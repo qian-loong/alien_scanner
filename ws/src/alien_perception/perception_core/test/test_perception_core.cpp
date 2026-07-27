@@ -1,4 +1,5 @@
 #include "perception_core/health/health_state.hpp"
+#include "perception_core/health/MapperContractFingerprint.hpp"
 #include "perception_core/health/mapper_health_gate.hpp"
 #include "perception_core/health/mapper_input_contract.hpp"
 #include "perception_core/observation/lidar_observation.hpp"
@@ -642,6 +643,34 @@ TEST(MapperHealthGateTest, PoseTimeoutCausesImmediateUnavailableAndStableRecover
     EXPECT_EQ(gate.evaluate(descriptors, sensor_health, make_pose(0.1)), HealthState::Healthy);
 }
 
+TEST(MapperHealthGateTest, ReportsWhetherRecoverySampleGateIsStable)
+{
+    MapperInputContract contract;
+    contract.minimum_viable = {
+            SensorRequirement {SensorType::LIDAR_2D, 1, {}}};
+    contract.requires_pose = false;
+    contract.recovery_stability_samples = 3;
+
+    MapperHealthGate gate(contract);
+    const std::vector<SensorDescriptor> descriptors = {
+            make_descriptor("front", SensorType::LIDAR_2D)};
+    const std::vector<SensorHealth> active = {
+            make_health("front", SensorHealthStatus::Active)};
+    const std::vector<SensorHealth> stale = {
+            make_health("front", SensorHealthStatus::Stale)};
+
+    EXPECT_EQ(gate.evaluate(descriptors, active, std::nullopt), HealthState::Healthy);
+    EXPECT_TRUE(gate.recovery_stable());
+    EXPECT_EQ(gate.evaluate(descriptors, stale, std::nullopt), HealthState::Unavailable);
+    EXPECT_TRUE(gate.recovery_stable());
+    EXPECT_EQ(gate.evaluate(descriptors, active, std::nullopt), HealthState::Degraded);
+    EXPECT_FALSE(gate.recovery_stable());
+    EXPECT_EQ(gate.evaluate(descriptors, active, std::nullopt), HealthState::Degraded);
+    EXPECT_FALSE(gate.recovery_stable());
+    EXPECT_EQ(gate.evaluate(descriptors, active, std::nullopt), HealthState::Healthy);
+    EXPECT_TRUE(gate.recovery_stable());
+}
+
 TEST(MapperHealthGatePerformanceTest, ReportsHealthEvaluationBaseline)
 {
     constexpr std::size_t sample_count = 5000;
@@ -675,6 +704,73 @@ TEST(MapperHealthGatePerformanceTest, ReportsHealthEvaluationBaseline)
               << " average_us=" << average_us << std::endl;
     EXPECT_EQ(healthy_count, sample_count);
     EXPECT_LT(average_us, 1000.0);
+}
+
+TEST(MapperContractFingerprintTest, CanonicalizesUnorderedInventoryAndRequirements)
+{
+    auto front = make_descriptor("front", SensorType::LIDAR_2D);
+    front.ray_evidence = RayEvidenceCapability::FullRay;
+    auto top = make_descriptor("top", SensorType::LIDAR_3D);
+
+    MapperInputContract first;
+    first.minimum_viable = {
+            SensorRequirement {SensorType::LIDAR_3D, 1, {}, RayEvidenceCapability::HitOnly},
+            SensorRequirement {
+                    SensorType::LIDAR_2D, 1,
+                    std::vector<SensorID> {SensorID {"rear"}, SensorID {"front"}},
+                    RayEvidenceCapability::HitRay}};
+    first.degraded_combinations = {
+            DegradedCombination {
+                    {SensorRequirement {
+                            SensorType::LIDAR_2D, 1, {}, RayEvidenceCapability::HitOnly}},
+                    "diagnostic text is not identity"}};
+    first.expected_pose_frame = "map";
+
+    auto second = first;
+    std::reverse(second.minimum_viable.begin(), second.minimum_viable.end());
+    std::reverse(
+            second.minimum_viable.front().specific_sensors->begin(),
+            second.minimum_viable.front().specific_sensors->end());
+    second.degraded_combinations.front().description = "different diagnostic";
+
+    const auto left = MapperContractFingerprint::compute({top, front}, first);
+    const auto right = MapperContractFingerprint::compute({front, top}, second);
+    EXPECT_TRUE(left.is_well_formed());
+    EXPECT_EQ(left.hex_digest, right.hex_digest);
+}
+
+TEST(MapperContractFingerprintTest, PreservesDegradedPriorityAndSemanticFields)
+{
+    const auto descriptor = make_descriptor("front", SensorType::LIDAR_2D);
+    MapperInputContract contract;
+    contract.minimum_viable = {
+            SensorRequirement {
+                    SensorType::LIDAR_2D, 2, {}, RayEvidenceCapability::HitRay}};
+    contract.degraded_combinations = {
+            DegradedCombination {
+                    {SensorRequirement {
+                            SensorType::LIDAR_2D, 1, {}, RayEvidenceCapability::HitRay}},
+                    "first"},
+            DegradedCombination {
+                    {SensorRequirement {
+                            SensorType::LIDAR_2D, 1, {}, RayEvidenceCapability::HitOnly}},
+                    "second"}};
+
+    const auto baseline = MapperContractFingerprint::compute({descriptor}, contract);
+
+    auto reordered = contract;
+    std::reverse(
+            reordered.degraded_combinations.begin(),
+            reordered.degraded_combinations.end());
+    EXPECT_NE(
+            baseline.hex_digest,
+            MapperContractFingerprint::compute({descriptor}, reordered).hex_digest);
+
+    auto changed = contract;
+    changed.minimum_pose_quality = 0.5;
+    EXPECT_NE(
+            baseline.hex_digest,
+            MapperContractFingerprint::compute({descriptor}, changed).hex_digest);
 }
 
 int main(int argc, char ** argv)

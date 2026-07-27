@@ -1,0 +1,56 @@
+# Source-local authoritative occupancy map state. This message contains metadata only.
+std_msgs/Header header
+
+uint8 STATE_HEALTHY = 0
+uint8 STATE_DEGRADED = 1
+uint8 STATE_UNAVAILABLE = 2
+
+uint8 RAY_EVIDENCE_HIT_ONLY = 0
+uint8 RAY_EVIDENCE_HIT_RAY = 1
+uint8 RAY_EVIDENCE_FULL_RAY = 2
+
+string vehicle_id
+uint64 mapper_session_boot_time_ns
+uint32 mapper_session_random_suffix
+uint64 state_sequence
+uint64 map_epoch
+uint64 revision
+uint8 health
+bool map_fresh
+int64 validity_remaining_ns
+
+float64 resolution_m
+geometry_msgs/Point lattice_origin
+bool has_known_bounds
+geometry_msgs/Point known_bounds_min
+geometry_msgs/Point known_bounds_max
+
+uint32 mapper_contract_schema_version
+string mapper_contract_fingerprint
+string satisfied_combination_id
+bool has_active_ray_evidence
+uint8 maximum_active_ray_evidence
+uint32 active_sensor_count
+uint32 active_2d_hit_only_sensor_count
+uint32 active_2d_hit_ray_sensor_count
+uint32 active_2d_full_ray_sensor_count
+uint32 active_3d_hit_only_sensor_count
+uint32 active_3d_hit_ray_sensor_count
+uint32 active_3d_full_ray_sensor_count
+
+string last_sensor_id
+uint64 last_sensor_session_boot_time_ns
+uint32 last_sensor_session_random_suffix
+builtin_interfaces/Time last_observation_stamp
+string last_observation_clock_domain
+uint32 last_commit_changed_cell_count
+
+bool supports_point_query
+bool supports_bounded_region_query
+bool supports_hierarchy
+bool supports_dirty_region
+bool supports_serialization
+
+bool has_committed_alignment
+uint64 alignment_epoch
+uint64 alignment_revision

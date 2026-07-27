@@ -86,6 +86,16 @@ visualization_msgs::msg::MarkerArray make_markers(
   its own capability, frame, timestamp, session, and payload metadata. A
   consumer traces sensor/session identity but does not require a second hidden
   descriptor topic to reinterpret that batch.
+- C2 still validates the authoritative batch against its session-frozen
+  descriptor and mapper contract before writing occupancy. Identity,
+  capability, payload type, frame, range/FOV/resolution metadata, and canonical
+  lattice representability are whole-batch boundaries: any mismatch rejects
+  the batch without a partial backend mutation or revision advance.
+- C2 traverses 2D free rays by canonical voxel DDA. Hit and no-return endpoint
+  voxels are excluded from free evidence; a hit endpoint is occupied, while a
+  `FullRay` no-return maximum-range boundary remains unknown. Cloud3D remains
+  `HitOnly`, contributes occupied endpoints only, and each endpoint must be
+  finite and inside the frozen descriptor range.
 - `RayEvidenceDebugNode` consumes only the authoritative ROS
   `LidarObservation`. It decodes `ray_evidence` and `data_type` with closed
   switches. Unknown values, empty `frame_id` / `sensor_id` / `clock_domain`, a
@@ -116,6 +126,10 @@ visualization_msgs::msg::MarkerArray make_markers(
 | Direct `LaserScanAdapter::convert()` input fails validation | Throw `std::invalid_argument` without returning an observation |
 | A ROS sensor callback receives adapter-invalid input | Catch `std::invalid_argument`, reject once, and emit a throttled diagnostic; do not pre-run the same validation |
 | `HitRay`/`FullRay` scan metadata drifts from the frozen descriptor | Reject the complete batch and do not activate the sensor |
+| C2 ray or endpoint crosses outside the canonical backend lattice | Reject the complete batch; do not mutate cells or advance revision |
+| C2 receives a `HitOnly` scan with no-return samples | Ignore those samples; do not write maximum-range free cells |
+| C2 receives a `FullRay` no-return sample | Write crossed free voxels but leave the maximum-range endpoint voxel unknown |
+| C2 receives Cloud3D above `HitOnly`, with non-finite data, or outside frozen range | Reject the complete batch; do not write any endpoint |
 | Descriptor capability changes after inventory freeze | Reconnect is rejected as descriptor drift |
 | `Scan2D::return_kind()` index is outside `ranges` | Throw `std::out_of_range` |
 | Debug observation has ray-evidence value `3` / `255` or an unknown `data_type` | Reject the complete batch; publish no new geometry |
@@ -170,10 +184,14 @@ visualization_msgs::msg::MarkerArray make_markers(
   `HitOnly` update where empty `ADD` markers replace both old free-ray
   categories. Graph assertions reject legacy `scan_returns`, FakeLidar,
   OctoMapBuilder, occupancy, and OctoMap endpoints.
+- C2 evidence tests cover `HitOnly`, `HitRay`, `FullRay`, Invalid-only and
+  no-evidence batches, grazing-voxel DDA traversal, maximum-range boundary
+  exclusion, Cloud3D whole-batch rejection, and identical conformance behavior
+  at canonical lattice boundaries for every supported backend.
 - The final gate builds and tests `perception_core`, `perception_interfaces`,
-  `perception_adapters`, `perception_input_node`, and `perception_fixtures` in
-  an isolated Release prefix, then requires zero `colcon test-result` failures
-  and a clean `git diff --check`.
+  `perception_adapters`, `perception_input_node`, `perception_local_map`, and
+  `perception_fixtures` in an isolated Release prefix, then requires zero
+  `colcon test-result` failures and a clean `git diff --check`.
 
 ## 7. Wrong vs Correct
 

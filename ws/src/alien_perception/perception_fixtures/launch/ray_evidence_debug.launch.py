@@ -79,6 +79,10 @@ def generate_launch_description():
                         "scan_range_min_m": DEBUG_SCAN["range_min_m"],
                         "scan_range_max_m": DEBUG_SCAN["range_max_m"],
                         "inject_debug_returns": True,
+                        "publish_pose": True,
+                        "pose_topic": "/fixture/debug/odom",
+                        "pose_frame": "map",
+                        "pose_child_frame": "base_link",
                     }
                 ],
             ),
@@ -90,7 +94,10 @@ def generate_launch_description():
                 parameters=[
                     {
                         "sensor_ids": ["debug_scan"],
-                        "requires_pose": False,
+                        "requires_pose": True,
+                        "expected_pose_frame": "map",
+                        "pose_input_type": "odometry",
+                        "odom_topic": "/fixture/debug/odom",
                         "minimum_lidar_type": "2d",
                         "minimum_lidar_count": 1,
                         "minimum_lidar_ray_evidence": "full_ray",
@@ -107,6 +114,8 @@ def generate_launch_description():
                         "sensor.debug_scan.range_min_m": DEBUG_SCAN["range_min_m"],
                         "sensor.debug_scan.range_max_m": DEBUG_SCAN["range_max_m"],
                         "sensor.debug_scan.ray_evidence": "full_ray",
+                        "sensor.debug_scan.mounting_qw": math.sqrt(0.5),
+                        "sensor.debug_scan.mounting_qy": math.sqrt(0.5),
                     }
                 ],
             ),

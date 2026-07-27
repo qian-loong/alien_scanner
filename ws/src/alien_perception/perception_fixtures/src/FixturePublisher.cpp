@@ -1,4 +1,5 @@
 #include "perception_fixtures/FixtureScene.hpp"
+#include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
@@ -67,6 +68,10 @@ namespace {
             , cloud_topic_(declare_parameter<std::string>("cloud_topic", "fixture/points"))
             , scan_frame_(declare_parameter<std::string>("scan_frame", "fixture_scan_link"))
             , cloud_frame_(declare_parameter<std::string>("cloud_frame", "fixture_lidar_link"))
+            , publish_pose_(declare_parameter<bool>("publish_pose", false))
+            , pose_topic_(declare_parameter<std::string>("pose_topic", "fixture/odom"))
+            , pose_frame_(declare_parameter<std::string>("pose_frame", "map"))
+            , pose_child_frame_(declare_parameter<std::string>("pose_child_frame", "base_link"))
             , publish_period_(declare_parameter<double>("publish_period_s", 0.1))
             , scene_(make_scene_config(*this))
         {
@@ -86,6 +91,9 @@ namespace {
                 cloud_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
                         cloud_topic_, rclcpp::SensorDataQoS());
             }
+            if(publish_pose_) {
+                pose_publisher_ = create_publisher<nav_msgs::msg::Odometry>(pose_topic_, 10);
+            }
 
             timer_ = create_wall_timer(
                     std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -100,12 +108,17 @@ namespace {
         std::string  cloud_topic_;
         std::string  scan_frame_;
         std::string  cloud_frame_;
+        bool         publish_pose_;
+        std::string  pose_topic_;
+        std::string  pose_frame_;
+        std::string  pose_child_frame_;
         double       publish_period_;
         FixtureScene scene_;
 
         rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr   scan_front_publisher_;
         rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr   scan_rear_publisher_;
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_publisher_;
+        rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr       pose_publisher_;
         rclcpp::TimerBase::SharedPtr                                timer_;
 
         sensor_msgs::msg::LaserScan make_scan(const std::string & frame_id) const
@@ -159,6 +172,14 @@ namespace {
 
         void publish_fixture()
         {
+            if(pose_publisher_) {
+                nav_msgs::msg::Odometry pose;
+                pose.header.stamp = get_clock()->now();
+                pose.header.frame_id = pose_frame_;
+                pose.child_frame_id = pose_child_frame_;
+                pose.pose.pose.orientation.w = 1.0;
+                pose_publisher_->publish(pose);
+            }
             if(scan_front_publisher_) {
                 scan_front_publisher_->publish(make_scan(scan_frame_));
             }

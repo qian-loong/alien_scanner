@@ -125,6 +125,13 @@ namespace Perception {
         return commit_candidate(candidate_state, candidate_reason);
     }
 
+    bool MapperHealthGate::recovery_stable() const noexcept
+    {
+        const std::size_t required_samples =
+                std::max<std::size_t>(1, contract_.recovery_stability_samples);
+        return !pending_state_.has_value() || pending_state_count_ >= required_samples;
+    }
+
     bool MapperHealthGate::check_requirements(
             const std::vector<SensorRequirement> & requirements,
             const CapabilitySet &                  capabilities,

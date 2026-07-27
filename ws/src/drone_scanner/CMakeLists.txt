@@ -29,6 +29,7 @@ target_include_directories(drone_trajectory PUBLIC
 
 add_library(drone_lidar STATIC
         src/FakeLidar.cpp
+        src/LaserScanProjection.cpp
         src/AltitudeAdapter.cpp
 )
 target_include_directories(drone_lidar PUBLIC
@@ -75,6 +76,7 @@ install(
 install(
         FILES
         include/drone_scanner/FakeLidar.hpp
+        include/drone_scanner/LaserScanProjection.hpp
         include/drone_scanner/AltitudeAdapter.hpp
         DESTINATION include/drone_scanner
 )
@@ -132,6 +134,20 @@ install(
         DESTINATION lib/${PROJECT_NAME}
 )
 
+add_executable(cave_laser_scan
+        src/CaveLaserScanNode.cpp
+        src/CaveLaserScanMain.cpp
+        src/CaveFieldFromParameters.cpp
+)
+target_include_directories(cave_laser_scan PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(cave_laser_scan drone_lidar cave_world::cave_geometry)
+ament_target_dependencies(cave_laser_scan
+        rclcpp diagnostic_msgs nav_msgs sensor_msgs cave_world)
+install(TARGETS cave_laser_scan DESTINATION lib/${PROJECT_NAME})
+
 add_executable(scan_accumulator
         src/ScanAccumulatorNode.cpp
         src/ScanAccumulatorMain.cpp
@@ -183,6 +199,14 @@ if(BUILD_TESTING)
     if(TARGET TestAltitudeAdapter)
         target_link_libraries(TestAltitudeAdapter drone_lidar)
         target_include_directories(TestAltitudeAdapter PUBLIC
+                $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        )
+    endif()
+
+    ament_add_gtest(TestLaserScanProjection test/TestLaserScanProjection.cpp)
+    if(TARGET TestLaserScanProjection)
+        target_link_libraries(TestLaserScanProjection drone_lidar)
+        target_include_directories(TestLaserScanProjection PUBLIC
                 $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         )
     endif()

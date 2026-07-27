@@ -1,4 +1,5 @@
 import math
+import re
 import time
 import unittest
 from threading import Event
@@ -133,3 +134,9 @@ class TestPerceptionInputIntegration(unittest.TestCase):
         self.assertEqual(self.latest_health.active_sensor_count, 1)
         self.assertTrue(self.latest_health.has_free_space_hit_rays)
         self.assertFalse(self.latest_health.has_full_no_return_rays)
+        self.assertEqual(self.latest_health.producer_source_id, "perception_input")
+        self.assertGreater(self.latest_health.producer_session_boot_time_ns, 0)
+        self.assertEqual(self.latest_health.mapper_contract_schema_version, 1)
+        self.assertIsNotNone(
+            re.fullmatch(r"[0-9a-f]{64}", self.latest_health.mapper_contract_fingerprint)
+        )

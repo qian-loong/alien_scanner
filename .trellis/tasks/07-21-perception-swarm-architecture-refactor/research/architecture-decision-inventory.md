@@ -42,7 +42,7 @@
 21. `Accepted(D-021)`：active mapper 启动时声明 minimum viable input 和允许 degraded 组合；仍满足最低能力时以 Degraded + 有效 capability 继续提交地图，低于最低能力时停止 revision、freshness 到期并触发 Frozen/Hold/任务撤销，恢复后重新通过健康门。
 22. `Accepted(D-022)`：Degraded 按 mapper、shared-view、role/task 和 local-execution 分层门控；合法地图证据与任务资格分开判断，中央协调器不得用全局布尔状态覆盖本机 known-free 安全拒绝。
 23. `Accepted(D-023)`：本轮不实现定位/VIO/LIO/SLAM estimator；以标准 Odometry + TF 绑定可替换的 ROS-free pose estimate，保留 source/session、frame、quality/covariance、freshness 和 reset epoch，并验证异常对地图、任务和本机安全的门控。
-24. `Accepted(D-024)`：pose source session/frame/reset epoch 不连续时 fail closed，停止旧 map revision 和任务；旧贡献按旧 pose/alignment epoch Frozen/Removed，新 pose/alignment Ready 后建立新 map epoch 并 keyframe/resync，首版不原地重投影。
+24. `Accepted(D-024)`：pose source session/frame/reset epoch 不连续时 fail closed，停止旧 map revision、撤销旧 alignment 并立即推进新 local map epoch；新 pose Ready 后本机从空图重建且不等待 alignment，shared consumption/shared-map keyframe/resync 等待新 alignment；旧贡献按旧 pose/alignment epoch Frozen/Removed，首版不原地重投影。
 25. `Accepted(D-025)`：C1-C8 的 authoritative mapper 位于 vehicle-local compute domain，raw LiDAR/pose 在本机处理，fleet G_map 从 LocalMapUpdate 开始；EdgeAggregator 只聚合 map update，远程 raw analytics/建图卸载延期。
 26. `Accepted(D-026)`：本机规划/安全使用 ROS-free MotionIntent/ExecutionFeedback，具体 FakeOdom、Gazebo controller 或真实 autopilot 经 adapter 接入；本轮不实现飞控，PoseStamped motion_goal 仅为 FakeOdom 兼容绑定。
 27. `Accepted(D-027)`：每 vehicle session 一个 local execution authority；coordinator 只发布任务/角色，local safety 与 external failsafe 可抢占，control_authority_epoch/TTL 拒绝旧命令和反馈，Relay 不获得 actuator authority。

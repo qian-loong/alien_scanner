@@ -1,0 +1,121 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Tree Height: 650
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.25
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 110; 110; 110
+      Enabled: true
+      Name: MapGrid
+      Plane: XY
+      Reference Frame: map
+      Value: true
+    - Alpha: 0.18
+      Autocompute Intensity Bounds: true
+      Class: rviz_default_plugins/PointCloud2
+      Color: 125; 150; 165
+      Enabled: true
+      Name: CaveTruthOracleOnly
+      Position Transformer: XYZ
+      Size (Pixels): 2
+      Style: Points
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /cave/points
+      Value: true
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 255; 215; 0
+      Enabled: true
+      Head Diameter: 0.25
+      Head Length: 0.35
+      Line Style: Lines
+      Line Width: 0.05
+      Name: FrozenLineTrajectory
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /cave_scene/path
+      Value: true
+    - Alpha: 1
+      Class: rviz_default_plugins/LaserScan
+      Color: 0; 255; 160
+      Decay Time: 0.25
+      Enabled: true
+      Name: CurrentReleasedFullRayLaserScan
+      Position Transformer: XYZ
+      Size (Pixels): 3
+      Style: Points
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /cave_scene/scan
+      Value: true
+    - Class: octomap_rviz_plugins/OccupancyGrid
+      Enabled: true
+      Max. Height Display: 3.4028234663852886e+38
+      Max. Octree Depth: 16
+      Min. Height Display: -3.4028234663852886e+38
+      Name: C2AccumulatedAuthoritativeOctoMap
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /cave_scene/local_map/octomap
+      Value: true
+      Voxel Alpha: 0.72
+      Voxel Coloring: Z-Axis
+      Voxel Rendering: Occupied Voxels
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Frame Timeout: 15
+      Marker Scale: 0.45
+      Name: SceneTF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Update Interval: 0
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 35; 38; 41
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 18
+      Focal Point:
+        X: 6
+        Y: 0
+        Z: 1.5
+      Name: Current View
+      Pitch: -0.45
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 4.9
+Window Geometry:
+  Height: 900
+  Width: 1440

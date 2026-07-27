@@ -147,7 +147,7 @@ file(GLOB_RECURSE _package_manifests CONFIGURE_DEPENDS
 
 ### 1. Scope / Trigger
 
-These rules apply to ROS 2 packages that install Python launch files or use
+These rules apply to ROS 2 packages that install Python/XML launch files or use
 `launch_testing` against C++ nodes.
 
 ### 2. Signatures
@@ -174,6 +174,15 @@ These rules apply to ROS 2 packages that install Python launch files or use
   quality checks all pass. Invalid quality includes NaN and infinity.
 - Producer SessionID belongs to one process lifetime. A respawned process must
   publish a new SessionID; rejecting the old SessionID belongs to the consumer.
+- In the current ROS 2 Jazzy image, an RViz process that loads
+  `octomap_rviz_plugins` receives `LD_PRELOAD=liboctomap.so` on that RViz node
+  only. Do not export or set this workaround globally for mapper, fixture, or
+  unrelated launch processes.
+- When an included launch overrides a launch-configuration name that the
+  parent also consumes, wrap that include in an explicit scoped group
+  (`GroupAction(scoped=True)` or `<group scoped="true">`). Child-only values
+  such as `show_rviz=false` must not change conditions evaluated later by the
+  parent launch.
 
 ### 4. Validation & Error Matrix
 
@@ -186,6 +195,8 @@ These rules apply to ROS 2 packages that install Python launch files or use
 | `pose_input_type` is unknown or TF child frame is empty | Node startup fails with an actionable parameter error |
 | Pose is stale, has the wrong frame, or quality is below threshold | Health becomes unavailable immediately and reports the failed boundary |
 | Producer process is respawned | New observations carry a different SessionID |
+| OctoMap RViz fails with an `OcTreeStamped` undefined symbol | Add the process-scoped `LD_PRELOAD=liboctomap.so` workaround to the RViz node |
+| A child include forces `show_rviz=false` and the parent's RViz silently does not start | Put the include in an explicit scoped group and verify the parent condition remains true |
 
 ### 5. Good / Base / Bad Cases
 
@@ -198,6 +209,10 @@ These rules apply to ROS 2 packages that install Python launch files or use
   executed tests.
 - Bad: session restart is approximated by two concurrent nodes, or a 100-frame
   performance test counts repeated timestamps as distinct frames.
+- Good: a fixture include disables its own RViz inside a scoped group while the
+  parent launch independently starts its one authoritative RViz process.
+- Bad: a child include sets an unscoped argument with the same name used by a
+  later parent-node condition.
 
 ### 6. Tests Required
 
@@ -210,6 +225,11 @@ These rules apply to ROS 2 packages that install Python launch files or use
   low-quality, and reset-epoch paths.
 - Inject a real process failure with launch respawn and assert the SessionID
   changes after restart.
+- Parse OctoMap visualization launch files and assert the only `LD_PRELOAD`
+  declaration is an RViz-node child with value `liboctomap.so`.
+- For same-name child/parent launch arguments, assert structurally that the
+  child include is inside an explicit scoped group, then smoke the parent with
+  the positive option and require the expected process-start record.
 - Performance baselines use more than 100 unique frames, report loss plus
   average/P95/max latency, and separately report conversion and health-gate
   timings.
@@ -231,6 +251,26 @@ class TestInput(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         ...
+```
+
+Wrong:
+
+```xml
+<include file=".../fixture.launch.py">
+  <arg name="show_rviz" value="false"/>
+</include>
+<node pkg="rviz2" exec="rviz2" if="$(var show_rviz)"/>
+```
+
+Correct:
+
+```xml
+<group scoped="true">
+  <include file=".../fixture.launch.py">
+    <arg name="show_rviz" value="false"/>
+  </include>
+</group>
+<node pkg="rviz2" exec="rviz2" if="$(var show_rviz)"/>
 ```
 
 ## External Resource Profiling Contracts

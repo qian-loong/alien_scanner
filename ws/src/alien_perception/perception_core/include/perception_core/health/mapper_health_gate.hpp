@@ -49,6 +49,9 @@ namespace Perception {
         /// Get current health state
         HealthState current_state() const { return current_state_; }
 
+        /// Whether the configured consecutive-sample recovery gate is satisfied.
+        bool recovery_stable() const noexcept;
+
     private:
         MapperInputContract        contract_;
         HealthState                current_state_ = HealthState::Unavailable;

@@ -1,6 +1,13 @@
 # HealthState message
 std_msgs/Header header
 
+# Producer identity and frozen mapper contract binding
+string producer_source_id
+uint64 producer_session_boot_time_ns
+uint32 producer_session_random_suffix
+uint32 mapper_contract_schema_version
+string mapper_contract_fingerprint
+
 # Health state enumeration
 uint8 STATE_HEALTHY = 0
 uint8 STATE_DEGRADED = 1

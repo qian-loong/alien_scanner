@@ -228,9 +228,10 @@
 **决策**：Pose source session/frame/reset epoch 不连续时 **fail closed**。
 
 **内容**：
-- 停止旧 map revision 和任务
+- 立即停止旧 map revision、撤销旧 alignment、推进新 local map epoch、清空旧地图并暂停相关任务
 - 旧贡献按旧 pose/alignment epoch Frozen/Removed
-- 新 pose/alignment Ready 后建立新 map epoch 并 keyframe/resync
+- 新 pose Ready 后本机地图从空状态重建，不等待 alignment
+- shared contribution/consumer、shared-frame 任务与 shared-map keyframe/resync 等待属于新 map epoch 的 committed alignment
 - 首版不原地重投影
 
 **影响范围**：C2 本机地图、C3 地图更新

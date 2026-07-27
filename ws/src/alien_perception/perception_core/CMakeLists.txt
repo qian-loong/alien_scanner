@@ -15,10 +15,12 @@ find_package(Eigen3 REQUIRED)
 
 # Core library (ROS-free)
 add_library(${PROJECT_NAME}
+        src/health/MapperContractFingerprint.cpp
         src/health/mapper_health_gate.cpp
 )
 
 set(PERCEPTION_CORE_HEADER_FILES
+        include/perception_core/health/MapperContractFingerprint.hpp
         include/perception_core/health/health_state.hpp
         include/perception_core/health/mapper_health_gate.hpp
         include/perception_core/health/mapper_input_contract.hpp

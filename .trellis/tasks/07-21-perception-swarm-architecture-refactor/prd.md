@@ -110,7 +110,7 @@ Active mapper 必须在启动时声明 minimum viable input contract 和允许�
 
 FakeOdom、未来 Gazebo odometry、真实 VIO/LIO/SLAM estimator 必须可通过同一 adapter 接入。首版不实现定位算法，但必须检测 stale、frame 不一致、质量降级、时间回退和 pose reset，并将结果传递到建图、alignment、任务与本机安全门。
 
-Pose source session、parent/child frame 或 reset epoch 改变时必须 fail closed：停止向旧 authoritative map revision 链提交观测并暂停依赖它的任务。旧地图始终保留其原 pose/alignment epoch，不得把新 pose 静默套到旧体素；新 pose 与 alignment Ready 后推进 local map source epoch，从空状态或合法新 keyframe 重建并完成 shared-map/task resync。
+Pose source session、parent/child frame 或 reset epoch 改变时必须 fail closed：立即停止向旧 authoritative map revision 链提交观测、撤销旧 alignment、推进新的 local map source epoch、清空旧地图并暂停依赖它的任务。旧地图始终保留其原 pose/alignment epoch，不得把新 pose 静默套到旧体素；新 pose Ready 后本机地图从空状态重建且不等待 alignment，shared-map contribution/consumer、shared-frame 任务与 shared-map keyframe/resync 只在新 committed alignment 后恢复。
 
 本机地图更新必须逐传感器观测批次处理，不能把不同 origin 的射线先拼接后按单一原点解释。命中、未命中和无效观测必须可区分；缺少完整射线能力时不得静默伪造 free-space 证据。
 
@@ -124,7 +124,7 @@ Pose source session、parent/child frame 或 reset epoch 改变时必须 fail cl
 
 地图层必须定义后端无关的 occupancy view/update，至少表达 occupied/free/unknown、frame、地图几何/分辨率、查询能力、snapshot、keyframe、delta 和 summary，以及 source/session epoch、base/new revision、冲突、删除、原子提交、乱序拒绝和重同步条件。逻辑语义不能依赖具体传输介质，也不能暴露 `octomap::OcTree` 等实现容器。
 
-Pose reset 产生新的 map source epoch，不是旧 revision 的普通下一帧。旧 contribution 只能在旧 epoch 下 Frozen 或 Removed；首版不要求 occupancy 后端支持跨 pose epoch 的原地重投影。
+Pose reset 立即关闭旧 revision chain、产生新的 map source epoch 并清空旧地图，不是旧 revision 的普通下一帧；旧 alignment 同时失效。新 pose Ready 后本机地图即可从空状态重建，不等待 alignment；旧 contribution 只能在旧 epoch 下 Frozen 或 Removed，shared contribution/consumer、shared-frame 任务与 shared-map keyframe/resync 必须等待新 epoch 的 committed alignment。首版不要求 occupancy 后端支持跨 pose epoch 的原地重投影。
 
 ### R-05 通信数据面
 
@@ -289,7 +289,7 @@ N=5 核心验收只要求一个 Active coordinator，验证 topology、map、tas
 - [ ] 固定 sensor descriptor inventory 下可确定性注入单路和多路掉线；仍满足 mapper minimum contract 时地图以 Degraded + 有效 capability 继续推进，不满足时停止新 revision、freshness 到期且任务 Hold/撤销，sensor 恢复后按健康门重新进入 Ready。
 - [ ] 同一个 Degraded fixture 能产生可区分的 mapper、shared-view、role/task 和 local-execution gate 结果；能力不足的任务被拒绝，但仍合法的地图证据不被无条件删除，本机安全失败不能被 coordinator 覆盖。
 - [ ] FakeOdom fixture 与至少一个标准 Odometry/TF adapter fixture 进入同一 ROS-free pose estimate 契约；stale、frame 错误、quality/covariance 降级、时间回退和 reset epoch 能触发可追溯的地图、任务与本机安全门。
-- [ ] Pose source session/frame/reset epoch 变化会停止旧 map revision、暂停相关任务并推进新 map epoch；旧贡献不接收新观测，新 pose/alignment Ready 后通过 keyframe/resync 重建，测试证明没有跨 epoch 污染。
+- [ ] Pose source session/frame/reset epoch 变化会立即停止旧 map revision、撤销旧 alignment、推进新 local map epoch 并清空旧地图；旧贡献不接收新观测，新 pose Ready 后本机地图可独立从空状态重建，shared contribution/consumer、shared-frame 任务只在新 committed alignment 后通过 shared-map keyframe/resync 恢复，测试证明没有跨 epoch/alignment 污染。
 - [ ] C1-C8 的 authoritative mapper 在 vehicle-local compute domain 内运行；断开所有 fleet 链路时本机仍能生成并消费 LocalMapState，Relay/EdgeAggregator 的核心接口不依赖 raw LiDAR，跨机字节统计从 LocalMapUpdate 起算。
 - [ ] FakeOdom adapter 与至少一个拒绝/超时 fixture 通过同一 MotionIntent/ExecutionFeedback conformance suite；移动、重扫、Hold、Cancel、接受、执行、停止、到达、拒绝和失败均有 identity/revision，旧反馈不会恢复已取消意图。
 - [ ] 同一 vehicle session 下只能有一个 active control authority；coordinator 直发 MotionIntent、旧 control epoch、过期 TTL、乱序反馈和重连旧命令均被拒绝；external failsafe 和 local safety 能抢占正常执行并得到停止确认。
