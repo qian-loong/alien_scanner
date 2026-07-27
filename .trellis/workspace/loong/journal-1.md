@@ -118,3 +118,36 @@ Completed and validated C1 perception input, ray-evidence capability, determinis
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Complete C2 local observation map
+
+**Date**: 2026-07-27
+**Task**: Complete C2 local observation map
+**Branch**: `phase/4-perception-swarm-refactor`
+
+### Summary
+
+Implemented and verified the authoritative vehicle-local occupancy map, continuous FullRay cave scene, pose/health fail-closed recovery, revision-locked reads, documentation, and RViz acceptance; Release build and 248 tests passed.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8dbdba5` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
