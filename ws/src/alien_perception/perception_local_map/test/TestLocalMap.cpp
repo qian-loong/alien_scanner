@@ -9,17 +9,20 @@
 
 #include <cmath>
 #include <chrono>
+#include <algorithm>
 #include <atomic>
 #include <functional>
 #include <future>
 #include <limits>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <thread>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include <sys/resource.h>
 
@@ -127,6 +130,48 @@ namespace PerceptionLocalMap::Test {
             EXPECT_EQ(
                     backend->apply({{}, {VoxelIndex {32'768, 0, 0}}}).status,
                     ApplyStatus::Rejected);
+        }
+
+        std::optional<AxisAlignedBounds> full_scan_known_bounds(
+                const ILocalOccupancyBackend & backend)
+        {
+            std::optional<VoxelIndex> minimum;
+            std::optional<VoxelIndex> maximum;
+            const bool scanned = backend.for_each_known_cell([&](OccupancyCell cell) {
+                if(!minimum.has_value()) {
+                    minimum = cell.index;
+                    maximum = cell.index;
+                    return;
+                }
+                minimum->x = std::min(minimum->x, cell.index.x);
+                minimum->y = std::min(minimum->y, cell.index.y);
+                minimum->z = std::min(minimum->z, cell.index.z);
+                maximum->x = std::max(maximum->x, cell.index.x);
+                maximum->y = std::max(maximum->y, cell.index.y);
+                maximum->z = std::max(maximum->z, cell.index.z);
+            });
+            if(!scanned || !minimum.has_value()) {
+                return std::nullopt;
+            }
+            return voxel_bounds(
+                    *minimum,
+                    {maximum->x + 1, maximum->y + 1, maximum->z + 1}, backend.geometry());
+        }
+
+        void expect_known_bounds_match_full_scan(const ILocalOccupancyBackend & backend)
+        {
+            const auto cached = backend.known_bounds();
+            const auto scanned = full_scan_known_bounds(backend);
+            ASSERT_EQ(cached.has_value(), scanned.has_value());
+            if(!cached.has_value()) {
+                return;
+            }
+            EXPECT_EQ(cached->minimum.x, scanned->minimum.x);
+            EXPECT_EQ(cached->minimum.y, scanned->minimum.y);
+            EXPECT_EQ(cached->minimum.z, scanned->minimum.z);
+            EXPECT_EQ(cached->maximum.x, scanned->maximum.x);
+            EXPECT_EQ(cached->maximum.y, scanned->maximum.y);
+            EXPECT_EQ(cached->maximum.z, scanned->maximum.z);
         }
 
         Perception::SensorDescriptor descriptor(
@@ -350,6 +395,45 @@ namespace PerceptionLocalMap::Test {
         ASSERT_EQ(weakened.status, ApplyStatus::Applied);
         EXPECT_EQ(backend.query({0.5, 0.5, 0.5}).state, OccupancyState::Occupied);
         EXPECT_EQ(weakened.changed_cell_count, 0U);
+    }
+
+    TEST(BackendConformance, OctoMapKnownBoundsMatchFullScan)
+    {
+        OctoMapBackend backend(geometry());
+        EXPECT_FALSE(backend.known_bounds().has_value());
+        expect_known_bounds_match_full_scan(backend);
+
+        const std::vector<EvidenceBatch> rounds {
+                EvidenceBatch {{}, {VoxelIndex {0, 0, 0}}},
+                EvidenceBatch {{VoxelIndex {-3, -4, -5}}, {VoxelIndex {2, 1, 4}}},
+                EvidenceBatch {{VoxelIndex {-3, -4, -5}, VoxelIndex {0, 0, 0}}, {}},
+                EvidenceBatch {{VoxelIndex {7, -9, 3}}, {VoxelIndex {-11, 6, -2}}},
+                EvidenceBatch {{VoxelIndex {1, 1, 1}}, {VoxelIndex {1, 1, 1}}},
+                EvidenceBatch {{VoxelIndex {-11, 6, -2}}, {VoxelIndex {7, -9, 3}}}};
+        for(const auto & round : rounds) {
+            ASSERT_EQ(backend.apply(round).status, ApplyStatus::Applied);
+            expect_known_bounds_match_full_scan(backend);
+        }
+
+        const auto extremes = backend.known_bounds();
+        ASSERT_TRUE(extremes.has_value());
+        EXPECT_EQ(
+                backend.apply({{}, {VoxelIndex {std::numeric_limits<std::int64_t>::max(), 0, 0}}})
+                        .status,
+                ApplyStatus::Rejected);
+        const auto after_rejection = backend.known_bounds();
+        ASSERT_TRUE(after_rejection.has_value());
+        EXPECT_EQ(after_rejection->minimum.x, extremes->minimum.x);
+        EXPECT_EQ(after_rejection->maximum.x, extremes->maximum.x);
+        expect_known_bounds_match_full_scan(backend);
+
+        backend.reset(geometry(0.5));
+        EXPECT_FALSE(backend.known_bounds().has_value());
+        expect_known_bounds_match_full_scan(backend);
+        ASSERT_EQ(backend.apply({{}, {VoxelIndex {-2, 3, -4}}}).status, ApplyStatus::Applied);
+        expect_known_bounds_match_full_scan(backend);
+        ASSERT_EQ(backend.apply({{VoxelIndex {5, -6, 7}}, {}}).status, ApplyStatus::Applied);
+        expect_known_bounds_match_full_scan(backend);
     }
 
     TEST(EvidenceMatrix, HitOnlyDoesNotInventFreeSpace)

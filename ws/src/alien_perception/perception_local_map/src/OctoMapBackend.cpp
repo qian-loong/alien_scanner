@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <set>
 #include <stdexcept>
 
@@ -19,6 +20,8 @@ namespace PerceptionLocalMap {
         MapGeometry                    geometry;
         std::unique_ptr<octomap::OcTree> tree;
         std::set<VoxelIndex>           known_cells;
+        std::optional<VoxelIndex>      minimum_known;
+        std::optional<VoxelIndex>      maximum_known;
     };
 
     namespace {
@@ -61,19 +64,12 @@ namespace PerceptionLocalMap {
 
     std::optional<AxisAlignedBounds> OctoMapBackend::known_bounds() const
     {
-        if(impl_->known_cells.empty()) {
+        if(impl_->known_cells.empty() || !impl_->minimum_known.has_value()
+           || !impl_->maximum_known.has_value()) {
             return std::nullopt;
         }
-        VoxelIndex minimum = *impl_->known_cells.begin();
-        VoxelIndex maximum = minimum;
-        for(const auto & index : impl_->known_cells) {
-            minimum.x = std::min(minimum.x, index.x);
-            minimum.y = std::min(minimum.y, index.y);
-            minimum.z = std::min(minimum.z, index.z);
-            maximum.x = std::max(maximum.x, index.x);
-            maximum.y = std::max(maximum.y, index.y);
-            maximum.z = std::max(maximum.z, index.z);
-        }
+        const auto & minimum = *impl_->minimum_known;
+        const auto & maximum = *impl_->maximum_known;
         return voxel_bounds(
                 minimum,
                 {maximum.x + 1, maximum.y + 1, maximum.z + 1}, impl_->geometry);
@@ -186,6 +182,19 @@ namespace PerceptionLocalMap {
             const auto before = query(center).state;
             impl_->tree->updateNode(to_octomap_point(center), occupied, true);
             impl_->known_cells.insert(cell);
+            if(!impl_->minimum_known.has_value() || !impl_->maximum_known.has_value()) {
+                impl_->minimum_known = cell;
+                impl_->maximum_known = cell;
+            } else {
+                auto & minimum = *impl_->minimum_known;
+                auto & maximum = *impl_->maximum_known;
+                minimum.x = std::min(minimum.x, cell.x);
+                minimum.y = std::min(minimum.y, cell.y);
+                minimum.z = std::min(minimum.z, cell.z);
+                maximum.x = std::max(maximum.x, cell.x);
+                maximum.y = std::max(maximum.y, cell.y);
+                maximum.z = std::max(maximum.z, cell.z);
+            }
             const auto after = query(center).state;
             if(before != after) {
                 ++changed;
