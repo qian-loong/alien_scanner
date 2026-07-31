@@ -1,8 +1,9 @@
+import math
 from pathlib import Path
 import sys
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, TimerAction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -19,6 +20,11 @@ from cave_full_ray_scene_config import (  # noqa: E402,I100
 
 def _launch_setup(context):
     config_path = LaunchConfiguration("scene_config").perform(context)
+    scanner_startup_delay_s = float(
+        LaunchConfiguration("scanner_startup_delay_s").perform(context)
+    )
+    if not math.isfinite(scanner_startup_delay_s) or scanner_startup_delay_s < 0.0:
+        raise ValueError("scanner_startup_delay_s must be finite and non-negative")
     config = load_scene_config(config_path)
     frames = config["frames"]
     topics = config["topics"]
@@ -93,6 +99,11 @@ def _launch_setup(context):
                 "noise_seed": scan["noise_seed"],
             }
         ],
+    )
+    scanner_action = (
+        scanner
+        if scanner_startup_delay_s == 0.0
+        else TimerAction(period=scanner_startup_delay_s, actions=[scanner])
     )
 
     pose_gate = Node(
@@ -207,7 +218,7 @@ def _launch_setup(context):
         cave_publisher,
         scan_tf,
         fake_odom,
-        scanner,
+        scanner_action,
         perception_input,
         pose_gate,
         local_map,
@@ -227,6 +238,7 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("scene_config", default_value=default_config),
             DeclareLaunchArgument("show_rviz", default_value="true"),
+            DeclareLaunchArgument("scanner_startup_delay_s", default_value="0.0"),
             OpaqueFunction(function=_launch_setup),
         ]
     )

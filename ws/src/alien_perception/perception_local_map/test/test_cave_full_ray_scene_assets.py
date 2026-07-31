@@ -99,6 +99,40 @@ def test_launch_loads_once_and_scopes_the_only_octomap_preload_to_rviz():
     ]
     assert len(loader_calls) == 1
 
+    delay_arguments = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "DeclareLaunchArgument"
+        and node.args
+        and ast.literal_eval(node.args[0]) == "scanner_startup_delay_s"
+    ]
+    assert len(delay_arguments) == 1
+    delay_keywords = {
+        keyword.arg: keyword.value
+        for keyword in delay_arguments[0].keywords
+        if keyword.arg is not None
+    }
+    assert ast.literal_eval(delay_keywords["default_value"]) == "0.0"
+
+    scanner_timers = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "TimerAction"
+        and any(
+            keyword.arg == "actions"
+            and isinstance(keyword.value, ast.List)
+            and len(keyword.value.elts) == 1
+            and isinstance(keyword.value.elts[0], ast.Name)
+            and keyword.value.elts[0].id == "scanner"
+            for keyword in node.keywords
+        )
+    ]
+    assert len(scanner_timers) == 1
+
     preload_keywords = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
