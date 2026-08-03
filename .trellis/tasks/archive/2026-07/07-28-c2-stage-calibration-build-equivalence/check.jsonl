@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 profiler evidence 是否可重算、角色正常退出、旧 raw 不被误计为有效 calibration。"}
+{"file":".trellis/spec/backend/local-observation-map-contract.md","reason":"确认 finding 未改变 C2 authoritative map、epoch/revision、read transaction 或 visualization 语义。"}
+{"file":".trellis/spec/backend/perception-ray-evidence-contract.md","reason":"确认不得通过降低 FullRay workload/证据能力制造扰动门通过。"}
+{"file":".trellis/tasks/07-27-c2-performance-memory-baseline/research/c1-profiling-assets.md","reason":"核对 mixed-prefix 负例、原始数值、旧 artifact 路径和必须保留的证据结论。"}

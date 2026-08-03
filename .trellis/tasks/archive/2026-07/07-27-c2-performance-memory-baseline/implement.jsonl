@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/index.md","reason":"实现前加载仓库 C++/ROS 分层、命名和测试总约定。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"复用外部 profiling 的 PID、同窗 workload、正常退出、provenance 与证据完整性合同。"}
+{"file":".trellis/spec/backend/local-observation-map-contract.md","reason":"保护 C2 epoch/revision、exact read transaction 与 visualization-only OctoMap 边界。"}
+{"file":".trellis/spec/backend/perception-ray-evidence-contract.md","reason":"冻结 FullRay no-return、free/occupied evidence 和 whole-batch validation 语义。"}
+{"file":".trellis/tasks/07-27-c2-performance-memory-baseline/research/c1-profiling-assets.md","reason":"明确 C1 runner/analyzer 可复用、需参数化和禁止复制的具体边界。"}
+{"file":".trellis/tasks/07-27-c2-performance-memory-baseline/research/c2-measurement-boundaries.md","reason":"提供 bounded/expanding workload、oracle join、阶段 latency 与验收门证据。"}
+{"file":".trellis/tasks/07-27-c2-performance-memory-baseline/research/legacy-500k-limit.md","reason":"区分旧 500k hit-point FIFO 与当前无 cap C2，并定义 capacity-ramp 防伪门。"}
