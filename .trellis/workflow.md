@@ -447,6 +447,26 @@ After this command succeeds, the breadcrumb auto-switches to `[workflow-state:in
 
 If `task.py start` errors with a session-identity message (no context key from hook input, `TRELLIS_CONTEXT_ID`, or platform-native session env), follow the hint in the error to set up session identity, then retry.
 
+#### 1.4.1 Handling Review Feedback
+
+During artifact review (before `task.py start`):
+
+**Blocking issues** (must fix before start):
+- Immediately revise planning artifacts (`prd.md`, `design.md`, `implement.md`)
+- Update acceptance criteria to include revised content
+- Document all revisions in the planning artifacts themselves
+
+**Non-blocking optimizations**:
+1. Create `REVIEW-RESPONSE.md` to record all review feedback and optimization suggestions
+2. Add optimization reminders (marked with ✨) in relevant `implement.md` phases
+3. Create `OPTIMIZATION-CHECKLIST.md` for standalone tracking of optimization completion status
+
+**Child-task inherited optimizations**:
+- Parent task review feedback targeting child tasks: record in parent's `REVIEW-RESPONSE.md` or dedicated backlog file
+- When creating child task: extract relevant suggestions from parent's review documents and reference parent's suggestion IDs in child's `prd.md` or `implement.md`
+
+This ensures review feedback is not lost and optimization suggestions are actionable during implementation.
+
 #### 1.5 Completion criteria
 
 | Condition | Required |
