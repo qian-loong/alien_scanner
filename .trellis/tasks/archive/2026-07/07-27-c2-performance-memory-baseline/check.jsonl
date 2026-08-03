@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"审核 profiler 的 PID 身份、同窗负载、退出状态、parser gate 和 raw 完整性。"}
+{"file":".trellis/spec/backend/local-observation-map-contract.md","reason":"确认 profiling 改动未破坏 authoritative C2 和 revision-locked query 语义。"}
+{"file":".trellis/spec/backend/perception-ray-evidence-contract.md","reason":"确认 workload 未通过降低 FullRay 能力或错误处理超量程来制造通过。"}
+{"file":".trellis/tasks/07-27-c2-performance-memory-baseline/research/c1-profiling-assets.md","reason":"检查共享 runner 重构保持 C1 兼容且未复制状态机。"}
+{"file":".trellis/tasks/07-27-c2-performance-memory-baseline/research/c2-measurement-boundaries.md","reason":"检查 latency、oracle/production join、plateau 和 expanding 归因没有伪验收。"}
+{"file":".trellis/tasks/07-27-c2-performance-memory-baseline/research/legacy-500k-limit.md","reason":"检查旧 accumulator 未混入正式图，且 500k crossing/not_reached 结论可复算。"}

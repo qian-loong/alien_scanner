@@ -1,0 +1,36 @@
+<launch>
+  <arg name="mode" default="bounded"/>
+  <arg name="output_directory" default="/tmp/alien-local-map-profile"/>
+  <arg name="sequence_limit" default="0"/>
+  <arg name="startup_delay_s" default="1.0"/>
+  <arg name="start_target" default="true"/>
+  <arg name="start_sink" default="true"/>
+  <arg name="target_params_file"
+       default="$(find-pkg-share perception_profiling)/config/profile_local_map.yaml"/>
+
+  <node pkg="perception_profiling"
+        exec="perception_profile_fixture"
+        name="perception_profile_fixture"
+        output="screen">
+    <param name="mode" value="$(var mode)"/>
+    <param name="sequence_limit" value="$(var sequence_limit)"/>
+    <param name="startup_delay_s" value="$(var startup_delay_s)"/>
+  </node>
+
+  <node pkg="perception_profiling"
+        exec="perception_profile_sink"
+        name="perception_profile_sink"
+        output="screen"
+        if="$(var start_sink)">
+    <param name="mode" value="$(var mode)"/>
+    <param name="output_directory" value="$(var output_directory)"/>
+  </node>
+
+  <node pkg="perception_local_map"
+        exec="perception_local_map_node"
+        name="profile_local_map"
+        output="screen"
+        if="$(var start_target)">
+    <param from="$(var target_params_file)"/>
+  </node>
+</launch>

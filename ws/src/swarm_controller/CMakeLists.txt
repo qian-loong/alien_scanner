@@ -15,7 +15,9 @@ find_package(diagnostic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(swarm_controller_interfaces REQUIRED)
+if(NOT TARGET swarm_controller_interfaces__rosidl_typesupport_cpp)
+    find_package(swarm_controller_interfaces REQUIRED)
+endif()
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -146,8 +148,13 @@ target_link_libraries(single_drone_explorer swarm_exploration)
 ament_target_dependencies(
         single_drone_explorer
         rclcpp diagnostic_msgs geometry_msgs nav_msgs octomap_msgs tf2 tf2_geometry_msgs tf2_ros
-        visualization_msgs swarm_controller_interfaces
+        visualization_msgs
 )
+if(TARGET swarm_controller_interfaces__rosidl_typesupport_cpp)
+    target_link_libraries(single_drone_explorer swarm_controller_interfaces__rosidl_typesupport_cpp)
+else()
+    ament_target_dependencies(single_drone_explorer swarm_controller_interfaces)
+endif()
 
 add_executable(global_task_allocator
         src/GlobalTaskAllocatorNode.cpp
@@ -160,8 +167,13 @@ target_link_libraries(global_task_allocator swarm_exploration)
 ament_target_dependencies(
         global_task_allocator
         rclcpp diagnostic_msgs geometry_msgs nav_msgs octomap_msgs tf2 tf2_geometry_msgs tf2_ros
-        visualization_msgs swarm_controller_interfaces
+        visualization_msgs
 )
+if(TARGET swarm_controller_interfaces__rosidl_typesupport_cpp)
+    target_link_libraries(global_task_allocator swarm_controller_interfaces__rosidl_typesupport_cpp)
+else()
+    ament_target_dependencies(global_task_allocator swarm_controller_interfaces)
+endif()
 
 add_executable(frontier_geometry_demo
         src/FrontierGeometryDemoNode.cpp

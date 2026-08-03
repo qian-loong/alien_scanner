@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 ROS 2 CMake、launch/integration test 和 fixture 契约"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对 capability 从 descriptor 到 ROS 消息及消费者的全链路一致性"}
+{"file":".trellis/tasks/07-22-c1-perception-input/research/superseded-c1-draft-merge.md","reason":"按迁移决议验证 Hit/NoReturn/Invalid 和 hit-only fail-closed 行为"}
+{"file": ".trellis/tasks/07-22-c1-perception-input/research/ray-evidence-debug-view-plan.md", "reason": "按审核后阶段 8 边界检查实现，特别禁止旧 scan_returns 运行时依赖"}
+{"file": ".trellis/spec/backend/perception-ray-evidence-contract.md", "reason": "检查未知枚举、adapter direct convert 和调试消费者均 fail closed"}
+{"file": "docs/ament-cmake-conventions.md", "reason": "检查新增目标、依赖、安装和测试接线符合 ament_cmake 约定"}
+{"file": "docs/perception-input-testing.md", "reason": "检查调试视图文档、测试数和既有性能报告未漂移"}

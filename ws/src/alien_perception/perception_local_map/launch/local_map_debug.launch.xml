@@ -1,0 +1,20 @@
+<launch>
+  <arg name="show_rviz" default="true"/>
+
+  <group scoped="true">
+    <include file="$(find-pkg-share perception_fixtures)/launch/ray_evidence_debug.launch.py">
+      <arg name="show_rviz" value="false"/>
+    </include>
+  </group>
+
+  <include file="$(find-pkg-share perception_local_map)/launch/local_map.launch.xml"/>
+
+  <node pkg="rviz2"
+        exec="rviz2"
+        name="local_map_debug_rviz"
+        output="screen"
+        args="-d $(find-pkg-share perception_local_map)/config/local_map_debug.rviz"
+        if="$(var show_rviz)">
+    <env name="LD_PRELOAD" value="liboctomap.so"/>
+  </node>
+</launch>

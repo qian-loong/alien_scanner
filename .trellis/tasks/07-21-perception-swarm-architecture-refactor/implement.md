@@ -32,7 +32,7 @@
 - [x] 确定 D-021：mapper 声明 minimum viable input/degraded 组合；满足最低契约时 Degraded 运行，不满足时停止 map revision 并触发 freshness/task 安全门。
 - [x] 确定 D-022：Degraded 按 mapper/shared-view/role-task/local-execution 分层门控，不使用一个全局健康布尔值，coordinator 不覆盖本机安全。
 - [x] 确定 D-023：定位算法保持外部；标准 Odometry/TF adapter 转为 ROS-free pose estimate，携带质量、freshness 和 reset epoch。
-- [x] 确定 D-024：pose source/session/frame/reset 不连续时 fail closed，推进新 map epoch 并 keyframe/resync；首版不原地重投影旧地图。
+- [x] 确定 D-024：pose source/session/frame/reset 不连续时 fail closed，立即关闭旧链、撤销旧 alignment、推进新 local map epoch 并清空旧地图；新 pose Ready 后本机从空图重建，shared consumption/task 与 shared-map keyframe/resync 等待新 committed alignment；首版不原地重投影旧地图。
 - [x] 确定 D-025：authoritative mapper 位于 vehicle-local compute domain，fleet G_map 从 LocalMapUpdate 开始，EdgeAggregator 不处理 raw LiDAR。
 - [x] 确定 D-026：本机规划/安全输出 MotionIntent、消费 ExecutionFeedback；具体 FakeOdom/Gazebo/autopilot 通过 adapter 接入，本轮不实现飞控。
 - [x] 确定 D-027：每 vehicle session 一个 local execution authority；coordinator 只发任务/角色，local safety 可抢占，control_authority_epoch 拒绝旧命令和反馈。
@@ -40,11 +40,11 @@
 - [x] 确定 D-029：领域 envelope 验证 identity/session/authority/sequence/credential/replay；未认证或过期消息只能诊断，不能改变控制状态；真实 PKI 下放部署子任务。
 - [x] 确定 D-030：运行状态默认 ephemeral，进程重启推进新 session/epoch 并 resync 重建；C9a 复制控制前缀，C9b 外部持久 authority term；持久化地图/日志留作扩展。
 - [x] 确定 D-031：分级仿真验收策略；C1-C8 在 Level 0（FakeLidar/FakeOdom/确定性适配器）验收，Level 1（Gazebo）可选，Level 2/3（半物理/实物）留作扩展。
-- [ ] 对 PRD 做 convergence pass，删除重复事实和已解决问题。
-- [ ] 对总体模块、数据契约、迁移顺序和子任务边界进行指定模型方案评审。
-- [ ] 根据评审修订父任务产物，并由用户确认规划基线。
-- [ ] 将稳定结论同步回 `docs/decisions/` 总览文档。
-- [ ] 按依赖只创建近期要实施的子任务，首先是 C1 感知输入与观测数据模型。
+- [x] 对 PRD 做 convergence pass，删除重复事实和已解决问题。
+- [x] 对总体模块、数据契约、迁移顺序和子任务边界进行指定模型方案评审。
+- [x] 根据评审修订父任务产物，并由用户确认规划基线。
+- [x] 将稳定结论同步回 `docs/decisions/` 总览文档。
+- [x] 按依赖只创建近期要实施的子任务，首先是 C1 感知输入与观测数据模型。
 
 父任务没有直接业务代码产出时不执行 `task.py start`；真正实施时启动拥有该交付物的子任务。
 
@@ -62,7 +62,7 @@
 
 前置：C1 逻辑 observation 契约稳定。
 
-验收门：逐 batch/origin 更新；多个 2D/3D sensor 进入同一 active mapping pipeline；每个 vehicle session 同时只有一条 authoritative local occupancy revision 链；source-local map frame；后端无关 occupied/free/unknown view；地图 revision/capability；单路/多路 sensor 掉线时 Healthy/Degraded/Unavailable 转换正确，Unavailable 不产生伪 freshness；pose stale/frame 错误/quality 降级/时间回退可确定性门控地图；pose source/session/frame/reset 不连续会关闭旧链并建立新 map epoch，旧体素不被新观测污染；恢复后重新通过健康门；OctoMap 与轻量替代 fixture 通过同一 replay/conformance suite；当前 deterministic fixture 和本机安全回归；无实时 shadow mapper 或并行权威地图。
+验收门：逐 batch/origin 更新；多个 2D/3D sensor 进入同一 active mapping pipeline；每个 vehicle session 同时只有一条 authoritative local occupancy revision 链；source-local map frame；后端无关 occupied/free/unknown view；地图 revision/capability；单路/多路 sensor 掉线时 Healthy/Degraded/Unavailable 转换正确，Unavailable 不产生伪 freshness；pose stale/frame 错误/quality 降级/时间回退可确定性门控地图；pose source/session/frame/reset 不连续会立即关闭旧链、撤销旧 alignment、推进新 map epoch 并清空旧地图，旧体素不被新观测污染；新 pose Ready 后本机从空图重建且不等待 alignment；恢复后重新通过健康门；OctoMap 与轻量替代 fixture 通过同一 replay/conformance suite；当前 deterministic fixture 和本机安全回归；无实时 shadow mapper 或并行权威地图。
 
 回滚点：可切回旧 `scan_returns` builder 对照，不让新旧路径同时写同一地图实例。
 
@@ -70,7 +70,7 @@
 
 前置：C2 本机地图状态稳定。
 
-验收门：后端无关 full/keyframe/delta/summary；epoch/base/new revision；每个 update 引用 pose/map/alignment epoch/revision；added/removed/flipped 或等价 dirty region；乱序/重复/断裂；pose reset 和 alignment 变化使旧贡献失效并触发 keyframe 重建；Frozen/Removed contributor 的原子 revision；source-level OctoMap replay 经 identity/static adapter 等价重建。
+验收门：后端无关 full/keyframe/delta/summary；epoch/base/new revision；source-local update 在无 alignment 时仍可生成；进入 shared view 的 update 必须引用准确的 pose/map/alignment epoch/revision；added/removed/flipped 或等价 dirty region；canonical ordering/serialization 与版本化 content hash；乱序/重复/断裂；pose reset 和 alignment 变化使旧共享贡献失效，并在新 committed alignment 后通过 keyframe/resync 重建；Frozen/Removed contributor 的原子 revision；source-level OctoMap replay 经 identity/static adapter 等价重建。地图共享端到端与 RViz 效果按 `C3-TODO-1` 留待 C3/C8 验证，不阻塞 C2。
 
 回滚点：完整 keyframe 始终可恢复；delta 协议失败不能污染最后合法状态。
 
@@ -155,7 +155,7 @@
 | 输入能力降级 | mapper 声明 minimum/degraded 输入契约；单路失效可 Degraded，低于最低能力则停止 revision、地图过期并触发任务安全门，恢复需重新验收 |
 | 分层健康门 | mapper、shared view、role/task 与 local execution 对同一 Degraded fixture 独立给出可追溯结果；中央状态不覆盖本机安全拒绝 |
 | 位姿输入 | FakeOdom 与标准 Odometry/TF fixture 进入同一 ROS-free pose estimate；source/session、quality/freshness、frame 和 reset 语义可回放并正确门控地图/任务/安全 |
-| Pose reset | source session/frame/reset 变化关闭旧 map chain、推进新 epoch 并完成 keyframe/resync；旧 contribution 不接受新观测，首版无隐式重投影 |
+| Pose reset | source session/frame/reset 变化立即关闭旧 map chain、撤销旧 alignment、推进新 local epoch 并清图；新 pose Ready 即可本机重建，shared consumption/task 仅在新 committed alignment 与 shared-map keyframe/resync 后恢复；旧 contribution 不接受新观测，首版无隐式重投影 |
 | Mapper 部署 | authoritative mapper 在 vehicle-local domain；断开 fleet 链路仍可更新本机地图，G_map 从 LocalMapUpdate 开始且 Relay/Aggregator 不依赖 raw LiDAR |
 | 飞控边界 | MotionIntent/ExecutionFeedback 与具体控制协议隔离；FakeOdom adapter 覆盖接受、执行、Hold/Cancel、停止、到达、拒绝、超时和失败，旧反馈不可复活命令 |
 | 控制权威 | 单一 local authority、control epoch、TTL、抢占和停止确认可回放；coordinator/Relay 无 actuator authority，旧命令与反馈不可复活 |

@@ -1,0 +1,20 @@
+{"file":".trellis/spec/backend/index.md","reason":"进入 backend 规范入口并加载本任务适用的 C++/ROS 约束"}
+{"file":".trellis/spec/backend/perception-ray-evidence-contract.md","reason":"实现 HitOnly/HitRay/FullRay occupancy 消费时保持 C1 证据上限与 fail-closed 规则"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"遵循 ROS 2 CMake、launch_testing、pose/session 和 Release 验证约束"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核对 ROS message、节点转换、ROS-free engine、backend 与消费者的数据全链路"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用 C1 类型和旧 builder oracle，避免复制枚举、分类和 fixture 常量"}
+{"file":".trellis/tasks/07-27-c2-local-observation-map/research/c2-current-map-baseline.md","reason":"了解旧 scan_returns/OctoMap 路径、C1 可复用契约、缺口和迁移边界"}
+{"file":"ws/src/cave_world/include/cave_world/ICaveField.hpp","reason":"复用 ROS-free 洞穴 raycast 边界生成标准 LaserScan，禁止把真值点云注入 mapper"}
+{"file":"ws/src/cave_world/include/cave_world/TreeCaveField.hpp","reason":"锁定 tree seed/base-radius 真值配置与确定性场景 oracle"}
+{"file":"ws/src/drone_scanner/include/drone_scanner/FakeLidar.hpp","reason":"复用既有 YZ 垂直环和 hit/no-return 返回类型，不复制射线算法"}
+{"file":"ws/src/drone_scanner/src/FakeLidar.cpp","reason":"核对 360 束方向、原生 index 顺序、量程和确定性噪声语义"}
+{"file":"ws/src/drone_scanner/include/drone_scanner/LineTrajectory.hpp","reason":"复用固定姿态直线轨迹并冻结 10 m/20 s 场景边界"}
+{"file":"ws/src/drone_scanner/src/FakeOdomNode.cpp","reason":"保持 odometry stamp、轨迹结束零速度和高度自适应关闭行为"}
+{"file":"ws/src/drone_scanner/launch/drone_sensing_stack.launch.py","reason":"沿用既有 cave/trajectory 参数命名并隔离 scan accumulator 与 legacy 输出"}
+{"file":"ws/src/alien_perception/perception_input_node/src/PerceptionInputNode.cpp","reason":"让标准 LaserScan、Odometry 和同一 FullRay contract 经 C1 权威适配链传播"}
+{"file":"ws/src/alien_perception/perception_local_map/src/PerceptionLocalMapNode.cpp","reason":"保持 C2 descriptor/contract、TF 外参、revision 和 freshness 消费边界"}
+{"file":"ws/src/alien_perception/perception_core/include/perception_core/observation/sensor_descriptor.hpp","reason":"按真实字段核对 mounting position/orientation、FOV、range 与 ray evidence 的 descriptor 语义"}
+{"file":"ws/src/alien_perception/perception_core/src/health/MapperContractFingerprint.cpp","reason":"锁定 canonical fingerprint 实际覆盖字段，避免把 topic、scene timing 或 TF sample 误写入契约"}
+{"file":"ws/src/alien_perception/perception_adapters/src/laser_scan_adapter.cpp","reason":"按真实 adapter 边界冻结 LaserScan 角度、量程、数组和 FullRay 分类契约"}
+{"file":"ws/src/alien_perception/perception_local_map/include/perception_local_map/SensorExtrinsicRegistry.hpp","reason":"实现时保持 descriptor 期望 mounting metadata 与运行时 TF sample 的职责分离"}
+{"file":"ws/src/alien_perception/perception_local_map/src/SensorExtrinsicRegistry.cpp","reason":"核对 acquisition-stamp TF sample 的首次冻结、容差、frame/session 与 drift 拒绝行为"}

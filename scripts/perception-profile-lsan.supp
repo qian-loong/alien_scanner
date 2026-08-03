@@ -1,0 +1,2 @@
+# The launch_testing host is Python; target ROS nodes are separate C++ processes.
+leak:python3.12

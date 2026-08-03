@@ -162,23 +162,41 @@ ROS adapter 使用 `nav_msgs/msg/Odometry` 和对应 TF，但算法库只消费 
 
 `Accepted(D-023)`：定位/状态估计算法是本轮外部可替换数据源。FakeOdom、Gazebo odometry 和未来真实 VIO/LIO/SLAM estimator 通过同一 pose adapter 接入；C1-C8 不实现 estimator、IMU/相机融合或回环算法。adapter 必须显式处理 stale、frame 不一致、covariance/quality 降级、时间回退和 pose reset，并把状态提供给 mapper、alignment、task 和 local-execution gate。
 
-`Accepted(D-024)`：pose source session、parent/child frame 或 reset epoch 改变时采用 fail-closed map epoch 切换。mapper 停止旧 authoritative revision chain，相关任务进入 Hold/撤销；旧 local/shared contribution 保留旧 pose/alignment epoch 并按 Frozen/Removed 管理。新 pose source 重新 Ready、所需 alignment 提交后，建立新的 local map source epoch，从空状态或合法新 keyframe 重建，再完成 shared-map/task resync。首版不对旧 occupancy map 做原地重投影；未来若 estimator 能证明跨重启连续性，需要独立 continuity protocol 和验收。
+`Accepted(D-024)`：pose source session、parent/child frame 或 reset epoch 改变时采用 fail-closed map epoch 切换。mapper 立即停止旧 authoritative revision chain、撤销绑定旧 epoch 的 alignment、推进新的 local map source epoch 并清空旧地图，相关任务进入 Hold/撤销；旧 local/shared contribution 保留旧 pose/alignment epoch 并按 Frozen/Removed 管理。新 pose source 重新 Ready 后，本机 mapper 即可从空状态重建新 local map，不等待 alignment；只有 shared-frame contribution/consumer、shared-map keyframe/resync 与相关任务恢复必须等待属于新 map epoch 的 committed alignment。首版不对旧 occupancy map 做原地重投影；未来若 estimator 能证明跨重启连续性，需要独立 continuity protocol 和验收。
 
 ### 5.3 `LocalMapState` / `LocalMapUpdate`
 
-最少包含：
+两者共享 source/session、epoch/revision 和 geometry identity，但职责分开：
 
 ```text
-source_id / source_session_epoch
-base_revision / new_revision
-origin_stamp / commit_stamp
-map geometry and resolution
-changed keys or tile bounds
-content hash
-update kind: full / keyframe / delta / summary
+LocalMapState (C2 state metadata):
+  source / vehicle session identity
+  source-local map frame
+  map geometry / resolution / canonical lattice / current known bounds
+  current map epoch / monotonic revision
+  current effective ray / backend capabilities
+  health / event-driven freshness
+  last valid observation origin metadata / local commit time
+
+OccupancyMapView + mapper lifecycle (C2 in-process contract):
+  revision-locked occupied / free / unknown and deterministic bounded-region queries
+  clear and start a new map epoch
+
+LocalMapUpdate (C3):
+  source / vehicle session identity / map epoch
+  base_revision / new_revision
+  update kind: full / keyframe / delta / summary
+  changed keys / dirty or tile bounds
+  canonical ordering / serialization
+  content hash / hash scope / hash version
+  atomic apply result
 ```
 
-`delta` 必须能检测 base revision 断裂并触发 keyframe；不能在接收端静默套用到错误基线。
+C2 state 不是地图内容消息；map geometry/resolution 与 canonical lattice 由 C2
+定义，C3 只在 update 中携带并校验对应描述或 fingerprint。C3 必须针对一个已锁定的
+C2 revision 生成 update 和 content hash。source-local update 可以在 alignment 不可用时
+生成；只有进入 shared view 时才绑定并校验准确的 alignment epoch/revision。`delta`
+必须能检测 base revision 断裂并触发 keyframe/resync，不能在接收端静默套用到错误基线。
 
 `Accepted(D-020)`：每个 `vehicle_session_id` 只运行一个 active mapping pipeline，并产生唯一 authoritative local occupancy source/revision chain。多个 2D/3D sensor 作为独立 observation batch 输入该 pipeline；同步、融合或独立逐批更新是 mapper 实现策略，不改变地图权威性。替代 mapper 按 D-000 在启动时选择，通过 observation replay 和同一 conformance suite 比较；首版不运行实时 shadow mapper，也不允许多个 mapper 同时向本机安全、shared view、Frontier 或任务分配提供权威地图。更换 active mapper 建立新 vehicle session 并完成 map resync。
 
@@ -326,20 +344,37 @@ Explorer 1 --+                    Relay 1 --+
 
 `Accepted(D-008)`：公共地图层定义后端无关的 occupancy 语义，OctoMap 是默认参考实现而不是公共容器契约。逻辑算法面向 `OccupancyMapView`/`OccupancyMapUpdate` 概念工作；类型名为候选名，C2/C3 子任务再固定 C++ API。
 
-最低语义包括：
+`LocalMapState` + `OccupancyMapView` + mapper lifecycle（C2）的最低语义包括：
 
 ```text
-map frame and geometry/resolution
+source-local map frame and geometry/resolution
+canonical lattice and out-of-range semantics
 occupied / free / unknown query
-bounded iteration or region query capabilities
-source/session epoch and revision
-full/keyframe/delta/summary update kind
-added/removed/flipped cells or equivalent dirty region
-content hash and atomic apply result
-capabilities: ray integration / hierarchy / dirty-region / serialization
+deterministic bounded-region query
+source/session identity, map epoch and current revision
+health, event-driven freshness and last valid origin/commit metadata
+actual ray/backend capabilities
+clear and start a new map epoch
 ```
 
-规范不要求所有后端复制成同一容器。OctoMap adapter 负责 `octomap::OcTree`、`octomap_msgs/Octomap`、RViz 和 Phase 3 replay 转换；替代 occupancy 后端通过同一 view/update 与 conformance suite 接入。TSDF、mesh、语义图和动态物体不是首版统一世界模型，未来需要时作为新的能力视图或上层模块设计。
+`LocalMapUpdate`（C3）的最低语义包括：
+
+```text
+source/session identity and map epoch
+base/new revision and full/keyframe/delta/summary kind
+added/removed/flipped cells or equivalent dirty region
+canonical ordering/serialization and versioned content hash
+atomic apply result, gap detection and keyframe/resync
+alignment epoch/revision binding when consumed in shared view
+```
+
+其中 state 只携带元数据，query 属于只读 view，clear/new epoch 属于 mapper lifecycle，
+不能把后两者误写成 ROS state message 字段。geometry/resolution 与 canonical lattice
+由 C2 定义，C3 只携带并校验；source-local update 的生成不依赖 alignment，shared-view
+消费才要求 committed alignment。规范不要求所有后端复制成同一容器。OctoMap adapter
+负责 `octomap::OcTree`、`octomap_msgs/Octomap`、RViz 和 Phase 3 replay 转换；替代
+occupancy 后端通过同一 view/update 与 conformance suite 接入。TSDF、mesh、语义图和
+动态物体不是首版统一世界模型，未来需要时作为新的能力视图或上层模块设计。
 
 `Accepted(D-009)`：EdgeAggregator 对中央表现为一个 aggregate source，但输出必须携带与 aggregate revision 原子一致的 contributor manifest。Aggregator 内部继续维护 contributor 级 contribution/snapshot，使单个 Explorer 的删除、epoch 切换和重新加入可以产生正确 aggregate delta。
 

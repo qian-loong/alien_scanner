@@ -1,0 +1,20 @@
+{"file":".trellis/spec/backend/index.md","reason":"从 backend 规范入口执行最终 package/layer 质量检查"}
+{"file":".trellis/spec/backend/perception-ray-evidence-contract.md","reason":"审核 mapper 是否严格遵守射线证据等级、未知值拒绝和 Cloud3D HitOnly 边界"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"审核 CMake export、launch test、session/reset、QoS 和 Release 测试证据"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"审核 observation/pose/health 到 map state/OctoMap 的跨层字段与失败传播"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查是否重复实现 C1 capability、return classification 或 fixture 常量"}
+{"file":".trellis/tasks/07-27-c2-local-observation-map/research/c2-current-map-baseline.md","reason":"以旧链证据核对迁移隔离、行为 oracle 和禁止 scan_returns 的要求"}
+{"file":"ws/src/cave_world/include/cave_world/ICaveField.hpp","reason":"审核场景只复用 ROS-free raycast，洞穴真值不会进入 C1/C2 输入"}
+{"file":"ws/src/cave_world/include/cave_world/TreeCaveField.hpp","reason":"审核 seed/radius 与自动 oracle 使用同一确定性 TreeCaveField 配置"}
+{"file":"ws/src/drone_scanner/include/drone_scanner/FakeLidar.hpp","reason":"审核 CaveLaserScanNode 复用既有垂直环职责且仍保持薄节点"}
+{"file":"ws/src/drone_scanner/src/FakeLidar.cpp","reason":"复核束方向/index remap、hit 与 no-return 语义没有漂移"}
+{"file":"ws/src/drone_scanner/include/drone_scanner/LineTrajectory.hpp","reason":"审核冻结直线轨迹的固定姿态、速度、距离和持续时间"}
+{"file":"ws/src/drone_scanner/src/FakeOdomNode.cpp","reason":"审核 scan/pose stamp 配对及轨迹结束后停止扫描的触发证据"}
+{"file":"ws/src/drone_scanner/launch/drone_sensing_stack.launch.py","reason":"检查新独立 scene 没有恢复 accumulator、cloud_map 或 legacy scan_returns 链"}
+{"file":"ws/src/alien_perception/perception_input_node/src/PerceptionInputNode.cpp","reason":"审核 C1 LaserScan FullRay adapter、pose clock domain 与 canonical fingerprint"}
+{"file":"ws/src/alien_perception/perception_local_map/src/PerceptionLocalMapNode.cpp","reason":"审核 C2 contract/外参一致性、多 revision、known bounds 和无伪 freshness"}
+{"file":"ws/src/alien_perception/perception_core/include/perception_core/observation/sensor_descriptor.hpp","reason":"审核 mounting position/orientation、FOV、range 和 ray evidence 是否按真实 descriptor 字段配置"}
+{"file":"ws/src/alien_perception/perception_core/src/health/MapperContractFingerprint.cpp","reason":"审核 C1/C2 fingerprint 覆盖范围是否与 canonical 实现一致且未混入 scene/TF runtime 字段"}
+{"file":"ws/src/alien_perception/perception_adapters/src/laser_scan_adapter.cpp","reason":"审核标准 LaserScan 的角度、量程、数组和 hit/no-return 是否通过既有完整校验"}
+{"file":"ws/src/alien_perception/perception_local_map/include/perception_local_map/SensorExtrinsicRegistry.hpp","reason":"审核 descriptor 期望 mounting metadata 与实际 TF sample 的 API 边界"}
+{"file":"ws/src/alien_perception/perception_local_map/src/SensorExtrinsicRegistry.cpp","reason":"审核 acquisition-stamp TF sample 的冻结、容差和 drift/session fail-closed 行为"}

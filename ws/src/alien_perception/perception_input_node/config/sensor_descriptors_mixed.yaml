@@ -1,0 +1,36 @@
+perception_input_node:
+  ros__parameters:
+    sensor_ids: [front, rear, top]
+    requires_pose: false
+    minimum_lidar_type: "3d"
+    minimum_lidar_count: 1
+    minimum_lidar_ray_evidence: "hit_only"
+    degraded_lidar_type: "2d"
+    degraded_lidar_count: 1
+    degraded_lidar_ray_evidence: "full_ray"
+    recovery_stability_samples: 3
+    "sensor.front.type": "2d"
+    "sensor.front.frame_id": "fixture_scan_link"
+    "sensor.front.topic": "fixture/scan/front"
+    "sensor.front.ray_evidence": "full_ray"
+    "sensor.front.fov_horizontal_min_rad": -1.5707963267948966
+    "sensor.front.fov_horizontal_max_rad": 1.5707963267948966
+    "sensor.front.range_min_m": 0.1
+    "sensor.front.range_max_m": 30.0
+    "sensor.front.angular_resolution_rad": 0.017453292519943295
+    "sensor.rear.type": "2d"
+    "sensor.rear.frame_id": "fixture_scan_link"
+    "sensor.rear.topic": "fixture/scan/rear"
+    "sensor.rear.ray_evidence": "full_ray"
+    "sensor.rear.fov_horizontal_min_rad": -1.5707963267948966
+    "sensor.rear.fov_horizontal_max_rad": 1.5707963267948966
+    "sensor.rear.range_min_m": 0.1
+    "sensor.rear.range_max_m": 30.0
+    "sensor.rear.angular_resolution_rad": 0.017453292519943295
+    "sensor.top.type": "3d"
+    "sensor.top.frame_id": "fixture_lidar_link"
+    "sensor.top.topic": "fixture/points"
+    "sensor.top.ray_evidence": "hit_only"
+    "sensor.top.range_min_m": 0.2
+    "sensor.top.range_max_m": 50.0
+    "sensor.top.angular_resolution_rad": 0.02

@@ -1,0 +1,10 @@
+<launch>
+  <arg name="params_file"
+       default="$(find-pkg-share perception_local_map)/config/local_map_debug.yaml"/>
+  <node pkg="perception_local_map"
+        exec="perception_local_map_node"
+        name="perception_local_map_node"
+        output="screen">
+    <param from="$(var params_file)"/>
+  </node>
+</launch>

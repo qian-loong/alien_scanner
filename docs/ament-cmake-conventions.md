@@ -99,6 +99,60 @@ target_link_libraries(fake_lidar drone_lidar cave_world::cave_geometry)
 
 **不要**使用 `${cave_world_LIBRARIES}` 等旧式变量（除非依赖的第三方包尚未 export target）。
 
+### 4.4 根 CMake superbuild 的构建树别名
+
+如果同一个仓库的根 CMake 通过 `add_subdirectory` 同时加载依赖包和消费包，
+对外库必须让构建树别名与安装导出 target 同名：
+
+```cmake
+add_library(perception_core ...)
+add_library(perception_core::perception_core ALIAS perception_core)
+```
+
+消费包先检查本地 target；只有独立 colcon 构建没有该 target 时才调用
+`find_package`：
+
+```cmake
+if(NOT TARGET perception_core::perception_core)
+  find_package(perception_core REQUIRED)
+endif()
+target_link_libraries(perception_adapters PUBLIC perception_core::perception_core)
+```
+
+这样 `BUILD_INTERFACE` 会沿 target usage requirements 传播源码 include 目录，
+不需要显式拼接 `${perception_core_INCLUDE_DIRS}`。ROSIDL 接口包同理：根
+superbuild 中优先链接本地 `<pkg>__rosidl_typesupport_cpp`，独立包构建才消费
+安装 target。
+
+### 4.5 公共头文件的 target 归属（CMake 3.8 兼容）
+
+公共头文件必须显式属于其实现库，避免 CLion 只能通过 include 图猜测 header
+context。保持当前最低 CMake 版本时，在 `add_library()` 后使用
+`target_sources(... PRIVATE ...)`：
+
+```cmake
+set(cave_geometry_header_files
+  include/cave_world/ICaveField.hpp
+  include/cave_world/ProceduralCaveField.hpp
+)
+
+add_library(cave_geometry
+  src/ProceduralCaveField.cpp
+)
+target_sources(cave_geometry
+  PRIVATE
+  ${cave_geometry_header_files}
+)
+```
+
+这里的 `PRIVATE` 只表示不把源码路径传播为 downstream 的
+`INTERFACE_SOURCES`，不表示这些头文件是私有 API。公共 include 契约仍由
+`target_include_directories(... PUBLIC ...)`、`install(DIRECTORY include/ ...)`
+和 `ament_export_*` 表达。
+
+不要用 `file(GLOB_RECURSE ...)` 收集 C++ 头文件，也不要创建只为 IDE 展示的
+`add_custom_target(... SOURCES ...)`；两者都不能稳定表达真实库的文件所有权。
+
 ---
 
 ## 5. 新建包 Checklist
@@ -136,6 +190,8 @@ ws/src/<pkg>/
 | `ament_export_libraries` 导 STATIC 库 | import 路径易错 |
 | `ament_export_*` 写在 function 内 | package hook 不注册 |
 | install 目录残留旧 `.so` + 新 `.a` | 链接到无符号的旧 so；用 `ament_export_targets` |
+| 公共头文件不属于任何真实 target | CLion 只能猜测 header context，直接打开时跳转可能失效 |
+| 用 glob/custom target 维护公共头文件 | 文件所有权不明确，或归入错误的 IDE target |
 
 ---
 

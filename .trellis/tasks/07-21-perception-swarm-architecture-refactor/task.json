@@ -3,7 +3,7 @@
   "name": "perception-swarm-architecture-refactor",
   "title": "下一阶段感知与多机协作架构重构",
   "description": "梳理下一阶段感知、本机地图、通信数据面、拓扑角色、多机协作、执行安全与诊断回放的总体架构；当前仅进行 Phase 1 规划。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -18,7 +18,13 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "07-22-c1-perception-input",
+    "07-27-c2-local-observation-map",
+    "07-27-c2-performance-memory-baseline",
+    "07-29-octomap-backend-o1-known-bounds",
+    "08-01-c1-c2-perception-perf-memory-retest"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",
