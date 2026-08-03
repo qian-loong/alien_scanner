@@ -1,0 +1,3 @@
+{"file": "docs/performance-memory-testing-cookbook.md", "reason": "现行测量方法论：路线划分、指标->方法映射、周期回放拼接配方(§4a)、两级有效性门(§5)、环境分辨率约束(§6)、表述纪律(§7)"}
+{"file": "docs/local-map-resource-profiling.md", "reason": "上轮 C2 基线（历史参考，不作本轮证据）：sanitizer 结论的合成路径边界、Memcheck 吞吐阻塞教训、退出期残留归因方法"}
+{"file": "docs/perception-resource-profiling.md", "reason": "上轮 C1 剖析（历史参考，不作本轮证据）：ASan/LSan 构建与验证方式、LSan 抑制文件用法"}

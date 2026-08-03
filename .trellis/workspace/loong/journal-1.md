@@ -151,3 +151,63 @@ Implemented and verified the authoritative vehicle-local occupancy map, continuo
 ### Next Steps
 
 - None - task complete
+
+## Session 5: C1/C2 real-chain performance and memory retest (v3 executed end to end)
+
+**Date**: 2026-08-03
+**Task**: 08-01-c1-c2-perception-perf-memory-retest
+**Branch**: `phase/4-perception-swarm-refactor`
+
+### Summary
+
+Trimmed the over-scoped retest plan to v3, then executed all measurement steps
+with fresh acquisition: 3 scene-record rounds, replay-isolated baselines with
+C2 stage decomposition, full sanitizer path coverage with a positive control,
+and 30-minute cycle-replay leak runs for both product nodes. Report:
+docs/perception-real-chain-retest.md.
+
+### Main Changes
+
+- Rewrote task artifacts (prd/design/implement) to v3: two-tier gates,
+  sanitizer-as-path-coverage, stamp-shifted concat replay, 5 ACs.
+- Upgraded cookbook: sanitizer hard rules, periodic-replay recipe (4a),
+  two-tier validity gates, environment-vs-metric clarification.
+- Productized scripts/restamp-concat-bag.py (--trim-s, QoS carry-over).
+- Extended scripts/profile-graph.sh: replay --topics selection, replay-out
+  recorder + count equivalence for C1, terminal-state skip, cycle gates for
+  replay-loop, targeted ASan helper preload.
+- Calibrated reconcile-graph-bags.py trailing allowance (1 -> 5, recovery
+  stability gate consumes 0-3 startup frames).
+
+### Key Results
+
+- No business leaks on real paths: ASan/LSan zero reports (4 runs), positive
+  control CAUGHT, Memcheck zero access errors with all loss in glibc dl-open.
+- 30-min cycle runs: trough slope C2 +38.3 / C1 +32.0 KiB/min = 3.7%/3.1% of
+  threshold; drift attributed via Heaptrack (F1: OcTree instances retained
+  per epoch, Fast DDS pools).
+- CPU ranking (contended scene): scanner 3.9% > C2 1.9% > C1 1.0%; system
+  total PSS ~80 MB (6 nodes); C2 callback p99 2.60 ms (~2.6% of budget).
+- F2 lesson: pose_timeout_s is a contract-fingerprint member - slowed replay
+  must scale only arrival-clock watchdogs, never contract members.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| (pending) | this session's commit |
+
+### Testing
+
+- [OK] All measurement runs valid=true with blocking gates passed
+- [OK] Positive control caught planted 4096 B leak (exit 23)
+- [OK] bash -n on modified runners; tool validated on 3-copy trim bag
+
+### Status
+
+[OK] **Completed** (commit pending)
+
+### Next Steps
+
+- Follow-up finding F1: review epoch-retirement release path for OcTree/
+  snapshot retention (~35 KiB/min drift, 27x below threshold)

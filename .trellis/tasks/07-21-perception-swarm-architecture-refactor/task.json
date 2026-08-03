@@ -22,7 +22,8 @@
     "07-22-c1-perception-input",
     "07-27-c2-local-observation-map",
     "07-27-c2-performance-memory-baseline",
-    "07-29-octomap-backend-o1-known-bounds"
+    "07-29-octomap-backend-o1-known-bounds",
+    "08-01-c1-c2-perception-perf-memory-retest"
   ],
   "parent": null,
   "relatedFiles": [],
