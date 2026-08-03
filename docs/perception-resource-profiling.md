@@ -6,8 +6,15 @@
 
 ## 结论
 
-- 固定 mixed workload 下，目标单核 CPU 均值约 `0.64%`，三轮 P95 为
-  `2%/1%/1%`；`perf stat` 的 600 秒 task-clock 换算为 `0.608%`。
+> **指标可信度前提（2026-07-31 补注）**：本报告的 CPU 与延迟绝对值来自
+> WSL2/LinuxKit 环境，实测存在约 **±30%** 的宿主争用污染（相同工作量的 CPU
+> 时间可波动 30%），因此下列 CPU 百分比**不应按三位有效数字理解**。判定依据与
+> 指标三分类见 `docs/performance-memory-testing-cookbook.md` §6。
+> **本报告的结论不受影响**：CPU 余量结论建立在约 150 倍的量级差上，远超污染幅度；
+> 内存（RSS/PSS/USS）、斜率、泄漏与功能计数属于载荷无关指标，完全可信。
+
+- 固定 mixed workload 下，目标单核 CPU 均值约 `0.64%`（±30%），三轮 P95 为
+  `2%/1%/1%`；`perf stat` 的 600 秒 task-clock 换算为约 `0.6%`。
 - 三轮稳态 RSS 约 `32.26-32.45 MiB`，PSS 约 `12.94-13.18 MiB`，USS 约
   `10.70-11.11 MiB`，均低于 C1 的 `100 MiB` 参考线。
 - 三轮 RSS 回归斜率为 `0/8.18/-4.08 KiB/min`；PSS 为
@@ -113,6 +120,13 @@ profiler 和 sampler 均等待 `exec` 身份与独立 PGID 稳定并记录 `/pro
 
 perf 以冻结的 15 个目标 TID attach，control FIFO 的 enable/disable ACK 均成功。
 硬件事件不可用是当前 LinuxKit 限制，不能据此计算 IPC 或 cache miss rate。
+
+> **2026-07-31 补注**：该限制已确认为**结构性**——
+> `/sys/bus/event_source/devices/` 无 `cpu` PMU（仅
+> `breakpoint/kprobe/msr/power/software/tracepoint/uprobe`），root 亦不可得，
+> 与 `perf_event_paranoid` 无关。**不要再尝试采集或分析硬件事件**。
+> 上表 `task-clock` 与"单核 CPU 占用"同属 CPU 时间指标，带约 ±30% 的
+> 争用污染。详见 `docs/performance-memory-testing-cookbook.md` §6。
 
 ### perf record
 

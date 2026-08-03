@@ -21,6 +21,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 | [Perception Ray Evidence Contract](./perception-ray-evidence-contract.md) | LiDAR hit/free-ray capability, validation, and cross-layer propagation | Active |
 | [Local Observation Map Contract](./local-observation-map-contract.md) | C2 pose/health gates, epoch/revision semantics, and revision-locked reads | Active |
+| [Performance Measurement Boundaries](./performance-measurement-boundaries.md) | 本机（WSL2/LinuxKit）可测与不可测的性能指标、分辨率下限与措辞纪律 | Active |
 
 ---
 

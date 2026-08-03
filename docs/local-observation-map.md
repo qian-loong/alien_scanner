@@ -21,6 +21,24 @@ deterministic voxel backend 只用于同一套 conformance 测试。
   alignment、推进 map epoch，并从空图恢复。旧 lineage replay 不重复清图。
 - fleet、alignment Ready 和 shared/global map 不参与本机地图启动或 health。
 
+### 已测得的容量与性能边界
+
+以下为 2026-07-31 冻结基线的实测值，完整报告见
+[`docs/local-map-resource-profiling.md`](local-map-resource-profiling.md)。
+
+- **10 Hz 可持续容量上限约 2.6M known cells**（约 340 MiB RSS）。超过后回调耗时
+  超出 100 ms 周期预算，节点开始掉队并出现 bounds 前沿滞后。
+  该值为**本机（WSL2/LinuxKit，被争用宿主）观测值**，是保守下界——无争用环境下
+  拐点只会更靠后，**不构成绝对容量承诺**。
+- **每新增 known 体素约 121–126 B**（RSS/PSS/heap 三路交叉验证，离散约 1%）。
+  据此可估算目标规模下的内存需求。
+- 回调耗时随地图规模增长，**主导项为 snapshot 序列化**：230 520 cells 时
+  callback p50 11.9 ms；1 812 520 cells 时 p50 51.2 ms、p99 93.0 ms。
+- bounded 稳态无内存增长（三轮斜率约 0），退出期固定残留 455.54 K 与地图规模无关。
+
+容量拐点的机制已定位（回调预算被 snapshot 序列化吃满），但标度关系与优化方向
+**未完成且当前无人跟进**——相关 finding 已于 2026-07-31 关闭。详见基线报告 §8。
+
 ## ROS 接口
 
 输入：
