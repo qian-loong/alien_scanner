@@ -1,5 +1,9 @@
 #include "perception_local_map/LocalObservationMapper.hpp"
 
+#ifdef PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS
+#include "StageLatencyInstrumentation.hpp"
+#endif
+
 #include <Eigen/Geometry>
 
 #include <algorithm>
@@ -1062,6 +1066,9 @@ namespace PerceptionLocalMap {
             const SensorExtrinsicSample & extrinsic,
             std::int64_t receive_monotonic_ns)
     {
+#ifdef PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS
+        StageLatency::StageScope stage_latency_scope(StageLatency::Stage::MapperApply);
+#endif
         if(receive_monotonic_ns < 0 || !valid_session(observation.session_id)) {
             return {InputStatus::Rejected, std::nullopt, "invalid observation receive/session"};
         }
@@ -1284,6 +1291,10 @@ namespace PerceptionLocalMap {
     AcquireResult LocalObservationMapper::acquire_read_transaction(
             const CommitReceipt & receipt)
     {
+#ifdef PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS
+        StageLatency::StageScope stage_latency_scope(
+                StageLatency::Stage::ReadTransaction, receipt.revision);
+#endif
         std::shared_lock<std::shared_mutex> lock(impl_->storage->mutex);
         if(receipt.mapper_session != impl_->identity.mapper_session
            || receipt.map_epoch != impl_->identity.map_epoch

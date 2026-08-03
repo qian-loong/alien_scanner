@@ -1,0 +1,8 @@
+<launch>
+  <group scoped="true">
+    <include file="$(find-pkg-share perception_local_map)/launch/cave_full_ray_scene.launch.py">
+      <arg name="show_rviz" value="false"/>
+      <arg name="scanner_startup_delay_s" value="2.0"/>
+    </include>
+  </group>
+</launch>

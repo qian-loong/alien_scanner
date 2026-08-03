@@ -9,6 +9,7 @@ RUN set -eux; \
         gdb \
         babeltrace2 \
         heaptrack \
+        liblttng-ust-dev \
         linux-tools-common \
         linux-tools-generic \
         smem \

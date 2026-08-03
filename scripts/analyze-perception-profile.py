@@ -3,109 +3,23 @@
 import argparse
 import json
 import math
-import re
 import statistics
+import sys
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
-def parse_manifest(path: Path) -> dict[str, str]:
-    values = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if "=" in line:
-            key, value = line.split("=", 1)
-            values[key] = value
-    return values
-
-
-def slope_kib_per_minute(points: list[tuple[int, int]]) -> float:
-    origin_ns = points[0][0]
-    times_s = [(timestamp - origin_ns) / 1_000_000_000 for timestamp, _ in points]
-    values_kib = [value for _, value in points]
-    mean_time = statistics.fmean(times_s)
-    mean_value = statistics.fmean(values_kib)
-    denominator = sum((value - mean_time) ** 2 for value in times_s)
-    if denominator == 0:
-        return 0.0
-    numerator = sum(
-        (time_s - mean_time) * (value - mean_value)
-        for time_s, value in zip(times_s, values_kib)
-    )
-    return numerator / denominator * 60.0
-
-
-def percentile_nearest_rank(values: list[float], percentile: float) -> float:
-    ordered = sorted(values)
-    index = max(0, math.ceil(percentile * len(ordered)) - 1)
-    return ordered[index]
-
-
-def parse_memory_samples(
-    run_dir: Path, manifest: dict[str, str], duration_s: float
-) -> list[dict[str, int]]:
-    tracee_pid = manifest["tracee_pid"]
-    steady_start_ns = int(manifest["t0_monotonic_ns"]) + 60_000_000_000
-    window_end_ns = int(manifest["t1_monotonic_ns"])
-    samples = []
-    for block in (run_dir / "smem-smaps.txt").read_text(encoding="utf-8").split("\n\n"):
-        time_match = re.search(r"sample_monotonic_ns=(\d+)", block)
-        smem_match = re.search(
-            rf"^\s*{tracee_pid}\s+(\d+)\s+(\d+)\s+(\d+)\s+",
-            block,
-            re.MULTILINE,
-        )
-        smaps_rss = re.search(r"^Rss:\s+(\d+) kB$", block, re.MULTILINE)
-        smaps_pss = re.search(r"^Pss:\s+(\d+) kB$", block, re.MULTILINE)
-        if not (time_match and smem_match and smaps_rss and smaps_pss):
-            continue
-        timestamp_ns = int(time_match.group(1))
-        if steady_start_ns <= timestamp_ns <= window_end_ns:
-            samples.append(
-                {
-                    "timestamp_ns": timestamp_ns,
-                    "uss_kib": int(smem_match.group(1)),
-                    "pss_kib": int(smem_match.group(2)),
-                    "rss_kib": int(smem_match.group(3)),
-                    "smaps_rss_kib": int(smaps_rss.group(1)),
-                    "smaps_pss_kib": int(smaps_pss.group(1)),
-                }
-            )
-    timestamps = [sample["timestamp_ns"] for sample in samples]
-    if any(right <= left for left, right in zip(timestamps, timestamps[1:])):
-        raise ValueError(f"{run_dir}: memory sample timestamps are not strictly increasing")
-    expected_samples = max(20, math.floor(max(0.0, duration_s - 60.0) / 10.0) - 1)
-    if len(samples) < expected_samples:
-        raise ValueError(
-            f"{run_dir}: fewer than {expected_samples} steady memory samples"
-        )
-    return samples
-
-
-def parse_pidstat(
-    run_dir: Path, tracee_pid: str, duration_s: float
-) -> tuple[list[float], list[int]]:
-    cpu_values = []
-    rss_values = []
-    for line in (run_dir / "pidstat.txt").read_text(encoding="utf-8").splitlines():
-        fields = line.split()
-        if (
-            len(fields) >= 15
-            and re.fullmatch(r"\d{2}:\d{2}:\d{2}", fields[0])
-            and fields[2] == tracee_pid
-        ):
-            cpu_values.append(float(fields[7]))
-            rss_values.append(int(fields[12]))
-    steady_cpu_values = cpu_values[60:]
-    steady_rss_values = rss_values[60:]
-    if any(not math.isfinite(value) or value < 0 for value in steady_cpu_values):
-        raise ValueError(f"{run_dir}: pidstat contains an invalid CPU sample")
-    if any(value < 0 for value in steady_rss_values):
-        raise ValueError(f"{run_dir}: pidstat contains an invalid RSS sample")
-    expected_steady_samples = max(1, math.floor(duration_s) - 61)
-    if len(steady_cpu_values) < expected_steady_samples:
-        raise ValueError(
-            f"{run_dir}: fewer than {expected_steady_samples} steady pidstat samples"
-        )
-    return steady_cpu_values, steady_rss_values
+from lib.profile_analysis import (  # noqa: E402
+    parse_manifest,
+    parse_memory_samples,
+    parse_pidstat,
+    percentile_nearest_rank,
+    require_independent_evidence,
+    resolve_distinct_run_dirs,
+    slope_kib_per_minute,
+)
 
 
 def analyze_run(run_dir: Path) -> dict:
@@ -160,30 +74,6 @@ def analyze_run(run_dir: Path) -> dict:
         "cpu_p95_percent": percentile_nearest_rank(cpu_values, 0.95),
         "pidstat_rss_mean_kib": round(statistics.fmean(rss_values), 3),
     }
-
-
-def resolve_distinct_run_dirs(run_dirs: list[Path]) -> list[Path]:
-    resolved = [path.resolve() for path in run_dirs]
-    if len(set(resolved)) != 3:
-        raise ValueError("the three run directories must be distinct")
-    return resolved
-
-
-def require_independent_evidence(run_dirs: list[Path]) -> None:
-    identities = set()
-    for run_dir in run_dirs:
-        manifest = parse_manifest(run_dir / "run-manifest.txt")
-        identities.add(
-            (
-                int(manifest["tracee_pid"]),
-                int(manifest["t0_monotonic_ns"]),
-                int(manifest["t1_monotonic_ns"]),
-            )
-        )
-    if len(identities) != 3:
-        raise ValueError(
-            "the three run directories must contain independent evidence identities"
-        )
 
 
 def main() -> None:

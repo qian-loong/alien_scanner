@@ -42,6 +42,18 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 WORKLOAD_YAML="${SCRIPT_DIR}/perception-profile-mixed.yaml"
+PROFILE_RUNNER_COMMON="${SCRIPT_DIR}/lib/profile-runner-common.sh"
+PROFILE_REPORT_PARSER="${SCRIPT_DIR}/lib/profile_report_parsers.py"
+PROFILE_ROLE_MONITOR="${SCRIPT_DIR}/lib/profile_role_monitor.py"
+PROFILE_ANALYSIS_COMMON="${SCRIPT_DIR}/lib/profile_analysis.py"
+for common_file in "${PROFILE_RUNNER_COMMON}" "${PROFILE_REPORT_PARSER}" \
+    "${PROFILE_ROLE_MONITOR}" "${PROFILE_ANALYSIS_COMMON}"; do
+    if [[ ! -r "${common_file}" ]]; then
+        echo "missing profiling common module: ${common_file}" >&2
+        exit 2
+    fi
+done
+source "${PROFILE_RUNNER_COMMON}"
 OUTPUT_DIR="$(readlink -m "${OUTPUT_DIR}")"
 mkdir -p "${OUTPUT_DIR}"
 
@@ -63,6 +75,7 @@ LAUNCHER_PID=""
 LAUNCHER_PGID=""
 LAUNCHER_STARTTIME=""
 LAUNCHER_REAPED=false
+TARGET_IDENTITY_RECORDED=false
 TOOL_PID=""
 TOOL_PGID=""
 TOOL_STARTTIME=""
@@ -95,192 +108,6 @@ invalidate()
     echo "INVALID: ${reason}" | tee -a "${OUTPUT_DIR}/invalid-reasons.txt" >&2
 }
 
-monotonic_ns()
-{
-    python3 -c 'import time; print(time.monotonic_ns())'
-}
-
-realtime_stamp()
-{
-    python3 -c 'import time; value=time.time_ns(); print(f"{value // 1000000000}.{value % 1000000000:09d}")'
-}
-
-wait_for_dead()
-{
-    local pid="$1"
-    local timeout_seconds="$2"
-    local deadline=$((SECONDS + timeout_seconds))
-    while kill -0 "${pid}" 2>/dev/null; do
-        if [[ -r "/proc/${pid}/stat" ]] \
-            && [[ "$(awk '{print $3}' "/proc/${pid}/stat")" == Z ]]; then
-            return 0
-        fi
-        if (( SECONDS >= deadline )); then
-            return 1
-        fi
-        sleep 0.1
-    done
-    return 0
-}
-
-process_is_alive()
-{
-    local pid="$1"
-    local state=""
-    [[ -n "${pid}" ]] || return 1
-    kill -0 "${pid}" 2>/dev/null || return 1
-    state="$(awk '{print $3}' "/proc/${pid}/stat" 2>/dev/null || true)"
-    if [[ -z "${state}" || "${state}" == Z ]]; then
-        return 1
-    fi
-    return 0
-}
-
-process_starttime()
-{
-    local pid="$1"
-    python3 - "${pid}" <<'PY'
-import sys
-
-with open(f"/proc/{sys.argv[1]}/stat", encoding="ascii") as stream:
-    fields = stream.read().rpartition(")")[2].split()
-print(fields[19])
-PY
-}
-
-process_identity_matches()
-{
-    local pid="$1"
-    local expected_starttime="$2"
-    local expected_pgid="${3:-}"
-    local actual_starttime actual_pgid
-    process_is_alive "${pid}" || return 1
-    actual_starttime="$(process_starttime "${pid}" 2>/dev/null || true)"
-    [[ -n "${expected_starttime}" && "${actual_starttime}" == "${expected_starttime}" ]] \
-        || return 1
-    if [[ -n "${expected_pgid}" ]]; then
-        actual_pgid="$(ps -o pgid= -p "${pid}" 2>/dev/null | tr -d ' ')"
-        [[ "${actual_pgid}" == "${expected_pgid}" ]] || return 1
-    fi
-}
-
-wait_for_process_identity()
-{
-    local pid="$1"
-    local expected_exe="${2:-}"
-    local cmdline_fragment="${3:-}"
-    local deadline=$((SECONDS + 5))
-    local actual_exe cmdline
-    while (( SECONDS < deadline )); do
-        process_is_alive "${pid}" || return 1
-        actual_exe="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
-        cmdline="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)"
-        if { [[ -z "${expected_exe}" ]] \
-                || [[ "${actual_exe}" == "$(readlink -f "${expected_exe}" 2>/dev/null || true)" ]] \
-                || [[ "$(basename "${actual_exe}")" == "${expected_exe}" ]]; } \
-            && { [[ -z "${cmdline_fragment}" ]] || [[ "${cmdline}" == *"${cmdline_fragment}"* ]]; }; then
-            return 0
-        fi
-        sleep 0.05
-    done
-    return 1
-}
-
-wait_for_isolated_pgid()
-{
-    local pid="$1"
-    local deadline=$((SECONDS + 5))
-    local pgid=""
-    while (( SECONDS < deadline )); do
-        process_is_alive "${pid}" || return 1
-        pgid="$(ps -o pgid= -p "${pid}" 2>/dev/null | tr -d ' ')"
-        if [[ -n "${pgid}" && "${pgid}" != "${SCRIPT_PGID}" ]]; then
-            echo "${pgid}"
-            return 0
-        fi
-        sleep 0.05
-    done
-    return 1
-}
-
-wait_child()
-{
-    local pid="$1"
-    local role="$2"
-    local rc=0
-    if wait "${pid}" 2>/dev/null; then
-        rc=0
-    else
-        rc=$?
-    fi
-    printf '%s_exit_code=%s\n' "${role}" "${rc}" >> "${OUTPUT_DIR}/exit-codes.txt"
-    return "${rc}"
-}
-
-signal_process()
-{
-    local signal="$1"
-    local pid="$2"
-    local pgid="$3"
-    local starttime="$4"
-    if ! process_identity_matches "${pid}" "${starttime}" "${pgid}"; then
-        ROLE_EXIT_FAILURE=true
-        invalidate "refusing to signal PID ${pid}: starttime or process group changed"
-        return 1
-    fi
-    if [[ -n "${pgid}" && "${pgid}" != "${SCRIPT_PGID}" ]]; then
-        kill -"${signal}" -- "-${pgid}" 2>/dev/null || true
-    else
-        kill -"${signal}" "${pid}" 2>/dev/null || true
-    fi
-}
-
-stop_group()
-{
-    local pid="$1"
-    local pgid="$2"
-    local role="$3"
-    local starttime="$4"
-    local initial_signal="${5:-INT}"
-    local rc=0
-    [[ -n "${pid}" ]] || return 0
-    if ! process_is_alive "${pid}"; then
-        if wait_child "${pid}" "${role}"; then
-            rc=0
-        else
-            rc=$?
-        fi
-        ROLE_EXIT_FAILURE=true
-        invalidate "${role} exited before the requested normal stop (${rc})"
-        return 0
-    fi
-    if [[ -n "${pgid}" && "${pgid}" == "${SCRIPT_PGID}" ]]; then
-        ROLE_EXIT_FAILURE=true
-        invalidate "${role} did not obtain an isolated process group"
-    fi
-    signal_process "${initial_signal}" "${pid}" "${pgid}" "${starttime}" || return 1
-    if ! wait_for_dead "${pid}" 10; then
-        FORCED_STOP=true
-        invalidate "${role} did not exit after SIG${initial_signal}"
-        signal_process TERM "${pid}" "${pgid}" "${starttime}" || return 1
-        sleep 1
-        if process_is_alive "${pid}"; then
-            signal_process KILL "${pid}" "${pgid}" "${starttime}" || return 1
-        fi
-    fi
-    if wait_child "${pid}" "${role}"; then
-        rc=0
-    else
-        rc=$?
-    fi
-    if [[ "${rc}" -ne 0 \
-        && ! ( "${initial_signal}" == INT && "${rc}" -eq 130 ) \
-        && ! ( "${initial_signal}" == TERM && "${rc}" -eq 143 ) ]]; then
-        ROLE_EXIT_FAILURE=true
-        invalidate "${role} exited unexpectedly (${rc})"
-    fi
-}
-
 stop_tracee()
 {
     [[ -n "${TRACEE_PID}" ]] || return 0
@@ -306,6 +133,38 @@ stop_tracee()
     fi
 }
 
+stop_partial_target_startup()
+{
+    local rc=0
+    [[ -n "${LAUNCHER_PID}" ]] || return 0
+    if process_is_alive "${LAUNCHER_PID}"; then
+        if [[ -z "${LAUNCHER_STARTTIME}" || -z "${LAUNCHER_PGID}" ]] \
+            || ! process_identity_matches \
+                "${LAUNCHER_PID}" "${LAUNCHER_STARTTIME}" "${LAUNCHER_PGID}"; then
+            ROLE_EXIT_FAILURE=true
+            invalidate "unable to safely stop unresolved target launcher: identity unavailable"
+            return 1
+        fi
+        signal_process TERM \
+            "${LAUNCHER_PID}" "${LAUNCHER_PGID}" "${LAUNCHER_STARTTIME}" || return 1
+        if ! wait_for_dead "${LAUNCHER_PID}" 10; then
+            FORCED_STOP=true
+            invalidate "unresolved target launcher did not exit after SIGTERM"
+            signal_process KILL \
+                "${LAUNCHER_PID}" "${LAUNCHER_PGID}" "${LAUNCHER_STARTTIME}" || true
+            if ! wait_for_dead "${LAUNCHER_PID}" 5; then
+                ROLE_EXIT_FAILURE=true
+                invalidate "unresolved target launcher could not be reaped"
+                return 1
+            fi
+        fi
+    fi
+    wait_child "${LAUNCHER_PID}" startup_launcher || rc=$?
+    LAUNCHER_REAPED=true
+    [[ "${TOOL_PID}" == "${LAUNCHER_PID}" ]] && TOOL_REAPED=true
+    return 0
+}
+
 cleanup()
 {
     local original_rc=$?
@@ -327,6 +186,10 @@ cleanup()
         exec 8>&- 9>&-
     fi
     if [[ "${NORMAL_COMPLETION}" != true ]]; then
+        if [[ "${TARGET_IDENTITY_RECORDED}" != true \
+            && -n "${LAUNCHER_PID}" && "${LAUNCHER_REAPED}" != true ]]; then
+            stop_partial_target_startup || true
+        fi
         if [[ "${LAUNCHER_REAPED}" != true ]]; then
             stop_tracee
         fi
@@ -436,19 +299,6 @@ if [[ ! "${TARGET_SHA256}" =~ ^[0-9a-f]{64}$ || -z "${TARGET_BUILD_ID}" ]]; then
     exit 1
 fi
 
-find_perf()
-{
-    local candidate
-    if /usr/bin/perf --version >/dev/null 2>&1; then
-        echo /usr/bin/perf
-        return 0
-    fi
-    candidate="$(find /usr/lib/linux-tools -mindepth 2 -maxdepth 2 -name perf 2>/dev/null | sort -V | tail -1)"
-    [[ -x "${candidate}" ]] || return 1
-    "${candidate}" --version >/dev/null 2>&1 || return 1
-    echo "${candidate}"
-}
-
 PERF_PATH="$(find_perf || true)"
 
 {
@@ -458,6 +308,10 @@ PERF_PATH="$(find_perf || true)"
     echo "source_revision=$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo unavailable)"
     echo "source_dirty_count=$(git -C "${REPO_ROOT}" status --short 2>/dev/null | wc -l)"
     echo "profile_script_sha256=$(sha256sum "${BASH_SOURCE[0]}" | awk '{print $1}')"
+    echo "profile_runner_common_sha256=$(sha256sum "${PROFILE_RUNNER_COMMON}" | awk '{print $1}')"
+    echo "profile_report_parsers_sha256=$(sha256sum "${PROFILE_REPORT_PARSER}" | awk '{print $1}')"
+    echo "profile_role_monitor_sha256=$(sha256sum "${PROFILE_ROLE_MONITOR}" | awk '{print $1}')"
+    echo "profile_analysis_common_sha256=$(sha256sum "${PROFILE_ANALYSIS_COMMON}" | awk '{print $1}')"
     echo "workload_yaml_sha256=$(sha256sum "${WORKLOAD_YAML}" | awk '{print $1}')"
     if [[ -f "${SCRIPT_DIR}/analyze-perception-profile.py" ]]; then
         echo "analysis_script_sha256=$(sha256sum "${SCRIPT_DIR}/analyze-perception-profile.py" | awk '{print $1}')"
@@ -591,6 +445,8 @@ find_matching_descendant()
     local root_pid="$1"
     local deadline=$((SECONDS + 15))
     while (( SECONDS < deadline )); do
+        process_identity_matches \
+            "${root_pid}" "${LAUNCHER_STARTTIME}" "${LAUNCHER_PGID}" || return 3
         local queue=("${root_pid}")
         local matches=()
         local current child exe
@@ -639,6 +495,7 @@ wait_for_tracee_identity()
 start_target()
 {
     local target_args=("${EXPECTED_TARGET_EXE}" --ros-args --params-file "${WORKLOAD_YAML}")
+    local heaptrack_process_model=""
     case "${MODE}" in
         heaptrack)
             setsid taskset -c 0 heaptrack -o "${OUTPUT_DIR}/heaptrack.%p" \
@@ -696,11 +553,21 @@ start_target()
         return 1
     fi
     if [[ "${MODE}" == heaptrack ]]; then
-        if ! wait_for_process_identity "${LAUNCHER_PID}" heaptrack "${EXPECTED_TARGET_EXE}"; then
-            invalidate "Heaptrack controller identity did not stabilize"
-            return 1
-        fi
         TRACEE_PID="$(find_matching_descendant "${LAUNCHER_PID}" || true)"
+        if [[ -n "${TRACEE_PID}" && "${TRACEE_PID}" == "${LAUNCHER_PID}" ]]; then
+            heaptrack_process_model=exec_in_place
+        elif [[ -n "${TRACEE_PID}" ]]; then
+            local heaptrack_path
+            heaptrack_path="$(command -v heaptrack)"
+            if ! process_identity_matches \
+                    "${LAUNCHER_PID}" "${LAUNCHER_STARTTIME}" "${LAUNCHER_PGID}" \
+                || ! process_cmdline_has_exact_arguments \
+                    "${LAUNCHER_PID}" "${heaptrack_path}" "${EXPECTED_TARGET_EXE}"; then
+                invalidate "Heaptrack wrapper identity or exact target argv did not stabilize"
+                return 1
+            fi
+            heaptrack_process_model=wrapper_with_unique_descendant
+        fi
     fi
     if [[ -z "${TRACEE_PID}" ]] || ! kill -0 "${TRACEE_PID}" 2>/dev/null; then
         invalidate "unable to resolve a unique tracee PID"
@@ -715,11 +582,18 @@ start_target()
         return 1
     fi
     TRACEE_STARTTIME="$(process_starttime "${TRACEE_PID}")"
+    if [[ "${MODE}" == heaptrack && "${TRACEE_PGID}" != "${LAUNCHER_PGID}" ]]; then
+        invalidate "Heaptrack target escaped the verified instrumentation process group"
+        return 1
+    fi
     if [[ -n "${TOOL_PID}" ]]; then
         TOOL_PGID="${LAUNCHER_PGID}"
         TOOL_STARTTIME="${LAUNCHER_STARTTIME}"
     fi
     tr '\0' ' ' < "/proc/${TRACEE_PID}/cmdline" > "${OUTPUT_DIR}/tracee-cmdline.txt"
+    if [[ "${MODE}" == heaptrack ]]; then
+        tr '\0' ' ' < "/proc/${LAUNCHER_PID}/cmdline" > "${OUTPUT_DIR}/launcher-cmdline.txt"
+    fi
 
     {
         echo "launcher_pid=${LAUNCHER_PID}"
@@ -737,6 +611,10 @@ start_target()
         echo "tracee_pid=${TRACEE_PID}"
         echo "tracee_pgid=${TRACEE_PGID}"
         echo "tracee_starttime=${TRACEE_STARTTIME}"
+        if [[ "${MODE}" == heaptrack ]]; then
+            echo "heaptrack_process_model=${heaptrack_process_model}"
+            echo "launcher_exe=$(readlink -f "/proc/${LAUNCHER_PID}/exe")"
+        fi
         echo "tracee_affinity=$(taskset -pc "${TRACEE_PID}" 2>&1 | tail -1)"
         echo "tracee_cgroup=$(tr '\n' ';' < "/proc/${TRACEE_PID}/cgroup")"
         awk '/^(Name|Pid|PPid|NSpid|Cpus_allowed_list|CapEff|NoNewPrivs|Seccomp|Seccomp_filters):/ {
@@ -745,6 +623,7 @@ start_target()
             print "tracee_" key "=" $2
         }' "/proc/${TRACEE_PID}/status"
     } >> "${OUTPUT_DIR}/run-manifest.txt"
+    TARGET_IDENTITY_RECORDED=true
 }
 
 record_perf_tool_role()
@@ -927,22 +806,6 @@ wait_for_graph_pair()
     return 1
 }
 
-perf_control()
-{
-    local command="$1"
-    printf '%s\n' "${command}" >&8
-    local ack=""
-    if ! IFS= read -r -t 10 ack <&9 || [[ "${ack}" != ack ]]; then
-        ROLE_EXIT_FAILURE=true
-        invalidate "perf control ${command} ACK failed"
-        return 1
-    fi
-    {
-        printf '%s_ack=%s\n' "${command}" "${ack}"
-        printf '%s_ack_monotonic_ns=%s\n' "${command}" "$(monotonic_ns)"
-    } >> "${OUTPUT_DIR}/perf-control.txt"
-}
-
 start_perf()
 {
     [[ -x "${PERF_PATH}" ]] || {
@@ -992,7 +855,7 @@ start_trace()
     local rc=0
     TRACE_SESSION="alien-perception-${ROS_DOMAIN_ID}-$$"
     mkdir -p "${OUTPUT_DIR}/trace"
-    if taskset -c 1 ros2 trace --list > "${OUTPUT_DIR}/trace-event-list.txt" 2>&1; then
+    if list_ros_trace_events > "${OUTPUT_DIR}/trace-event-list.txt" 2>&1; then
         echo "ros_trace_event_list_exit_code=0" >> "${OUTPUT_DIR}/exit-codes.txt"
     else
         rc=$?
@@ -1107,82 +970,9 @@ monitor_measurement_window()
         trace_session="${TRACE_SESSION}"
     fi
 
-    taskset -c 1 python3 - "${DURATION}" "${trace_session}" \
+    taskset -c 1 python3 "${PROFILE_ROLE_MONITOR}" "${DURATION}" "${trace_session}" \
         "${OUTPUT_DIR}/trace-session-monitor.txt" \
-        "${OUTPUT_DIR}/role-monitor.txt" "${roles[@]}" <<'PY'
-import os
-import re
-import subprocess
-import sys
-import time
-
-duration = int(sys.argv[1])
-trace_session = sys.argv[2]
-trace_monitor_path = sys.argv[3]
-role_monitor_path = sys.argv[4]
-roles = []
-
-def process_state(pid):
-    with open(f"/proc/{pid}/stat", encoding="ascii") as stream:
-        suffix = stream.read().rpartition(")")[2].split()
-    return suffix[0], suffix[19]
-
-for specification in sys.argv[5:]:
-    role, raw_pid, expected_starttime = specification.split("=", 2)
-    pid = int(raw_pid)
-    try:
-        state, starttime = process_state(pid)
-    except (FileNotFoundError, ProcessLookupError, PermissionError, IndexError):
-        print(role)
-        raise SystemExit(1)
-    if state == "Z" or starttime != expected_starttime:
-        print(role)
-        raise SystemExit(1)
-    roles.append((role, pid, starttime))
-
-with open(role_monitor_path, "w", encoding="utf-8") as stream:
-    for role, pid, starttime in roles:
-        stream.write(f"role={role} pid={pid} starttime={starttime}\n")
-
-deadline = time.monotonic() + duration
-next_trace_check = 0.0
-while True:
-    for role, pid, expected_starttime in roles:
-        try:
-            os.kill(pid, 0)
-            state, starttime = process_state(pid)
-        except (FileNotFoundError, ProcessLookupError, PermissionError, IndexError):
-            print(role)
-            raise SystemExit(1)
-        if state == "Z" or starttime != expected_starttime:
-            print(role)
-            raise SystemExit(1)
-    now = time.monotonic()
-    if trace_session and now >= next_trace_check:
-        result = subprocess.run(
-            ["lttng", "list", trace_session],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        active_pattern = rf"(?:Recording|Tracing) session {re.escape(trace_session)}: \[active\]"
-        active = result.returncode == 0 and re.search(active_pattern, result.stdout) is not None
-        with open(trace_monitor_path, "a", encoding="utf-8") as stream:
-            stream.write(
-                f"monotonic={now:.6f} returncode={result.returncode} active={str(active).lower()}\n"
-            )
-        if not active:
-            print("ros_trace_session")
-            raise SystemExit(1)
-        next_trace_check = now + 1.0
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        break
-    time.sleep(min(0.25, remaining))
-
-with open(role_monitor_path, "a", encoding="utf-8") as stream:
-    stream.write(f"completed_monotonic={time.monotonic():.9f}\n")
-PY
+        "${OUTPUT_DIR}/role-monitor.txt" "${roles[@]}"
 }
 
 stop_perf()
@@ -1195,10 +985,18 @@ stop_perf()
     fi
     perf_control disable || true
     perf_control stop || true
+    exec 8>&- 9>&-
+    PERF_CTL_FD_OPEN=false
+    signal_process INT "${TOOL_PID}" "${TOOL_PGID}" "${TOOL_STARTTIME}" || return 1
     if ! wait_for_dead "${TOOL_PID}" 20; then
         FORCED_STOP=true
-        invalidate "perf did not finalize after controlled stop"
+        invalidate "perf did not finalize after SIGINT"
         signal_process TERM "${TOOL_PID}" "${TOOL_PGID}" "${TOOL_STARTTIME}" || true
+        wait_for_dead "${TOOL_PID}" 5 \
+            || signal_process KILL "${TOOL_PID}" "${TOOL_PGID}" "${TOOL_STARTTIME}" \
+            || true
+        wait_child "${TOOL_PID}" perf || true
+        TOOL_REAPED=true
         return 1
     fi
     local rc=0
@@ -1208,13 +1006,10 @@ stop_perf()
         rc=$?
     fi
     TOOL_REAPED=true
-    echo "tool_exit_code=${rc}" >> "${OUTPUT_DIR}/exit-codes.txt"
-    if [[ "${rc}" -ne 0 ]]; then
+    if (( rc != 0 && rc != 130 )); then
         ROLE_EXIT_FAILURE=true
         invalidate "perf returned unexpected exit code ${rc}"
     fi
-    exec 8>&- 9>&-
-    PERF_CTL_FD_OPEN=false
 }
 
 stop_trace()
@@ -1235,41 +1030,9 @@ stop_trace()
 
 validate_perf_window_control()
 {
-    python3 - "${OUTPUT_DIR}/perf-control.txt" "${T0_MONOTONIC_NS}" \
-        "${T1_MONOTONIC_NS}" "${OUTPUT_DIR}/perf-window-quality.txt" <<'PY'
-import sys
-
-control_path, t0, t1, quality_path = sys.argv[1:]
-values = {}
-with open(control_path, encoding="utf-8") as stream:
-    for line in stream:
-        if "=" in line:
-            key, value = line.strip().split("=", 1)
-            if key in values:
-                raise SystemExit(f"duplicate perf control evidence: {key}")
-            values[key] = value
-
-for command in ("enable", "disable", "stop"):
-    if values.get(f"{command}_ack") != "ack":
-        raise SystemExit(f"missing perf {command} acknowledgement")
-
-enable = int(values["enable_ack_monotonic_ns"])
-disable = int(values["disable_ack_monotonic_ns"])
-stop = int(values["stop_ack_monotonic_ns"])
-t0 = int(t0)
-t1 = int(t1)
-if not enable <= t0 < t1 <= disable <= stop:
-    raise SystemExit("perf control acknowledgements do not enclose the workload window")
-
-with open(quality_path, "w", encoding="utf-8") as stream:
-    stream.write("parse_valid=true\n")
-    stream.write(f"enable_ack_monotonic_ns={enable}\n")
-    stream.write(f"t0_monotonic_ns={t0}\n")
-    stream.write(f"t1_monotonic_ns={t1}\n")
-    stream.write(f"disable_ack_monotonic_ns={disable}\n")
-    stream.write(f"stop_ack_monotonic_ns={stop}\n")
-    stream.write("gate_pass=true\n")
-PY
+    python3 "${PROFILE_REPORT_PARSER}" perf-control \
+        "${OUTPUT_DIR}/perf-control.txt" "${T0_MONOTONIC_NS}" \
+        "${T1_MONOTONIC_NS}" "${OUTPUT_DIR}/perf-window-quality.txt"
 }
 
 parse_workload()
@@ -1278,117 +1041,18 @@ parse_workload()
     local end_line="$2"
     local t0_ns="$3"
     local t1_ns="$4"
-    python3 - "${OUTPUT_DIR}/measurement.csv" "${start_line}" "${end_line}" \
-        "${t0_ns}" "${t1_ns}" "${OUTPUT_DIR}/workload-counts.txt" <<'PY'
-import csv
-import math
-import sys
-
-path, start_line, end_line, t0_ns, t1_ns, output = sys.argv[1:]
-start_line = int(start_line)
-end_line = int(end_line)
-duration = (int(t1_ns) - int(t0_ns)) / 1_000_000_000
-counts = {"front": 0, "rear": 0, "top": 0}
-unknown = []
-with open(path, newline="", encoding="utf-8") as stream:
-    rows = list(csv.reader(stream))
-for row in rows[start_line:end_line]:
-    if not row:
-        continue
-    value = row[-1].strip().strip('"')
-    if value in counts:
-        counts[value] += 1
-    elif value and value not in {"sensor_id", "---"}:
-        unknown.append(value)
-total = sum(counts.values())
-required_total = math.ceil(duration * 27.0)
-required_each = math.ceil(duration * 9.0)
-with open(output, "w", encoding="utf-8") as stream:
-    stream.write(f"duration_actual_s={duration:.9f}\n")
-    stream.write(f"line_start={start_line}\nline_end={end_line}\n")
-    stream.write(f"front={counts['front']}\nrear={counts['rear']}\ntop={counts['top']}\n")
-    stream.write(f"total={total}\nrequired_total={required_total}\nrequired_each={required_each}\n")
-    stream.write(f"unknown={len(unknown)}\n")
-if duration <= 0 or total < required_total or any(value < required_each for value in counts.values()) or unknown:
-    raise SystemExit(1)
-PY
+    python3 "${PROFILE_REPORT_PARSER}" c1-workload \
+        "${OUTPUT_DIR}/measurement.csv" "${start_line}" "${end_line}" \
+        "${t0_ns}" "${t1_ns}" "${OUTPUT_DIR}/workload-counts.txt"
 }
 
 generate_reports()
 {
     case "${MODE}" in
         perf-stat)
-            if ! python3 - "${OUTPUT_DIR}/perf-stat.csv" \
-                "${OUTPUT_DIR}/perf-stat-quality.txt" <<'PY'
-import csv
-import math
-import re
-import sys
-
-stat_path, quality_path = sys.argv[1:]
-expected_events = (
-    "task-clock",
-    "context-switches",
-    "cpu-migrations",
-    "page-faults",
-    "cycles:u",
-    "instructions:u",
-    "branches:u",
-    "branch-misses:u",
-    "cache-references:u",
-    "cache-misses:u",
-)
-required_software_events = set(expected_events[:4])
-unavailable_values = {"<not supported>", "<not counted>"}
-rows = {}
-
-with open(stat_path, newline="", encoding="utf-8", errors="replace") as stream:
-    for row in csv.reader(stream):
-        if len(row) < 5:
-            continue
-        event = row[2].strip()
-        if event in expected_events:
-            if event in rows:
-                raise SystemExit(f"duplicate perf stat event: {event}")
-            rows[event] = tuple(field.strip() for field in row)
-
-missing = [event for event in expected_events if event not in rows]
-if missing:
-    raise SystemExit("missing perf stat events: " + ", ".join(missing))
-
-quality = {}
-for event in expected_events:
-    row = rows[event]
-    value_text = row[0]
-    key = re.sub(r"[^a-z0-9]+", "_", event.lower()).strip("_")
-    if value_text in unavailable_values:
-        if event in required_software_events:
-            raise SystemExit(f"required software event is unavailable: {event}")
-        quality[f"{key}_status"] = value_text.strip("<>").replace(" ", "_")
-        continue
-    try:
-        value = float(value_text)
-        runtime_ns = float(row[3])
-        running_percent = float(row[4])
-    except ValueError as error:
-        raise SystemExit(f"unparseable perf stat row for {event}: {row}") from error
-    if not all(math.isfinite(item) for item in (value, runtime_ns, running_percent)):
-        raise SystemExit(f"non-finite perf stat row for {event}: {row}")
-    if value < 0 or runtime_ns <= 0 or not 0 < running_percent <= 100.0:
-        raise SystemExit(f"invalid perf stat counters for {event}: {row}")
-    if event == "task-clock" and value <= 0:
-        raise SystemExit("task-clock must be positive")
-    quality[f"{key}_status"] = "supported"
-    quality[f"{key}_value"] = value_text
-    quality[f"{key}_runtime_ns"] = row[3]
-    quality[f"{key}_running_percent"] = row[4]
-
-with open(quality_path, "w", encoding="utf-8") as stream:
-    stream.write("parse_valid=true\n")
-    for key, value in quality.items():
-        stream.write(f"{key}={value}\n")
-    stream.write("gate_pass=true\n")
-PY
+            if ! python3 "${PROFILE_REPORT_PARSER}" perf-stat \
+                "${OUTPUT_DIR}/perf-stat.csv" \
+                "${OUTPUT_DIR}/perf-stat-quality.txt"
             then
                 invalidate "perf stat report is incomplete or unparseable"
             else
@@ -1415,87 +1079,11 @@ PY
                 -t '|' -F overhead,sample,comm,dso,symbol \
                 > "${OUTPUT_DIR}/perf-symbols.txt" 2> "${OUTPUT_DIR}/perf-symbols.stderr.log" \
                 || invalidate "perf symbol summary failed"
-            if ! python3 - "${OUTPUT_DIR}/perf-symbols.txt" \
+            if ! python3 "${PROFILE_REPORT_PARSER}" perf-record \
+                "${OUTPUT_DIR}/perf-symbols.txt" \
                 "${OUTPUT_DIR}/perf-report.txt" \
-                "${OUTPUT_DIR}/perf-quality.txt" "${OUTPUT_DIR}/perf-top10.txt" "${DURATION}" <<'PY'
-import re
-import sys
-
-symbols_path, report_path, quality_path, top_path, requested_duration = sys.argv[1:]
-requested_duration = int(requested_duration)
-with open(symbols_path, encoding="utf-8", errors="replace") as stream:
-    lines = stream.readlines()
-with open(report_path, encoding="utf-8", errors="replace") as stream:
-    report_text = stream.read()
-
-sample_match = next(
-    (re.search(r"^# Samples:\s+(\S+)", line) for line in lines if line.startswith("# Samples:")),
-    None,
-)
-header_samples = sample_match.group(1) if sample_match else "missing"
-lost_match = re.search(r"^# Total Lost Samples:\s+(\d+)\s*$", report_text, re.MULTILINE)
-lost_samples = int(lost_match.group(1)) if lost_match else -1
-rows = []
-for line in lines:
-    parts = line.rstrip("\n").split("|")
-    if len(parts) < 5 or not re.match(r"^\s*\d+(?:\.\d+)?%\s*$", parts[0]):
-        continue
-    try:
-        row_samples = int(parts[1].strip())
-    except ValueError:
-        continue
-    dso = parts[3].strip()
-    symbol = parts[4].strip()
-    normalized_symbol = re.sub(r"^\[[^]]+\]\s+", "", symbol).strip()
-    is_unknown = (
-        dso in {"[unknown]", "unknown"}
-        or normalized_symbol in {"[unknown]", "unknown"}
-        or normalized_symbol.startswith("0x")
-        or normalized_symbol.lower().startswith("ffffffff")
-    )
-    is_workspace = (
-        "PerceptionInputNode::" in normalized_symbol
-        or "Perception::" in normalized_symbol
-        or "PerceptionAdapters::" in normalized_symbol
-        or "PerceptionCore::" in normalized_symbol
-    )
-    rows.append((line.rstrip(), row_samples, is_unknown, is_workspace))
-
-parsed_samples = sum(row[1] for row in rows)
-sample_count = parsed_samples
-unknown_samples = sum(row[1] for row in rows if row[2])
-workspace_samples = sum(row[1] for row in rows if row[3])
-unknown_percent = 100.0 * unknown_samples / sample_count if sample_count else 100.0
-gate_enforced = requested_duration >= 120
-parse_valid = sample_match is not None and sample_count > 0 and lost_match is not None
-gate_pass = (
-    parse_valid
-    and lost_samples == 0
-    and (not gate_enforced or (
-        sample_count >= 1000
-        and unknown_percent <= 20.0
-        and workspace_samples > 0
-    ))
-)
-
-with open(quality_path, "w", encoding="utf-8") as stream:
-    stream.write(f"requested_duration_s={requested_duration}\n")
-    stream.write(f"gate_enforced={str(gate_enforced).lower()}\n")
-    stream.write(f"header_samples={header_samples}\n")
-    stream.write(f"samples={sample_count}\n")
-    stream.write(f"parsed_samples={parsed_samples}\n")
-    stream.write(f"unknown_samples={unknown_samples}\n")
-    stream.write(f"unknown_percent={unknown_percent:.6f}\n")
-    stream.write(f"workspace_samples={workspace_samples}\n")
-    stream.write(f"lost_samples={lost_samples}\n")
-    stream.write(f"parse_valid={str(parse_valid).lower()}\n")
-    stream.write(f"gate_pass={str(gate_pass).lower()}\n")
-with open(top_path, "w", encoding="utf-8") as stream:
-    for row, *_ in rows[:10]:
-        stream.write(row + "\n")
-
-raise SystemExit(0 if gate_pass else 1)
-PY
+                "${OUTPUT_DIR}/perf-quality.txt" \
+                "${OUTPUT_DIR}/perf-top10.txt" "${DURATION}"
             then
                 invalidate "perf sample count, symbolization, or unknown-ratio gate failed"
             fi
@@ -1509,69 +1097,18 @@ PY
                 local heap_file="${heap_files[0]}"
                 heaptrack_print "${heap_file}" > "${OUTPUT_DIR}/heaptrack-report.txt" 2> "${OUTPUT_DIR}/heaptrack-report.stderr.log" \
                     || invalidate "heaptrack_print failed"
-                if ! python3 - "${OUTPUT_DIR}/heaptrack-report.txt" \
-                    "${OUTPUT_DIR}/heaptrack-quality.txt" "${DURATION}" <<'PY'
-import math
-import re
-import sys
-
-report_path, quality_path, requested_duration = sys.argv[1:]
-requested_duration = int(requested_duration)
-with open(report_path, encoding="utf-8", errors="replace") as stream:
-    text = stream.read()
-
-required_sections = (
-    "MOST CALLS TO ALLOCATION FUNCTIONS",
-    "PEAK MEMORY CONSUMERS",
-    "MOST TEMPORARY ALLOCATIONS",
-)
-missing_sections = [section for section in required_sections if section not in text]
-patterns = {
-    "total_runtime_s": r"^total runtime:\s+([0-9.]+)s\.$",
-    "allocation_calls": r"^calls to allocation functions:\s+(\d+)\s+\(",
-    "temporary_allocations": r"^temporary memory allocations:\s+(\d+)\s+\(",
-    "peak_heap": r"^peak heap memory consumption:\s+(\S+)\s*$",
-    "peak_rss_with_overhead": r"^peak RSS \(including heaptrack overhead\):\s+(\S+)\s*$",
-    "total_memory_leaked": r"^total memory leaked:\s+(\S+)\s*$",
-}
-values = {}
-for key, pattern in patterns.items():
-    match = re.search(pattern, text, re.MULTILINE)
-    if match is None:
-        raise SystemExit(f"missing Heaptrack summary: {key}")
-    values[key] = match.group(1)
-if missing_sections:
-    raise SystemExit("missing Heaptrack sections: " + ", ".join(missing_sections))
-
-runtime = float(values["total_runtime_s"])
-if not math.isfinite(runtime) or runtime < requested_duration:
-    raise SystemExit("Heaptrack runtime is shorter than the formal window")
-
-def parse_bytes(value):
-    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)([KMGTPE]?)(?:i?B)?", value)
-    if match is None:
-        raise SystemExit(f"unparseable Heaptrack byte quantity: {value}")
-    scale = 1024 ** " KMGTPE".index(match.group(2))
-    result = float(match.group(1)) * scale
-    if not math.isfinite(result) or result < 0:
-        raise SystemExit(f"invalid Heaptrack byte quantity: {value}")
-    return round(result)
-
-peak_heap_bytes = parse_bytes(values["peak_heap"])
-peak_rss_bytes = parse_bytes(values["peak_rss_with_overhead"])
-leaked_bytes = parse_bytes(values["total_memory_leaked"])
-if int(values["allocation_calls"]) <= 0 or peak_heap_bytes <= 0 or peak_rss_bytes <= 0:
-    raise SystemExit("Heaptrack allocation and peak summaries must be positive")
-
-with open(quality_path, "w", encoding="utf-8") as stream:
-    stream.write("parse_valid=true\n")
-    for key, value in values.items():
-        stream.write(f"{key}={value}\n")
-    stream.write(f"peak_heap_bytes={peak_heap_bytes}\n")
-    stream.write(f"peak_rss_with_overhead_bytes={peak_rss_bytes}\n")
-    stream.write(f"total_memory_leaked_bytes={leaked_bytes}\n")
-    stream.write("gate_pass=true\n")
-PY
+                heaptrack_print -f "${heap_file}" -M "${OUTPUT_DIR}/heaptrack-massif.out" \
+                    > "${OUTPUT_DIR}/heaptrack-massif.stdout.log" \
+                    2> "${OUTPUT_DIR}/heaptrack-massif.stderr.log" \
+                    || invalidate "heaptrack Massif timeline generation failed"
+                python3 "${PROFILE_REPORT_PARSER}" heaptrack-massif \
+                    "${OUTPUT_DIR}/heaptrack-massif.out" \
+                    "${OUTPUT_DIR}/heaptrack-massif-quality.txt" \
+                    "${EXPECTED_TARGET_EXE}" "${DURATION}" \
+                    || invalidate "heaptrack Massif timeline gate failed"
+                if ! python3 "${PROFILE_REPORT_PARSER}" heaptrack \
+                    "${OUTPUT_DIR}/heaptrack-report.txt" \
+                    "${OUTPUT_DIR}/heaptrack-quality.txt" "${DURATION}"
                 then
                     invalidate "Heaptrack report is incomplete or unparseable"
                 else
@@ -1589,68 +1126,9 @@ PY
                 local massif_file="${massif_files[0]}"
                 ms_print "${massif_file}" > "${OUTPUT_DIR}/massif-report.txt" 2> "${OUTPUT_DIR}/massif-report.stderr.log" \
                     || invalidate "ms_print failed"
-                if ! python3 - "${massif_file}" "${OUTPUT_DIR}/massif-quality.txt" \
-                    "${EXPECTED_TARGET_EXE}" "${DURATION}" <<'PY'
-import sys
-
-massif_path, quality_path, expected_target, requested_duration = sys.argv[1:]
-requested_duration = int(requested_duration)
-snapshots = []
-current = None
-header = {}
-peak_tree_count = 0
-with open(massif_path, encoding="utf-8", errors="replace") as stream:
-    for raw_line in stream:
-        line = raw_line.rstrip("\n")
-        if line.startswith("cmd:"):
-            header["cmd"] = line.split(":", 1)[1].strip()
-        elif line.startswith("time_unit:"):
-            header["time_unit"] = line.split(":", 1)[1].strip()
-        elif line == "heap_tree=peak":
-            peak_tree_count += 1
-        if line.startswith("snapshot="):
-            if current is not None:
-                snapshots.append(current)
-            current = {"snapshot": int(line.split("=", 1)[1])}
-        elif current is not None and "=" in line:
-            key, value = line.split("=", 1)
-            if key in {"time", "mem_heap_B", "mem_heap_extra_B", "mem_stacks_B"}:
-                current[key] = int(value)
-if current is not None:
-    snapshots.append(current)
-
-required_keys = {"snapshot", "time", "mem_heap_B", "mem_heap_extra_B", "mem_stacks_B"}
-if len(snapshots) < 20:
-    raise SystemExit("Massif produced fewer than 20 snapshots")
-if any(required_keys - snapshot.keys() for snapshot in snapshots):
-    raise SystemExit("Massif snapshot is incomplete")
-if expected_target not in header.get("cmd", ""):
-    raise SystemExit("Massif command does not identify the target ELF")
-if header.get("time_unit") != "ms":
-    raise SystemExit("Massif time unit is not milliseconds")
-if peak_tree_count == 0 or max(snapshot["mem_stacks_B"] for snapshot in snapshots) <= 0:
-    raise SystemExit("Massif output does not contain stack-aware peak detail")
-
-def total_bytes(snapshot):
-    return snapshot["mem_heap_B"] + snapshot["mem_heap_extra_B"] + snapshot["mem_stacks_B"]
-
-peak = max(snapshots, key=total_bytes)
-final = snapshots[-1]
-if final["time"] < requested_duration * 1000:
-    raise SystemExit("Massif timeline is shorter than the formal window")
-with open(quality_path, "w", encoding="utf-8") as stream:
-    stream.write("parse_valid=true\n")
-    stream.write(f"snapshot_count={len(snapshots)}\n")
-    stream.write(f"peak_snapshot={peak['snapshot']}\n")
-    stream.write(f"peak_time_ms={peak['time']}\n")
-    stream.write(f"peak_total_bytes={total_bytes(peak)}\n")
-    stream.write(f"final_snapshot={final['snapshot']}\n")
-    stream.write(f"final_time_ms={final['time']}\n")
-    stream.write(f"final_total_bytes={total_bytes(final)}\n")
-    stream.write(f"peak_tree_count={peak_tree_count}\n")
-    stream.write("target_verified=true\n")
-    stream.write("gate_pass=true\n")
-PY
+                if ! python3 "${PROFILE_REPORT_PARSER}" massif \
+                    "${massif_file}" "${OUTPUT_DIR}/massif-quality.txt" \
+                    "${EXPECTED_TARGET_EXE}" "${DURATION}"
                 then
                     invalidate "Massif output is incomplete or unparseable"
                 else
@@ -1664,80 +1142,10 @@ PY
             mapfile -t memcheck_files < <(find "${OUTPUT_DIR}" -maxdepth 1 -type f -name 'memcheck.*.log' | sort)
             if (( ${#memcheck_files[@]} != 1 )); then
                 invalidate "Memcheck must produce exactly one log"
-            elif ! python3 - "${memcheck_files[0]}" \
+            elif ! python3 "${PROFILE_REPORT_PARSER}" memcheck \
+                "${memcheck_files[0]}" \
                 "${OUTPUT_DIR}/memcheck-summary.txt" "${OUTPUT_DIR}/memcheck-quality.txt" \
-                "${EXPECTED_TARGET_EXE}" <<'PY'
-import re
-import sys
-
-log_path, summary_path, quality_path, expected_target = sys.argv[1:]
-with open(log_path, encoding="utf-8", errors="replace") as stream:
-    text = stream.read()
-
-command_match = re.search(r"^==\d+== Command:\s+(.+)$", text, re.MULTILINE)
-if command_match is None or expected_target not in command_match.group(1):
-    raise SystemExit("Memcheck report does not identify the target ELF")
-
-required_patterns = (
-    r"HEAP SUMMARY:",
-    r"in use at exit:",
-    r"total heap usage:",
-    r"LEAK SUMMARY:",
-    r"definitely lost:\s+[\d,]+ bytes",
-    r"indirectly lost:\s+[\d,]+ bytes",
-    r"possibly lost:\s+[\d,]+ bytes",
-    r"still reachable:\s+[\d,]+ bytes",
-    r"ERROR SUMMARY:\s+\d+ errors? from \d+ contexts?",
-)
-missing = [pattern for pattern in required_patterns if re.search(pattern, text) is None]
-if missing:
-    print("missing Memcheck sections: " + ", ".join(missing), file=sys.stderr)
-    raise SystemExit(1)
-
-def bytes_for(label):
-    match = re.search(rf"{label}:\s+([\d,]+) bytes", text)
-    return int(match.group(1).replace(",", ""))
-
-def matching_line(fragment):
-    return next(line for line in text.splitlines() if fragment in line)
-
-definite_bytes = bytes_for("definitely lost")
-indirect_bytes = bytes_for("indirectly lost")
-possible_bytes = bytes_for("possibly lost")
-reachable_bytes = bytes_for("still reachable")
-error_count = int(re.search(r"ERROR SUMMARY:\s+(\d+) errors?", text).group(1))
-invalid_access = re.search(
-    r"Invalid (?:read|write|free|delete)|Mismatched free|Source and destination overlap",
-    text,
-) is not None
-other_error = error_count > 0 and not invalid_access and definite_bytes == 0 and indirect_bytes == 0
-finding = error_count > 0 or definite_bytes > 0 or indirect_bytes > 0
-
-summary_fragments = (
-    "HEAP SUMMARY:",
-    "in use at exit:",
-    "total heap usage:",
-    "LEAK SUMMARY:",
-    "definitely lost:",
-    "indirectly lost:",
-    "possibly lost:",
-    "still reachable:",
-    "ERROR SUMMARY:",
-)
-with open(summary_path, "w", encoding="utf-8") as stream:
-    for fragment in summary_fragments:
-        stream.write(matching_line(fragment) + "\n")
-with open(quality_path, "w", encoding="utf-8") as stream:
-    stream.write(f"definite_lost_bytes={definite_bytes}\n")
-    stream.write(f"indirect_lost_bytes={indirect_bytes}\n")
-    stream.write(f"possibly_lost_bytes={possible_bytes}\n")
-    stream.write(f"still_reachable_bytes={reachable_bytes}\n")
-    stream.write(f"error_count={error_count}\n")
-    stream.write(f"invalid_access={str(invalid_access).lower()}\n")
-    stream.write(f"other_error={str(other_error).lower()}\n")
-    stream.write(f"finding={str(finding).lower()}\n")
-    stream.write("target_verified=true\n")
-PY
+                "${EXPECTED_TARGET_EXE}"
             then
                 invalidate "Memcheck report is incomplete or unparseable"
             else

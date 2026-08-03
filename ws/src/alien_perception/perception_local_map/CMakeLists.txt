@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.8)
 project(perception_local_map)
 
+option(
+  PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS
+  "Compile profiling-only LTTng-UST stage latency tracepoints"
+  OFF
+)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -25,6 +31,23 @@ find_package(diagnostic_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 
+if(PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(LTTNG_UST REQUIRED IMPORTED_TARGET lttng-ust)
+  add_library(perception_local_map_stage_latency SHARED
+    src/StageLatencyInstrumentation.cpp
+    src/StageLatencyTracepoints.cpp
+  )
+  target_sources(perception_local_map_stage_latency PRIVATE
+    src/StageLatencyInstrumentation.hpp
+    src/StageLatencyTracepoints.hpp
+  )
+  target_include_directories(perception_local_map_stage_latency PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+  )
+  target_link_libraries(perception_local_map_stage_latency PRIVATE PkgConfig::LTTNG_UST)
+endif()
+
 set(PERCEPTION_LOCAL_MAP_CORE_HEADERS
   include/perception_local_map/MapTypes.hpp
   include/perception_local_map/OccupancyBackend.hpp
@@ -47,6 +70,12 @@ target_include_directories(perception_local_map_core PUBLIC
 )
 target_compile_features(perception_local_map_core PUBLIC cxx_std_17)
 target_link_libraries(perception_local_map_core PUBLIC perception_core::perception_core)
+if(PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS)
+  target_compile_definitions(perception_local_map_core PRIVATE
+    PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS=1
+  )
+  target_link_libraries(perception_local_map_core PRIVATE perception_local_map_stage_latency)
+endif()
 
 add_library(perception_local_map_octomap STATIC
   src/OctoMapBackend.cpp
@@ -82,6 +111,12 @@ target_link_libraries(perception_local_map_node
   perception_local_map_octomap
   ${OCTOMAP_LIBRARIES}
 )
+if(PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS)
+  target_compile_definitions(perception_local_map_node PRIVATE
+    PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS=1
+  )
+  target_link_libraries(perception_local_map_node perception_local_map_stage_latency)
+endif()
 if(TARGET perception_interfaces__rosidl_typesupport_cpp)
   target_link_libraries(perception_local_map_node perception_interfaces__rosidl_typesupport_cpp)
 endif()
@@ -93,7 +128,14 @@ if(perception_interfaces_FOUND)
 endif()
 
 install(DIRECTORY include/ DESTINATION include)
-install(TARGETS perception_local_map_core perception_local_map_octomap
+set(PERCEPTION_LOCAL_MAP_EXPORTED_TARGETS
+  perception_local_map_core
+  perception_local_map_octomap
+)
+if(PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS)
+  list(APPEND PERCEPTION_LOCAL_MAP_EXPORTED_TARGETS perception_local_map_stage_latency)
+endif()
+install(TARGETS ${PERCEPTION_LOCAL_MAP_EXPORTED_TARGETS}
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib

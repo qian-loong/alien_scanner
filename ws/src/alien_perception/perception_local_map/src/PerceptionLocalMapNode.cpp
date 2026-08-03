@@ -1,5 +1,9 @@
 #include "OctoMapSnapshotBridge.hpp"
 
+#ifdef PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS
+#include "StageLatencyInstrumentation.hpp"
+#endif
+
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
@@ -533,6 +537,9 @@ private:
 
     void on_observation(const perception_interfaces::msg::LidarObservation & message)
     {
+#ifdef PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS
+        StageLatency::CallbackScope stage_latency_callback;
+#endif
         std::optional<Perception::SensorID> decoded_sensor_id;
         const std::int64_t receive_time = monotonic_now_ns();
         try {
@@ -542,6 +549,9 @@ private:
             const auto result = mapper_->submit_observation(
                     observation, lookup_extrinsic(observation), now);
             if(result.status == InputStatus::Applied && result.receipt.has_value()) {
+#ifdef PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS
+                stage_latency_callback.mark_applied(result.receipt->revision);
+#endif
                 publish_octomap(result.receipt.value());
             }
             else if(result.status != InputStatus::NoEvidence) {
@@ -569,6 +579,10 @@ private:
 
     void publish_octomap(const CommitReceipt & receipt)
     {
+#ifdef PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS
+        StageLatency::StageScope stage_latency_scope(
+                StageLatency::Stage::SnapshotTotal, receipt.revision);
+#endif
         auto acquired = mapper_->acquire_read_transaction(receipt);
         if(acquired.status == AcquireStatus::Superseded) {
             const auto latest = mapper_->state(monotonic_now_ns()).identity;
@@ -597,6 +611,10 @@ private:
 
     void publish_state(std::int64_t monotonic_now)
     {
+#ifdef PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS
+        StageLatency::StageScope stage_latency_scope(
+                StageLatency::Stage::StatePublication);
+#endif
         const auto state = mapper_->state(monotonic_now);
         auto published_health = state.health;
         auto published_capabilities = state.effective_capabilities;
