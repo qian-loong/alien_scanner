@@ -195,7 +195,7 @@ docs/perception-real-chain-retest.md.
 
 | Hash | Message |
 |------|---------|
-| (pending) | this session's commit |
+| `1197b35` | feat(profiling): real-chain C1/C2 retest with cycle-replay leak harness |
 
 ### Testing
 
