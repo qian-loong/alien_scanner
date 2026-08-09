@@ -6,16 +6,22 @@
 
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
+#include "diagnostic_msgs/msg/key_value.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "octomap_msgs/msg/octomap.hpp"
 #include "perception_core/health/MapperContractFingerprint.hpp"
 #include "perception_core/observation/lidar_observation.hpp"
+#include "perception_local_map/AsyncMapUpdateProducer.hpp"
 #include "perception_local_map/LocalObservationMapper.hpp"
 #include "perception_local_map/OctoMapBackend.hpp"
 #include "perception_interfaces/msg/health_state.hpp"
 #include "perception_interfaces/msg/lidar_observation.hpp"
 #include "perception_interfaces/msg/local_map_state.hpp"
+#include "perception_interfaces/msg/map_update.hpp"
 #include "perception_interfaces/msg/pose_estimate.hpp"
+#include "perception_interfaces/srv/request_map_resync.hpp"
+#include "perception_map_update/ros/MapUpdateConversions.hpp"
+#include "perception_map_update/ros/MapUpdateParameters.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "tf2/exceptions.hpp"
 #include "tf2_ros/buffer.h"
@@ -29,8 +35,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <deque>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <random>
 #include <stdexcept>
@@ -258,6 +266,12 @@ public:
         health_topic_ = declare_parameter<std::string>("health_topic", "perception/health");
         state_topic_ = declare_parameter<std::string>("state_topic", "local_map/state");
         octomap_topic_ = declare_parameter<std::string>("octomap_topic", "local_map/octomap");
+        map_update_topic_ = declare_parameter<std::string>(
+                "map_update_topic", "local_map/updates");
+        map_resync_service_name_ = declare_parameter<std::string>(
+                "map_resync_service", "local_map/request_resync");
+        map_update_enabled_ = declare_parameter<bool>("map_update_enabled", false);
+        map_update_limits_ = PerceptionMapUpdate::Ros::declare_map_update_limits(*this);
         body_frame_ = declare_parameter<std::string>("body_frame", "base_link");
         health_validity_ns_ = seconds_to_ns(
                 declare_parameter<double>("health_timeout_s", 1.0), "health_timeout_s");
@@ -290,6 +304,43 @@ public:
                 octomap_topic_, rclcpp::QoS(1).reliable().transient_local());
         diagnostics_publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
                 "/diagnostics", 10);
+        if(map_update_enabled_) {
+            map_update_publisher_ =
+                    create_publisher<perception_interfaces::msg::MapUpdate>(
+                            map_update_topic_,
+                            rclcpp::QoS(rclcpp::KeepLast(1))
+                                    .reliable()
+                                    .durability_volatile());
+            map_update_producer_ = std::make_unique<AsyncMapUpdateProducer>(
+                    *mapper_,
+                    [this](const PerceptionMapUpdate::MapUpdate & update) {
+                        perception_interfaces::msg::MapUpdate message;
+                        message.header.stamp = get_clock()->now();
+                        std::string diagnostic;
+                        if(!PerceptionMapUpdate::Ros::encode_map_update(
+                                   update, message, diagnostic)) {
+                            RCLCPP_ERROR(
+                                    get_logger(),
+                                    "failed to encode map update: %s",
+                                    diagnostic.c_str());
+                            return false;
+                        }
+                        map_update_publisher_->publish(message);
+                        return true;
+                    },
+                    map_update_limits_);
+            resync_ledger_ = std::make_unique<PerceptionMapUpdate::ResyncRequestLedger>(
+                    map_update_limits_);
+            resync_service_ = create_service<perception_interfaces::srv::RequestMapResync>(
+                    map_resync_service_name_,
+                    [this](
+                            const std::shared_ptr<
+                                    perception_interfaces::srv::RequestMapResync::Request> request,
+                            std::shared_ptr<
+                                    perception_interfaces::srv::RequestMapResync::Response> response) {
+                        on_resync_request(*request, *response);
+                    });
+        }
 
         observation_subscription_ = create_subscription<perception_interfaces::msg::LidarObservation>(
                 observation_topic_, rclcpp::SensorDataQoS(),
@@ -313,12 +364,23 @@ public:
                     const auto now = monotonic_now_ns();
                     mapper_->tick(now);
                     publish_state(now);
+                    dispatch_resync_request();
+                    publish_map_update_diagnostics();
                 });
         publish_state(monotonic_now_ns());
     }
 
+    ~PerceptionLocalMapNode() override
+    {
+        if(map_update_producer_) {
+            map_update_producer_->shutdown();
+        }
+    }
+
 private:
     std::unique_ptr<LocalObservationMapper> mapper_;
+    std::unique_ptr<AsyncMapUpdateProducer> map_update_producer_;
+    std::unique_ptr<PerceptionMapUpdate::ResyncRequestLedger> resync_ledger_;
     tf2_ros::Buffer                         tf_buffer_;
     tf2_ros::TransformListener              tf_listener_;
 
@@ -327,7 +389,11 @@ private:
     std::string health_topic_;
     std::string state_topic_;
     std::string octomap_topic_;
+    std::string map_update_topic_;
+    std::string map_resync_service_name_;
     std::string body_frame_;
+    bool map_update_enabled_ = false;
+    PerceptionMapUpdate::MapUpdateLimits map_update_limits_;
     std::int64_t health_validity_ns_ = 0;
     std::atomic<std::uint64_t> state_sequence_ {0};
 
@@ -336,8 +402,13 @@ private:
     rclcpp::Subscription<perception_interfaces::msg::HealthState>::SharedPtr health_subscription_;
     rclcpp::Publisher<perception_interfaces::msg::LocalMapState>::SharedPtr state_publisher_;
     rclcpp::Publisher<octomap_msgs::msg::Octomap>::SharedPtr octomap_publisher_;
+    rclcpp::Publisher<perception_interfaces::msg::MapUpdate>::SharedPtr map_update_publisher_;
     rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_publisher_;
+    rclcpp::Service<perception_interfaces::srv::RequestMapResync>::SharedPtr resync_service_;
     rclcpp::TimerBase::SharedPtr heartbeat_timer_;
+    std::mutex pending_resync_mutex_;
+    std::deque<std::string> pending_resync_correlations_;
+    std::optional<std::string> active_resync_correlation_;
 
     static std::int64_t seconds_to_ns(double value, const char * name)
     {
@@ -552,6 +623,12 @@ private:
 #ifdef PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS
                 stage_latency_callback.mark_applied(result.receipt->revision);
 #endif
+                if(map_update_producer_
+                   && !map_update_producer_->enqueue(result.receipt.value())) {
+                    publish_diagnostic(
+                            diagnostic_msgs::msg::DiagnosticStatus::WARN,
+                            "map update producer rejected commit receipt");
+                }
                 publish_octomap(result.receipt.value());
             }
             else if(result.status != InputStatus::NoEvidence) {
@@ -574,6 +651,79 @@ private:
         catch(const std::exception & error) {
             publish_diagnostic(diagnostic_msgs::msg::DiagnosticStatus::ERROR, error.what());
             publish_state(monotonic_now_ns());
+        }
+    }
+
+    void on_resync_request(
+            const perception_interfaces::srv::RequestMapResync::Request & message,
+            perception_interfaces::srv::RequestMapResync::Response & response_message)
+    {
+        const auto state = mapper_->state(monotonic_now_ns());
+        const PerceptionMapUpdate::SourceIdentity current_source {
+                state.identity.vehicle_id,
+                state.identity.mapper_session,
+                state.identity.map_epoch};
+        PerceptionMapUpdate::ResyncResponse response {
+                false, {}, current_source, state.identity.revision, {}};
+        PerceptionMapUpdate::ResyncRequest request;
+        std::string diagnostic;
+        if(!PerceptionMapUpdate::Ros::decode_resync_request(
+                   message, request, map_update_limits_, diagnostic)) {
+            response.diagnostic = std::move(diagnostic);
+        } else if(state.identity.revision == 0U || !state.last_commit.has_value()) {
+            response.diagnostic = "producer has no committed map revision";
+        } else if(!resync_ledger_ || !map_update_producer_) {
+            response.diagnostic = "map update producer is disabled";
+        } else {
+            response = resync_ledger_->accept(
+                    request, current_source, state.identity.revision);
+            if(response.accepted) {
+                std::lock_guard<std::mutex> lock(pending_resync_mutex_);
+                const bool already_active = active_resync_correlation_.has_value()
+                                            && *active_resync_correlation_
+                                                       == response.correlation_id;
+                const bool already_pending = std::find(
+                                                     pending_resync_correlations_.begin(),
+                                                     pending_resync_correlations_.end(),
+                                                     response.correlation_id)
+                                             != pending_resync_correlations_.end();
+                if(!already_active && !already_pending) {
+                    pending_resync_correlations_.push_back(response.correlation_id);
+                }
+            }
+        }
+        PerceptionMapUpdate::Ros::encode_resync_response(response, response_message);
+    }
+
+    void dispatch_resync_request()
+    {
+        if(!map_update_producer_) {
+            return;
+        }
+        const auto producer = map_update_producer_->diagnostics();
+        std::optional<std::string> correlation;
+        {
+            std::lock_guard<std::mutex> lock(pending_resync_mutex_);
+            if(active_resync_correlation_.has_value() && !producer.resync_pending) {
+                active_resync_correlation_.reset();
+            }
+            if(!active_resync_correlation_.has_value()
+               && !pending_resync_correlations_.empty()) {
+                active_resync_correlation_ =
+                        std::move(pending_resync_correlations_.front());
+                pending_resync_correlations_.pop_front();
+                correlation = active_resync_correlation_;
+            }
+        }
+        if(!correlation.has_value()) {
+            return;
+        }
+        if(!map_update_producer_->request_keyframe(*correlation)) {
+            std::lock_guard<std::mutex> lock(pending_resync_mutex_);
+            if(active_resync_correlation_ == correlation) {
+                active_resync_correlation_.reset();
+                pending_resync_correlations_.push_front(std::move(*correlation));
+            }
         }
     }
 
@@ -607,6 +757,59 @@ private:
         message.header.stamp = get_clock()->now();
         message.header.frame_id = metadata->geometry.frame_id;
         octomap_publisher_->publish(message);
+    }
+
+    void publish_map_update_diagnostics()
+    {
+        if(!map_update_producer_) {
+            return;
+        }
+        const auto producer = map_update_producer_->diagnostics();
+        diagnostic_msgs::msg::DiagnosticArray array;
+        array.header.stamp = get_clock()->now();
+        diagnostic_msgs::msg::DiagnosticStatus status;
+        status.name = get_fully_qualified_name() + std::string(": map_update_producer");
+        status.hardware_id = "vehicle-local";
+        status.level = producer.last_diagnostic.empty()
+                               ? diagnostic_msgs::msg::DiagnosticStatus::OK
+                               : diagnostic_msgs::msg::DiagnosticStatus::WARN;
+        status.message = producer.last_diagnostic.empty()
+                                 ? "running"
+                                 : producer.last_diagnostic;
+        const auto append = [&](const std::string & key, const auto & value) {
+            diagnostic_msgs::msg::KeyValue field;
+            field.key = key;
+            field.value = std::to_string(value);
+            status.values.push_back(std::move(field));
+        };
+        append("pending", producer.pending);
+        append("in_flight", producer.in_flight);
+        append("pending_revision", producer.pending_revision);
+        append("in_flight_revision", producer.in_flight_revision);
+        append("published_revision", producer.published_revision);
+        append("coalesced_receipts", producer.coalesced_receipts);
+        append("superseded_receipts", producer.superseded_receipts);
+        append("published_keyframes", producer.published_keyframes);
+        append("published_deltas", producer.published_deltas);
+        append("revision_only_deltas", producer.revision_only_deltas);
+        append("publish_failures", producer.publish_failures);
+        append("resource_rejections", producer.resource_rejections);
+        append("snapshot_cells", producer.last_snapshot_cells);
+        append("delta_operations", producer.last_operation_count);
+        append("payload_bytes", producer.last_payload_bytes);
+        append("acquire_duration_ns", producer.last_acquire_duration_ns);
+        append("materialize_duration_ns", producer.last_materialize_duration_ns);
+        append("traversal_duration_ns", producer.last_traversal_duration_ns);
+        append("canonicalize_duration_ns", producer.last_canonicalize_duration_ns);
+        append("content_hash_duration_ns", producer.last_content_hash_duration_ns);
+        append("prepare_duration_ns", producer.last_prepare_duration_ns);
+        append("validation_duration_ns", producer.last_validation_duration_ns);
+        append("diff_duration_ns", producer.last_diff_duration_ns);
+        append("encode_duration_ns", producer.last_encode_duration_ns);
+        append("update_hash_duration_ns", producer.last_update_hash_duration_ns);
+        append("publish_duration_ns", producer.last_publish_duration_ns);
+        array.status.push_back(std::move(status));
+        diagnostics_publisher_->publish(array);
     }
 
     void publish_state(std::int64_t monotonic_now)

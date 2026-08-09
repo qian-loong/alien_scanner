@@ -1,0 +1,32 @@
+<launch>
+  <arg name="show_rviz" default="true"/>
+  <arg name="scenario_mode" default="canonical"/>
+  <arg name="sequence_count" default="60"/>
+  <arg name="visualization_publish_rate_hz" default="1.0"/>
+  <arg name="scenario_step_period_s" default="2.0"/>
+  <arg name="enable_resync_scenario" default="true"/>
+  <arg name="enable_epoch_reset_scenario" default="true"/>
+
+  <node pkg="perception_profiling"
+        exec="map_update_replay_visualization_node"
+        name="map_update_replay_visualization"
+        output="screen">
+    <param name="scenario_mode" value="$(var scenario_mode)"/>
+    <param name="sequence_count" value="$(var sequence_count)"/>
+    <param name="visualization_publish_rate_hz"
+           value="$(var visualization_publish_rate_hz)"/>
+    <param name="scenario_step_period_s"
+           value="$(var scenario_step_period_s)"/>
+    <param name="enable_resync_scenario"
+           value="$(var enable_resync_scenario)"/>
+    <param name="enable_epoch_reset_scenario"
+           value="$(var enable_epoch_reset_scenario)"/>
+  </node>
+
+  <node if="$(var show_rviz)"
+        pkg="rviz2"
+        exec="rviz2"
+        name="map_update_replay_rviz"
+        args="-d $(find-pkg-share perception_profiling)/config/map_update_replay.rviz"
+        output="screen"/>
+</launch>

@@ -7,6 +7,7 @@
 #include "perception_interfaces/msg/health_state.hpp"
 #include "perception_interfaces/msg/lidar_observation.hpp"
 #include "perception_interfaces/msg/local_map_state.hpp"
+#include "perception_interfaces/msg/map_update.hpp"
 #include "perception_interfaces/msg/pose_estimate.hpp"
 
 #include "builtin_interfaces/msg/time.hpp"
@@ -30,6 +31,9 @@ namespace PerceptionProfiling::Ros {
             std::int64_t receipt_monotonic_ns);
     HealthProjection to_projection(
             const perception_interfaces::msg::HealthState & message,
+            std::int64_t receipt_monotonic_ns);
+    MapUpdateProjection to_projection(
+            const perception_interfaces::msg::MapUpdate & message,
             std::int64_t receipt_monotonic_ns);
 
 }// namespace PerceptionProfiling::Ros

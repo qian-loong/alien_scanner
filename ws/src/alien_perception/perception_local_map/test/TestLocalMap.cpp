@@ -2,6 +2,8 @@
 
 #include "perception_core/health/MapperContractFingerprint.hpp"
 #include "perception_fixtures/FixtureScene.hpp"
+#include "perception_local_map/AsyncMapUpdateProducer.hpp"
+#include "perception_local_map/CanonicalSnapshotAdapter.hpp"
 #include "perception_local_map/LocalObservationMapper.hpp"
 #include "perception_local_map/OctoMapBackend.hpp"
 
@@ -11,6 +13,7 @@
 #include <chrono>
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <future>
 #include <limits>
@@ -251,6 +254,33 @@ namespace PerceptionLocalMap::Test {
                     });
         }
 
+        CanonicalSnapshotResult materialize_single_hit(
+                const BackendFactory & factory,
+                const PerceptionMapUpdate::MapUpdateLimits & limits = {})
+        {
+            const auto config = mapper_config(Perception::RayEvidenceCapability::HitOnly);
+            LocalObservationMapper mapper(config, factory);
+            EXPECT_TRUE(mapper.submit_health(health_for(config, 10)));
+            const auto applied = mapper.submit_observation(
+                    scan_observation(
+                            Perception::RayEvidenceCapability::HitOnly,
+                            Perception::Timestamp {1},
+                            2.0F),
+                    extrinsic(),
+                    20);
+            EXPECT_EQ(applied.status, InputStatus::Applied);
+            EXPECT_TRUE(applied.receipt.has_value());
+            auto acquired = mapper.acquire_read_transaction(*applied.receipt);
+            EXPECT_EQ(acquired.status, AcquireStatus::Ready);
+            EXPECT_TRUE(acquired.transaction.has_value());
+            if(!acquired.transaction.has_value()) {
+                return {CanonicalSnapshotStatus::TransactionClosed, std::nullopt,
+                        "test failed to acquire transaction", {}};
+            }
+            const CanonicalSnapshotAdapter adapter(limits);
+            return adapter.materialize(*acquired.transaction);
+        }
+
         class ThrowOnceBackend final : public ILocalOccupancyBackend
         {
         public:
@@ -383,6 +413,279 @@ namespace PerceptionLocalMap::Test {
         run_backend_conformance([](const MapGeometry & value) {
             return std::make_unique<OctoMapBackend>(value);
         });
+    }
+
+    TEST(CanonicalSnapshotAdapterTest, BackendsProduceTheSameExactSnapshot)
+    {
+        const auto deterministic = materialize_single_hit(
+                [](const MapGeometry & value) {
+                    return std::make_unique<DeterministicVoxelBackend>(value);
+                });
+        const auto octomap = materialize_single_hit(
+                [](const MapGeometry & value) {
+                    return std::make_unique<OctoMapBackend>(value);
+                });
+        ASSERT_EQ(deterministic.status, CanonicalSnapshotStatus::Ready)
+                << deterministic.diagnostic;
+        ASSERT_EQ(octomap.status, CanonicalSnapshotStatus::Ready) << octomap.diagnostic;
+        ASSERT_TRUE(deterministic.snapshot.has_value());
+        ASSERT_TRUE(octomap.snapshot.has_value());
+        EXPECT_EQ(deterministic.snapshot->source, octomap.snapshot->source);
+        EXPECT_TRUE(deterministic.snapshot->geometry == octomap.snapshot->geometry);
+        EXPECT_EQ(deterministic.snapshot->revision, 1U);
+        EXPECT_EQ(deterministic.snapshot->revision, octomap.snapshot->revision);
+        EXPECT_EQ(deterministic.snapshot->latest_commit, octomap.snapshot->latest_commit);
+        EXPECT_EQ(deterministic.snapshot->cells, octomap.snapshot->cells);
+        EXPECT_EQ(
+                deterministic.snapshot->geometry_fingerprint,
+                octomap.snapshot->geometry_fingerprint);
+        EXPECT_EQ(deterministic.snapshot->content_hash, octomap.snapshot->content_hash);
+    }
+
+    TEST(CanonicalSnapshotAdapterTest, RejectsConfiguredCellLimit)
+    {
+        PerceptionMapUpdate::MapUpdateLimits limits;
+        limits.max_known_cells = 0U;
+        const auto result = materialize_single_hit(
+                [](const MapGeometry & value) {
+                    return std::make_unique<DeterministicVoxelBackend>(value);
+                },
+                limits);
+        EXPECT_EQ(result.status, CanonicalSnapshotStatus::ResourceLimit);
+        EXPECT_FALSE(result.snapshot.has_value());
+    }
+
+    TEST(AsyncMapUpdateProducerTest, CoalescesPendingReceiptsAndServesResync)
+    {
+        const auto config = mapper_config(Perception::RayEvidenceCapability::HitOnly);
+        auto mapper = make_mapper(config);
+        ASSERT_TRUE(mapper->submit_health(health_for(config, 10)));
+
+        std::mutex capture_mutex;
+        std::condition_variable capture_wake;
+        std::vector<PerceptionMapUpdate::MapUpdate> updates;
+        bool release_first_publish = false;
+        AsyncMapUpdateProducer async(
+                *mapper,
+                [&](const PerceptionMapUpdate::MapUpdate & update) {
+                    std::unique_lock<std::mutex> lock(capture_mutex);
+                    const bool first = updates.empty();
+                    updates.push_back(update);
+                    capture_wake.notify_all();
+                    if(first) {
+                        capture_wake.wait(lock, [&]() { return release_first_publish; });
+                    }
+                    return true;
+                });
+
+        const auto first = mapper->submit_observation(
+                scan_observation(
+                        Perception::RayEvidenceCapability::HitOnly,
+                        Perception::Timestamp {1},
+                        1.0F),
+                extrinsic(),
+                20);
+        ASSERT_EQ(first.status, InputStatus::Applied);
+        ASSERT_TRUE(async.enqueue(*first.receipt));
+        bool first_publish_arrived = false;
+        {
+            std::unique_lock<std::mutex> lock(capture_mutex);
+            first_publish_arrived = capture_wake.wait_for(
+                    lock, std::chrono::seconds(2), [&]() { return !updates.empty(); });
+        }
+        if(!first_publish_arrived) {
+            {
+                std::lock_guard<std::mutex> lock(capture_mutex);
+                release_first_publish = true;
+            }
+            capture_wake.notify_all();
+        }
+        ASSERT_TRUE(first_publish_arrived);
+
+        const auto second = mapper->submit_observation(
+                scan_observation(
+                        Perception::RayEvidenceCapability::HitOnly,
+                        Perception::Timestamp {2},
+                        2.0F),
+                extrinsic(),
+                21);
+        const auto third = mapper->submit_observation(
+                scan_observation(
+                        Perception::RayEvidenceCapability::HitOnly,
+                        Perception::Timestamp {3},
+                        3.0F),
+                extrinsic(),
+                22);
+        const bool second_queued = second.status == InputStatus::Applied
+                                   && second.receipt.has_value()
+                                   && async.enqueue(*second.receipt);
+        const bool third_queued = third.status == InputStatus::Applied
+                                  && third.receipt.has_value()
+                                  && async.enqueue(*third.receipt);
+        {
+            std::lock_guard<std::mutex> lock(capture_mutex);
+            release_first_publish = true;
+        }
+        capture_wake.notify_all();
+        ASSERT_EQ(second.status, InputStatus::Applied);
+        ASSERT_EQ(third.status, InputStatus::Applied);
+        ASSERT_TRUE(second_queued);
+        ASSERT_TRUE(third_queued);
+        {
+            std::unique_lock<std::mutex> lock(capture_mutex);
+            ASSERT_TRUE(capture_wake.wait_for(
+                    lock, std::chrono::seconds(2), [&]() { return updates.size() >= 2U; }));
+        }
+
+        ASSERT_TRUE(async.request_keyframe("resync-test"));
+        {
+            std::unique_lock<std::mutex> lock(capture_mutex);
+            ASSERT_TRUE(capture_wake.wait_for(
+                    lock, std::chrono::seconds(2), [&]() { return updates.size() >= 3U; }));
+        }
+        async.shutdown();
+
+        ASSERT_EQ(updates.size(), 3U);
+        EXPECT_EQ(updates[0].kind, PerceptionMapUpdate::UpdateKind::Keyframe);
+        EXPECT_EQ(updates[0].new_revision, first.receipt->revision);
+        EXPECT_EQ(updates[1].kind, PerceptionMapUpdate::UpdateKind::Delta);
+        EXPECT_EQ(updates[1].base_revision, first.receipt->revision);
+        EXPECT_EQ(updates[1].new_revision, third.receipt->revision);
+        EXPECT_EQ(updates[1].revision_span, 2U);
+        EXPECT_EQ(updates[1].observed_coalesced_receipt_count, 1U);
+        EXPECT_EQ(updates[2].kind, PerceptionMapUpdate::UpdateKind::Keyframe);
+        EXPECT_EQ(updates[2].new_revision, third.receipt->revision);
+        EXPECT_EQ(updates[2].correlation_id, "resync-test");
+
+        const auto diagnostics = async.diagnostics();
+        EXPECT_FALSE(diagnostics.running);
+        EXPECT_EQ(diagnostics.published_revision, third.receipt->revision);
+        EXPECT_EQ(diagnostics.published_keyframes, 2U);
+        EXPECT_EQ(diagnostics.published_deltas, 1U);
+        EXPECT_EQ(diagnostics.coalesced_receipts, 1U);
+        EXPECT_FALSE(diagnostics.resync_pending);
+        EXPECT_GE(diagnostics.last_traversal_duration_ns, 0);
+        EXPECT_GE(diagnostics.last_canonicalize_duration_ns, 0);
+        EXPECT_GE(diagnostics.last_content_hash_duration_ns, 0);
+        EXPECT_GE(diagnostics.last_validation_duration_ns, 0);
+        EXPECT_GE(diagnostics.last_encode_duration_ns, 0);
+        EXPECT_GE(diagnostics.last_update_hash_duration_ns, 0);
+    }
+
+    TEST(AsyncMapUpdateProducerTest, SupersededReceiptFallsForwardToCurrentRevision)
+    {
+        const auto config = mapper_config(Perception::RayEvidenceCapability::HitOnly);
+        auto mapper = make_mapper(config);
+        ASSERT_TRUE(mapper->submit_health(health_for(config, 10)));
+        const auto first = mapper->submit_observation(
+                scan_observation(
+                        Perception::RayEvidenceCapability::HitOnly,
+                        Perception::Timestamp {1},
+                        1.0F),
+                extrinsic(),
+                20);
+        const auto second = mapper->submit_observation(
+                scan_observation(
+                        Perception::RayEvidenceCapability::HitOnly,
+                        Perception::Timestamp {2},
+                        2.0F),
+                extrinsic(),
+                21);
+        ASSERT_EQ(first.status, InputStatus::Applied);
+        ASSERT_EQ(second.status, InputStatus::Applied);
+
+        std::mutex capture_mutex;
+        std::condition_variable capture_wake;
+        std::vector<PerceptionMapUpdate::MapUpdate> updates;
+        AsyncMapUpdateProducer async(
+                *mapper,
+                [&](const PerceptionMapUpdate::MapUpdate & update) {
+                    std::lock_guard<std::mutex> lock(capture_mutex);
+                    updates.push_back(update);
+                    capture_wake.notify_all();
+                    return true;
+                });
+        ASSERT_TRUE(async.enqueue(*first.receipt));
+        {
+            std::unique_lock<std::mutex> lock(capture_mutex);
+            ASSERT_TRUE(capture_wake.wait_for(
+                    lock, std::chrono::seconds(2), [&]() { return !updates.empty(); }));
+        }
+        async.shutdown();
+
+        ASSERT_EQ(updates.size(), 1U);
+        EXPECT_EQ(updates.front().kind, PerceptionMapUpdate::UpdateKind::Keyframe);
+        EXPECT_EQ(updates.front().new_revision, second.receipt->revision);
+        const auto diagnostics = async.diagnostics();
+        EXPECT_GE(diagnostics.superseded_receipts, 1U);
+        EXPECT_EQ(diagnostics.published_revision, second.receipt->revision);
+    }
+
+    TEST(AsyncMapUpdateProducerTest, FailedResyncPublishReleasesCorrelationForRetry)
+    {
+        const auto config = mapper_config(Perception::RayEvidenceCapability::HitOnly);
+        auto mapper = make_mapper(config);
+        ASSERT_TRUE(mapper->submit_health(health_for(config, 10)));
+        const auto applied = mapper->submit_observation(
+                scan_observation(
+                        Perception::RayEvidenceCapability::HitOnly,
+                        Perception::Timestamp {1},
+                        1.0F),
+                extrinsic(),
+                20);
+        ASSERT_EQ(applied.status, InputStatus::Applied);
+        ASSERT_TRUE(applied.receipt.has_value());
+
+        std::mutex capture_mutex;
+        std::condition_variable capture_wake;
+        std::vector<PerceptionMapUpdate::MapUpdate> attempts;
+        AsyncMapUpdateProducer async(
+                *mapper,
+                [&](const PerceptionMapUpdate::MapUpdate & update) {
+                    std::lock_guard<std::mutex> lock(capture_mutex);
+                    attempts.push_back(update);
+                    capture_wake.notify_all();
+                    return attempts.size() != 2U;
+                });
+        ASSERT_TRUE(async.enqueue(*applied.receipt));
+        {
+            std::unique_lock<std::mutex> lock(capture_mutex);
+            ASSERT_TRUE(capture_wake.wait_for(
+                    lock, std::chrono::seconds(2), [&]() { return attempts.size() >= 1U; }));
+        }
+
+        ASSERT_TRUE(async.request_keyframe("resync-failed"));
+        {
+            std::unique_lock<std::mutex> lock(capture_mutex);
+            ASSERT_TRUE(capture_wake.wait_for(
+                    lock, std::chrono::seconds(2), [&]() { return attempts.size() >= 2U; }));
+        }
+        const auto failure_deadline = std::chrono::steady_clock::now()
+                                      + std::chrono::seconds(2);
+        while(std::chrono::steady_clock::now() < failure_deadline) {
+            const auto diagnostics = async.diagnostics();
+            if(diagnostics.publish_failures >= 1U && !diagnostics.resync_pending) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        EXPECT_GE(async.diagnostics().publish_failures, 1U);
+        EXPECT_FALSE(async.diagnostics().resync_pending);
+
+        ASSERT_TRUE(async.request_keyframe("resync-retry"));
+        {
+            std::unique_lock<std::mutex> lock(capture_mutex);
+            ASSERT_TRUE(capture_wake.wait_for(
+                    lock, std::chrono::seconds(2), [&]() { return attempts.size() >= 3U; }));
+        }
+        async.shutdown();
+
+        ASSERT_EQ(attempts.size(), 3U);
+        EXPECT_EQ(attempts[0].correlation_id, "");
+        EXPECT_EQ(attempts[1].correlation_id, "resync-failed");
+        EXPECT_EQ(attempts[2].correlation_id, "resync-retry");
+        EXPECT_EQ(attempts[2].kind, PerceptionMapUpdate::UpdateKind::Keyframe);
+        EXPECT_FALSE(async.diagnostics().resync_pending);
     }
 
     TEST(BackendConformance, OctoMapChangedCountTracksVisibleClassification)
@@ -624,6 +927,15 @@ namespace PerceptionLocalMap::Test {
 
         auto transaction = mapper->acquire_read_transaction(second.receipt.value());
         ASSERT_EQ(transaction.status, AcquireStatus::Ready);
+        const auto metadata = transaction.transaction->metadata();
+        ASSERT_TRUE(metadata.has_value());
+        ASSERT_TRUE(metadata->last_commit.has_value());
+        EXPECT_EQ(metadata->last_commit->observation_stamp.nanoseconds, 2);
+        EXPECT_EQ(metadata->last_commit->changed_cell_count, 0U);
+        EXPECT_TRUE(metadata->contract_fingerprint.is_well_formed());
+        EXPECT_EQ(
+                metadata->contract_fingerprint.hex_digest,
+                mapper->state(23).contract_fingerprint.hex_digest);
         MapReadTransaction moved = std::move(transaction.transaction.value());
         EXPECT_TRUE(moved.is_open());
         EXPECT_FALSE(transaction.transaction->is_open());

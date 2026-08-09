@@ -16,6 +16,9 @@ topics:
   health: /cave_scene/perception/health
   local_map_state: /cave_scene/local_map/state
   local_map_octomap: /cave_scene/local_map/octomap
+  local_map_updates: /cave_scene/local_map/updates
+  local_map_resync: /cave_scene/local_map/request_resync
+  reconstructed_octomap: /cave_scene/map_update_receiver/octomap
 
 cave:
   mode: tree

@@ -211,3 +211,36 @@ docs/perception-real-chain-retest.md.
 
 - Follow-up finding F1: review epoch-retirement release path for OcTree/
   snapshot retention (~35 KiB/min drift, 27x below threshold)
+
+
+## Session 5: 完成 C3 性能与内存验收收口
+
+**Date**: 2026-08-09
+**Task**: 完成 C3 性能与内存验收收口
+**Branch**: `phase/4-c3-map-updates`
+
+### Summary
+
+完成 C3 profiling 数据面、分析器与回归测试收口；固化 3x300 秒矩阵、ASan/LSan、Memcheck 和容量边界证据；同步地图更新 QA、规范及父子任务状态，并归档 C3 任务。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b4e26b1` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

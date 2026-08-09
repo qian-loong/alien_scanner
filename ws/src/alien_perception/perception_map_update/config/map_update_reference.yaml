@@ -1,0 +1,18 @@
+perception_local_map_node:
+  ros__parameters:
+    map_update_enabled: true
+    map_update_topic: local_map/updates
+    map_resync_service: local_map/request_resync
+    map_update.delta_enabled: true
+    map_update.periodic_keyframe_revision_interval: 0
+
+perception_map_update_receiver_node:
+  ros__parameters:
+    map_update_topic: local_map/updates
+    local_map_state_topic: local_map/state
+    map_resync_service: local_map/request_resync
+    reconstructed_octomap_topic: map_update_receiver/octomap
+    requester_id: map-update-reference-receiver
+    resync_retry_period_s: 0.5
+    map_update.delta_enabled: true
+    map_update.periodic_keyframe_revision_interval: 0

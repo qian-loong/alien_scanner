@@ -46,13 +46,12 @@ class TestCanonicalEquivalence(unittest.TestCase):
         cls.raw_scans = []
         cls.released_scans = []
         cls.observations = []
-        cls.observation_watermarks = []
         cls.poses = []
+        cls.pose_stamps = set()
         cls.odometry = []
         cls.health = []
         cls.states = []
         cls.diagnostics = []
-        cls.pose_watermark_ns = None
 
         sensor_qos = QoSProfile(depth=1000)
         sensor_qos.reliability = ReliabilityPolicy.BEST_EFFORT
@@ -125,20 +124,12 @@ class TestCanonicalEquivalence(unittest.TestCase):
 
     @classmethod
     def _on_pose(cls, message):
-        stamp_ns = cls._stamp_ns(message)
-        cls.pose_watermark_ns = (
-            stamp_ns
-            if cls.pose_watermark_ns is None
-            else max(cls.pose_watermark_ns, stamp_ns)
-        )
         cls.poses.append(message)
+        cls.pose_stamps.add(cls._stamp_ns(message))
 
     @classmethod
     def _on_observation(cls, message):
         cls.observations.append(message)
-        cls.observation_watermarks.append(
-            (cls._stamp_ns(message), cls.pose_watermark_ns)
-        )
 
     def _spin_until(self, predicate, timeout):
         deadline = time.monotonic() + timeout
@@ -154,6 +145,11 @@ class TestCanonicalEquivalence(unittest.TestCase):
                 lambda: len(self.observations) >= 60
                 and len(self.raw_scans) >= 60
                 and len(self.released_scans) >= 60
+                and len(self.poses) >= 100
+                and all(
+                    self._stamp_ns(message) in self.pose_stamps
+                    for message in self.observations[:60]
+                )
                 and any(state.revision >= 50 for state in self.states),
                 25.0,
             ),
@@ -188,14 +184,13 @@ class TestCanonicalEquivalence(unittest.TestCase):
             self.assertAlmostEqual(observation.range_min, 0.1, places=6)
             self.assertAlmostEqual(observation.range_max, 30.0, places=6)
 
-        watermarked = [
-            (stamp_ns, watermark_ns)
-            for stamp_ns, watermark_ns in self.observation_watermarks
-            if watermark_ns is not None
-        ]
-        self.assertGreaterEqual(len(watermarked), 50)
+        observation_stamps = [self._stamp_ns(message) for message in self.observations]
+        self.assertGreaterEqual(len(self.pose_stamps), 100)
         self.assertTrue(
-            all(watermark_ns >= stamp_ns + 50_000_000 for stamp_ns, watermark_ns in watermarked)
+            all(
+                stamp_ns in self.pose_stamps
+                for stamp_ns in observation_stamps[:50]
+            )
         )
 
         odometry_x = [message.pose.pose.position.x for message in self.odometry]

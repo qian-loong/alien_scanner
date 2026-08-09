@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
-- **Last Active**: 2026-07-27
+- **Total Sessions**: 5
+- **Last Active**: 2026-08-09
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~153 | Active |
+| `journal-1.md` | ~246 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 5 | 2026-08-09 | 完成 C3 性能与内存验收收口 | `b4e26b1` | `phase/4-c3-map-updates` |
 | 4 | 2026-07-27 | Complete C2 local observation map | `8dbdba5` | `phase/4-perception-swarm-refactor` |
 | 3 | 2026-07-27 | Complete C1 perception input | `a61fb93`, `56274ea`, `f5aedf6` | `phase/4-perception-swarm-refactor` |
 | 2 | 2026-07-26 | 完成 C1 外部性能与内存剖析 | `101b79c` | `phase/4-perception-swarm-refactor` |

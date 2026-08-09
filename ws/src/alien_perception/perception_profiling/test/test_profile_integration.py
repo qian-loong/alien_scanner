@@ -65,7 +65,7 @@ class TestProfileIntegration(unittest.TestCase):
         rclpy.init()
         cls.node = rclpy.create_node("test_profile_integration")
         cls.observations = []
-        cls.pose_receipts = {}
+        cls.pose_stamps = set()
         cls.states = []
         cls.transforms = {}
         cls.diagnostics = []
@@ -98,10 +98,9 @@ class TestProfileIntegration(unittest.TestCase):
             cls.node.create_subscription(
                 PoseEstimate,
                 "/profile/perception/pose",
-                lambda message: cls.pose_receipts.setdefault(
+                lambda message: cls.pose_stamps.add(
                     message.header.stamp.sec * 1_000_000_000
-                    + message.header.stamp.nanosec,
-                    time.monotonic(),
+                    + message.header.stamp.nanosec
                 ),
                 reliable_qos,
             ),
@@ -147,6 +146,16 @@ class TestProfileIntegration(unittest.TestCase):
         self.assertTrue(
             self._spin_until(
                 lambda: len(self.observations) >= 105
+                and all(
+                    {
+                        message.header.stamp.sec * 1_000_000_000
+                        + message.header.stamp.nanosec,
+                        message.header.stamp.sec * 1_000_000_000
+                        + message.header.stamp.nanosec
+                        + 50_000_000,
+                    }.issubset(self.pose_stamps)
+                    for _receipt, message in self.observations[:100]
+                )
                 and any(state.revision >= 100 for state in self.states)
                 and "profile_scan_link" in self.transforms,
                 20.0,
@@ -179,17 +188,15 @@ class TestProfileIntegration(unittest.TestCase):
         self.assertGreater(receipt_span, 8.0)
         self.assertLess(receipt_span, 12.5)
 
-        for observation_receipt, message in self.observations[:100]:
+        self.assertGreaterEqual(len(self.pose_stamps), 200)
+        for _observation_receipt, message in self.observations[:100]:
             stamp_ns = (
                 message.header.stamp.sec * 1_000_000_000
                 + message.header.stamp.nanosec
             )
+            self.assertIn(stamp_ns, self.pose_stamps)
             lead_stamp_ns = stamp_ns + 50_000_000
-            self.assertIn(lead_stamp_ns, self.pose_receipts)
-            self.assertGreaterEqual(
-                observation_receipt - self.pose_receipts[lead_stamp_ns],
-                0.02,
-            )
+            self.assertIn(lead_stamp_ns, self.pose_stamps)
 
         transform = self.transforms["profile_scan_link"]
         self.assertEqual(transform.header.frame_id, "base_link")

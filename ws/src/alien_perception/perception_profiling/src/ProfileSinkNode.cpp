@@ -9,6 +9,8 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace PerceptionProfiling {
     namespace {
@@ -29,7 +31,9 @@ namespace PerceptionProfiling {
             : Node("perception_profile_sink")
             , scenario_(ProfileScenario::parse_mode(
                       declare_parameter<std::string>("mode", "bounded")))
-            , sink_(required_output_directory(), scenario_)
+            , c3_mode_(parse_c3_profile_mode(
+                      declare_parameter<std::string>("c3_mode", "disabled")))
+            , sink_(required_output_directory(), scenario_, c3_mode_)
         {
             const auto observation_topic = declare_parameter<std::string>(
                     "observation_topic", "/profile/perception/observations");
@@ -39,6 +43,8 @@ namespace PerceptionProfiling {
                     "health_topic", "/profile/perception/health");
             const auto octomap_topic = declare_parameter<std::string>(
                     "octomap_topic", "/profile/local_map/octomap");
+            const auto map_update_topic = declare_parameter<std::string>(
+                    "map_update_topic", "/profile/local_map/updates");
             const auto diagnostics_topic = declare_parameter<std::string>(
                     "diagnostics_topic", "/diagnostics");
 
@@ -81,9 +87,22 @@ namespace PerceptionProfiling {
                                 const auto receipt = monotonic_now_ns();
                                 const auto stamp = Ros::from_time(message->header.stamp).nanoseconds;
                                 for(const auto & status : message->status) {
-                                    sink_.record_diagnostic(
-                                            {receipt, stamp, status.level, status.name,
-                                             status.message});
+                                    try {
+                                        std::vector<std::pair<std::string, std::string>> values;
+                                        values.reserve(status.values.size());
+                                        for(const auto & field : status.values) {
+                                            values.emplace_back(field.key, field.value);
+                                        }
+                                        sink_.record_diagnostic(
+                                                {receipt, stamp, status.level, status.name,
+                                                 status.message, std::move(values)});
+                                    }
+                                    catch(const std::exception & error) {
+                                        RCLCPP_ERROR(
+                                                get_logger(),
+                                                "diagnostic sink: %s",
+                                                error.what());
+                                    }
                                 }
                             });
             octomap_subscription_ = create_subscription<octomap_msgs::msg::Octomap>(
@@ -96,7 +115,29 @@ namespace PerceptionProfiling {
                                  message->binary,
                                  message->resolution,
                                  message->data.size()});
-                    });
+                        });
+            if(c3_mode_ != C3ProfileMode::Disabled) {
+                map_update_subscription_ =
+                        create_subscription<perception_interfaces::msg::MapUpdate>(
+                                map_update_topic,
+                                rclcpp::QoS(rclcpp::KeepLast(100))
+                                        .reliable()
+                                        .durability_volatile(),
+                                [this](
+                                        const perception_interfaces::msg::MapUpdate::SharedPtr
+                                                message) {
+                                    try {
+                                        sink_.record_map_update(
+                                                Ros::to_projection(*message, monotonic_now_ns()));
+                                    }
+                                    catch(const std::exception & error) {
+                                        RCLCPP_ERROR(
+                                                get_logger(),
+                                                "map update sink: %s",
+                                                error.what());
+                                    }
+                                });
+            }
         }
 
         void finish(bool normal_completion)
@@ -106,6 +147,7 @@ namespace PerceptionProfiling {
 
     private:
         ProfileScenario scenario_;
+        C3ProfileMode c3_mode_ = C3ProfileMode::Disabled;
         ProfileDataSink sink_;
         std::uint64_t snapshot_ordinal_ = 0U;
         rclcpp::Subscription<perception_interfaces::msg::LidarObservation>::SharedPtr
@@ -117,6 +159,8 @@ namespace PerceptionProfiling {
         rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
                 diagnostics_subscription_;
         rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr octomap_subscription_;
+        rclcpp::Subscription<perception_interfaces::msg::MapUpdate>::SharedPtr
+                map_update_subscription_;
 
         std::string required_output_directory()
         {

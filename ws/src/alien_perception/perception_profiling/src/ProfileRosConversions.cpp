@@ -209,4 +209,31 @@ namespace PerceptionProfiling::Ros {
                 message.active_sensor_count};
     }
 
+    MapUpdateProjection to_projection(
+            const perception_interfaces::msg::MapUpdate & message,
+            std::int64_t receipt_monotonic_ns)
+    {
+        MapUpdateProjection result;
+        result.receipt_monotonic_ns = receipt_monotonic_ns;
+        result.stamp_ns = from_time(message.header.stamp).nanoseconds;
+        result.update_kind = message.update_kind;
+        result.vehicle_id = message.vehicle_id;
+        result.mapper_session = {
+                message.mapper_session_boot_time_ns,
+                message.mapper_session_random_suffix};
+        result.map_epoch = message.map_epoch;
+        result.base_revision = message.base_revision;
+        result.new_revision = message.new_revision;
+        result.revision_span = message.revision_span;
+        result.observed_coalesced_receipt_count =
+                message.observed_coalesced_receipt_count;
+        result.known_cell_count = message.known_cell_count;
+        result.operation_count = message.operation_count;
+        result.canonical_payload_bytes = message.canonical_payload_bytes;
+        result.base_content_hash = message.base_content_hash;
+        result.content_hash = message.content_hash;
+        result.update_hash = message.update_hash;
+        return result;
+    }
+
 }// namespace PerceptionProfiling::Ros

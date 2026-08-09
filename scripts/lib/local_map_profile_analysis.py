@@ -9,7 +9,13 @@ import statistics
 from pathlib import Path
 from typing import Any
 
-from .profile_analysis import parse_manifest, percentile_nearest_rank, slope_kib_per_minute
+from .profile_analysis import (
+    parse_manifest,
+    parse_pidstat,
+    parse_pidstat_samples,
+    percentile_nearest_rank,
+    slope_kib_per_minute,
+)
 from .stage_latency_analysis import EVENT_SET_STAGES
 
 
@@ -19,6 +25,8 @@ MAX_WINDOW_COUNT_SKEW = 2
 MAX_CHECKPOINT_SKEW_NS = 2_000_000_000
 BOUNDED_GROWTH_THRESHOLD_KIB_PER_MINUTE = 1024.0
 CAPACITY_BUCKET_SIZE = 200
+C3_MODES = {"disabled", "enabled", "keyframe-only"}
+C3_ZERO_HASH = "0" * 64
 
 REQUIRED_STAGE_NAMES = EVENT_SET_STAGES["full"]
 
@@ -337,6 +345,41 @@ def _memory_metrics(
     return result
 
 
+def _cpu_metrics(
+    run_dir: Path, tracee_pid: str, duration_s: float
+) -> dict[str, Any] | None:
+    """Summarize tracee-only pidstat CPU samples for the formal window."""
+
+    pidstat_path = run_dir / "pidstat.txt"
+    if not pidstat_path.exists():
+        return None
+    if duration_s >= 300.0:
+        values, _rss_values = parse_pidstat(run_dir, tracee_pid, duration_s)
+        leading_samples_excluded = 60
+        sample_scope = "steady_after_60s"
+    else:
+        values, _rss_values = parse_pidstat_samples(pidstat_path, tracee_pid)
+        if any(not math.isfinite(value) or value < 0 for value in values):
+            raise ValueError(f"{run_dir}: pidstat contains an invalid CPU sample")
+        expected_samples = max(1, math.floor(duration_s) - 2)
+        if len(values) < expected_samples:
+            raise ValueError(
+                f"{run_dir}: fewer than {expected_samples} formal-window pidstat samples"
+            )
+        leading_samples_excluded = 0
+        sample_scope = "full_short_window"
+
+    return {
+        "sample_count": len(values),
+        "sample_scope": sample_scope,
+        "leading_samples_excluded": leading_samples_excluded,
+        "mean_percent": statistics.fmean(values),
+        "p50_percent": percentile_nearest_rank(values, 0.50),
+        "p95_percent": percentile_nearest_rank(values, 0.95),
+        "max_percent": max(values),
+    }
+
+
 def _latency_metrics(
     run_dir: Path,
     first_revision: int,
@@ -492,6 +535,294 @@ def _capacity_summary(
     return result
 
 
+def _validate_c3_evidence(
+    run_dir: Path,
+    run_manifest: dict[str, str],
+    states_path: Path,
+) -> dict[str, Any]:
+    """Validate the C2-to-C3 publication chain and its convergence evidence."""
+    mode = run_manifest.get("c3_mode", "")
+    if mode not in C3_MODES:
+        raise ValueError(f"{run_dir}: invalid or missing c3_mode in run manifest")
+
+    sink_manifest_path = run_dir / "sink_manifest.yaml"
+    sink_manifest = parse_flat_yaml(sink_manifest_path)
+    if sink_manifest.get("schema") != "alien-scanner/perception-profile-sink/v2":
+        raise ValueError(f"{sink_manifest_path}: sink manifest schema is not v2")
+    if sink_manifest.get("c3_mode") != mode:
+        raise ValueError(f"{run_dir}: sink and run manifests disagree on c3_mode")
+    if sink_manifest.get("summary.normal_completion") is not True:
+        raise ValueError(f"{sink_manifest_path}: sink did not finalize normally")
+
+    parameters_path = run_dir / "c3-runtime-parameters.txt"
+    parameters = parse_manifest(parameters_path)
+    if parameters.get("schema") != "alien-scanner/perception-c3-runtime-parameters/v1":
+        raise ValueError(f"{parameters_path}: C3 parameter schema is missing")
+    if parameters.get("c3_mode") != mode or parameters.get("sink.c3_mode") != mode:
+        raise ValueError(f"{run_dir}: runtime parameters disagree on c3_mode")
+    expected_enabled = "false" if mode == "disabled" else "true"
+    expected_delta = "false" if mode == "keyframe-only" else "true"
+    if parameters.get("map_update_enabled") != expected_enabled:
+        raise ValueError(f"{parameters_path}: map_update_enabled does not match c3_mode")
+    if parameters.get("map_update.delta_enabled") != expected_delta:
+        raise ValueError(f"{parameters_path}: delta_enabled does not match c3_mode")
+    if parameters.get("map_update_topic") != "/profile/local_map/updates":
+        raise ValueError(f"{parameters_path}: map-update topic is not fixed")
+    if parameters.get("sink.map_update_topic") != parameters.get("map_update_topic"):
+        raise ValueError(f"{parameters_path}: sink and target map-update topics disagree")
+
+    updates_path = run_dir / "map_updates.csv"
+    updates = read_csv_rows(
+        updates_path,
+        (
+            "receipt_monotonic_ns",
+            "update_kind",
+            "vehicle_id",
+            "mapper_session_boot_ns",
+            "mapper_session_suffix",
+            "map_epoch",
+            "base_revision",
+            "new_revision",
+            "revision_span",
+            "observed_coalesced_receipt_count",
+            "known_cell_count",
+            "operation_count",
+            "canonical_payload_bytes",
+            "base_content_hash",
+            "content_hash",
+            "update_hash",
+        ),
+    )
+    producer_path = run_dir / "map_update_producer_diagnostics.csv"
+    producer_rows = read_csv_rows(
+        producer_path,
+        (
+            "receipt_monotonic_ns",
+            "pending",
+            "in_flight",
+            "pending_revision",
+            "in_flight_revision",
+            "published_revision",
+            "published_keyframes",
+            "published_deltas",
+            "revision_only_deltas",
+            "publish_failures",
+            "resource_rejections",
+            "snapshot_cells",
+            "delta_operations",
+            "payload_bytes",
+            "acquire_duration_ns",
+            "materialize_duration_ns",
+            "traversal_duration_ns",
+            "canonicalize_duration_ns",
+            "content_hash_duration_ns",
+            "prepare_duration_ns",
+            "validation_duration_ns",
+            "diff_duration_ns",
+            "encode_duration_ns",
+            "update_hash_duration_ns",
+            "publish_duration_ns",
+        ),
+    )
+    summary_keys = (
+        "map_update_count",
+        "map_update_keyframe_count",
+        "map_update_delta_count",
+        "map_update_revision_only_delta_count",
+        "producer_diagnostic_count",
+    )
+    summary = {
+        key: int(sink_manifest.get(f"summary.{key}", "-1"))
+        for key in summary_keys
+    }
+    if any(value < 0 for value in summary.values()):
+        raise ValueError(f"{sink_manifest_path}: C3 summary counters are incomplete")
+    if summary["map_update_count"] != len(updates):
+        raise ValueError(f"{run_dir}: sink map_update_count disagrees with map_updates.csv")
+    if summary["producer_diagnostic_count"] != len(producer_rows):
+        raise ValueError(
+            f"{run_dir}: sink producer_diagnostic_count disagrees with diagnostics CSV"
+        )
+
+    drain_path = run_dir / "drain-manifest.txt"
+    drain = parse_manifest(drain_path)
+    if drain.get("drain_applicable") != ("false" if mode == "disabled" else "true"):
+        raise ValueError(f"{drain_path}: drain applicability does not match c3_mode")
+
+    if mode == "disabled":
+        if updates or producer_rows:
+            raise ValueError(f"{run_dir}: disabled C3 mode contains map-update evidence")
+        if any(summary[key] != 0 for key in summary_keys):
+            raise ValueError(f"{run_dir}: disabled C3 summary counters are nonzero")
+        if drain.get("drain_converged") != "not_applicable":
+            raise ValueError(f"{drain_path}: disabled drain must be not_applicable")
+        return {
+            "mode": mode,
+            "map_update_count": 0,
+            "published_keyframes": 0,
+            "published_deltas": 0,
+            "revision_only_deltas": 0,
+            "producer_diagnostic_count": 0,
+            "timing_sample_count": 0,
+            "drain_converged": "not_applicable",
+        }
+
+    if not updates or not producer_rows:
+        raise ValueError(f"{run_dir}: enabled C3 mode has no update or producer evidence")
+    update_receipts = [_integer(row, "receipt_monotonic_ns", updates_path) for row in updates]
+    _strictly_increasing(update_receipts, f"{updates_path} receipt timestamps")
+    identities = {
+        (
+            row["vehicle_id"],
+            _integer(row, "mapper_session_boot_ns", updates_path),
+            _integer(row, "mapper_session_suffix", updates_path),
+            _integer(row, "map_epoch", updates_path),
+        )
+        for row in updates
+    }
+    if len(identities) != 1:
+        raise ValueError(f"{updates_path}: source identity changed within one profiling run")
+
+    previous: dict[str, str] | None = None
+    keyframes = deltas = revision_only = 0
+    for row in updates:
+        kind = _integer(row, "update_kind", updates_path)
+        base_revision = _integer(row, "base_revision", updates_path)
+        new_revision = _integer(row, "new_revision", updates_path)
+        if new_revision <= base_revision:
+            raise ValueError(f"{updates_path}: update revisions do not advance")
+        if previous is not None and new_revision <= int(previous["new_revision"]):
+            raise ValueError(f"{updates_path}: update revisions do not advance")
+        if _integer(row, "revision_span", updates_path) != new_revision - base_revision:
+            raise ValueError(f"{updates_path}: revision_span is inconsistent")
+        if any(
+            len(row[key]) != 64 or any(character not in "0123456789abcdef" for character in row[key])
+            for key in ("base_content_hash", "content_hash", "update_hash")
+        ):
+            raise ValueError(f"{updates_path}: update contains an invalid hash")
+        if kind == 1:
+            keyframes += 1
+            if base_revision != 0 or row["base_content_hash"] != C3_ZERO_HASH:
+                raise ValueError(f"{updates_path}: keyframe carries a non-empty base")
+        elif kind == 2:
+            deltas += 1
+            if previous is None:
+                raise ValueError(f"{updates_path}: first update cannot be a delta")
+            if base_revision != int(previous["new_revision"]):
+                raise ValueError(f"{updates_path}: delta base revision is not chained")
+            if row["base_content_hash"] != previous["content_hash"]:
+                raise ValueError(f"{updates_path}: delta base content hash is not chained")
+            if _integer(row, "operation_count", updates_path) == 0:
+                revision_only += 1
+        else:
+            raise ValueError(f"{updates_path}: profiling stream contains non keyframe/delta kind")
+        previous = row
+    if mode == "enabled" and (keyframes < 1 or deltas < 1):
+        raise ValueError(f"{run_dir}: enabled C3 mode lacks both keyframe and delta evidence")
+    if mode == "keyframe-only" and deltas:
+        raise ValueError(f"{run_dir}: keyframe-only mode contains delta evidence")
+    if summary["map_update_keyframe_count"] != keyframes:
+        raise ValueError(f"{run_dir}: sink keyframe count disagrees with map_updates.csv")
+    if summary["map_update_delta_count"] != deltas:
+        raise ValueError(f"{run_dir}: sink delta count disagrees with map_updates.csv")
+    if summary["map_update_revision_only_delta_count"] != revision_only:
+        raise ValueError(
+            f"{run_dir}: sink revision-only delta count disagrees with map_updates.csv"
+        )
+
+    diagnostic_receipts = [_integer(row, "receipt_monotonic_ns", producer_path) for row in producer_rows]
+    _strictly_increasing(diagnostic_receipts, f"{producer_path} receipt timestamps")
+    previous_published = -1
+    by_revision: dict[int, dict[str, str]] = {}
+    for row in producer_rows:
+        pending = _integer(row, "pending", producer_path)
+        in_flight = _integer(row, "in_flight", producer_path)
+        if pending not in {0, 1} or in_flight not in {0, 1}:
+            raise ValueError(f"{producer_path}: pending/in_flight is not boolean")
+        published = _integer(row, "published_revision", producer_path)
+        if published < previous_published:
+            raise ValueError(f"{producer_path}: published revision regressed")
+        previous_published = published
+        for key in (
+            "pending_revision", "in_flight_revision", "published_keyframes",
+            "published_deltas", "revision_only_deltas", "publish_failures",
+            "resource_rejections", "snapshot_cells", "delta_operations", "payload_bytes",
+        ):
+            if _integer(row, key, producer_path) < 0:
+                raise ValueError(f"{producer_path}: negative producer counter")
+        if published > 0:
+            by_revision[published] = row
+    if not by_revision:
+        raise ValueError(f"{producer_path}: no published revision timing evidence")
+    final_diag = producer_rows[-1]
+    published_keyframes = _integer(final_diag, "published_keyframes", producer_path)
+    published_deltas = _integer(final_diag, "published_deltas", producer_path)
+    final_published = _integer(final_diag, "published_revision", producer_path)
+    if len(updates) != published_keyframes + published_deltas:
+        raise ValueError(f"{run_dir}: published update counter is not conserved")
+    if published_keyframes != keyframes or published_deltas != deltas:
+        raise ValueError(f"{run_dir}: producer and map update kind counters disagree")
+    if _integer(final_diag, "revision_only_deltas", producer_path) != revision_only:
+        raise ValueError(f"{run_dir}: revision-only delta counter is not conserved")
+    if _integer(final_diag, "publish_failures", producer_path) != 0:
+        raise ValueError(f"{run_dir}: producer reported a publish failure")
+    if _integer(final_diag, "resource_rejections", producer_path) != 0:
+        raise ValueError(f"{run_dir}: producer reported a resource rejection")
+
+    timing_fields = (
+        "acquire_duration_ns",
+        "materialize_duration_ns",
+        "traversal_duration_ns",
+        "canonicalize_duration_ns",
+        "content_hash_duration_ns",
+        "prepare_duration_ns",
+        "validation_duration_ns",
+        "diff_duration_ns",
+        "encode_duration_ns",
+        "update_hash_duration_ns",
+        "publish_duration_ns",
+    )
+    timing: dict[str, dict[str, float | int]] = {}
+    unique_rows = [by_revision[revision] for revision in sorted(by_revision)]
+    for key in timing_fields:
+        values = [_integer(row, key, producer_path) for row in unique_rows]
+        if any(value < 0 for value in values):
+            raise ValueError(f"{producer_path}: negative producer duration")
+        timing[key] = {
+            "count": len(values),
+            "mean_ns": statistics.fmean(values),
+            "p50_ns": percentile_nearest_rank(values, 0.50),
+            "p95_ns": percentile_nearest_rank(values, 0.95),
+            "p99_ns": percentile_nearest_rank(values, 0.99),
+            "max_ns": max(values),
+        }
+
+    states = read_csv_rows(
+        states_path,
+        ("revision", "receipt_monotonic_ns"),
+    )
+    latest_state_revision = max(_integer(row, "revision", states_path) for row in states)
+    latest_update_revision = _integer(updates[-1], "new_revision", updates_path)
+    if final_published != latest_state_revision or latest_update_revision != latest_state_revision:
+        raise ValueError(f"{run_dir}: final C3 revision did not converge to latest state")
+    if drain.get("drain_converged") != "true" or int(drain.get("drain_stable_samples", "0")) < 2:
+        raise ValueError(f"{drain_path}: C3 drain did not provide two stable samples")
+    for key in ("drain_latest_revision", "drain_published_revision", "drain_update_revision"):
+        if int(drain.get(key, "-1")) != latest_state_revision:
+            raise ValueError(f"{drain_path}: {key} does not match latest revision")
+    return {
+        "mode": mode,
+        "map_update_count": len(updates),
+        "published_keyframes": keyframes,
+        "published_deltas": deltas,
+        "revision_only_deltas": revision_only,
+        "producer_diagnostic_count": len(producer_rows),
+        "timing_sample_count": len(by_revision),
+        "timing": timing,
+        "drain_converged": "true",
+    }
+
+
 def analyze_run(run_dir: Path) -> dict[str, Any]:
     run_dir = run_dir.resolve()
     manifest_path = run_dir / "run-manifest.txt"
@@ -510,7 +841,6 @@ def analyze_run(run_dir: Path) -> dict[str, Any]:
     requested_duration_s = float(manifest["duration_requested_s"])
     if mode != "capacity-ramp" and actual_duration_s + 0.25 < requested_duration_s:
         raise ValueError(f"{run_dir}: formal window is shorter than requested")
-
     oracle_manifest, oracle_rows = _load_oracle(run_dir)
     if oracle_manifest.get("mode") != workload:
         raise ValueError(f"{run_dir}: oracle mode does not match workload")
@@ -704,6 +1034,8 @@ def analyze_run(run_dir: Path) -> dict[str, Any]:
     if len(snapshots) + MAX_WINDOW_COUNT_SKEW < len(revisions):
         raise ValueError(f"{run_dir}: OctoMap snapshot count is below applied revisions")
 
+    c3 = _validate_c3_evidence(run_dir, manifest, states_path)
+
     oracle_by_revision = {
         _integer(row, "revision", run_dir / "oracle_checkpoints.csv"): row
         for row in oracle_rows
@@ -732,6 +1064,11 @@ def analyze_run(run_dir: Path) -> dict[str, Any]:
         if mode == "stage-latency"
         else None
     )
+    cpu = (
+        None
+        if mode == "stage-latency" or "workspace_closure_install_base" in manifest
+        else _cpu_metrics(run_dir, manifest["tracee_pid"], actual_duration_s)
+    )
     return {
         "run_dir": str(run_dir),
         "mode": mode,
@@ -751,6 +1088,9 @@ def analyze_run(run_dir: Path) -> dict[str, Any]:
         "final_free": joined_counts[-1][1],
         "final_occupied": joined_counts[-1][2],
         "snapshot_count": len(snapshots),
+        "c3_mode": c3["mode"],
+        "c3": c3,
+        "cpu": cpu,
         "memory": memory,
         "capacity": capacity,
         "latency": latency,
@@ -764,6 +1104,8 @@ def aggregate_runs(results: list[dict[str, Any]]) -> dict[str, Any] | None:
         raise ValueError("three-run aggregate accepts only plain-sample evidence")
     if len({result["workload"] for result in results}) != 1:
         raise ValueError("three-run aggregate requires one workload type")
+    if len({result["c3_mode"] for result in results}) != 1:
+        raise ValueError("three-run aggregate requires one C3 mode")
     identities = {
         (result["tracee_pid"], result["t0_monotonic_ns"], result["t1_monotonic_ns"])
         for result in results
@@ -772,9 +1114,19 @@ def aggregate_runs(results: list[dict[str, Any]]) -> dict[str, Any] | None:
         raise ValueError("three-run aggregate contains duplicate evidence identities")
     if any(result["memory"] is None for result in results):
         raise ValueError("three-run aggregate requires resource samples")
+    if any(result.get("cpu") is None for result in results):
+        raise ValueError("three-run aggregate requires pidstat CPU samples")
 
     workload = results[0]["workload"]
-    aggregate: dict[str, Any] = {"run_count": 3, "workload": workload}
+    aggregate: dict[str, Any] = {
+        "run_count": 3,
+        "workload": workload,
+        "c3_mode": results[0]["c3_mode"],
+        "cpu_percent": {
+            key: [result["cpu"][key] for result in results]
+            for key in ("mean_percent", "p95_percent", "max_percent")
+        },
+    }
     if workload == "bounded":
         slope_keys = (
             "rss_kib_slope_per_minute",

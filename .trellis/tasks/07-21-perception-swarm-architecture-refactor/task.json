@@ -2,7 +2,7 @@
   "id": "perception-swarm-architecture-refactor",
   "name": "perception-swarm-architecture-refactor",
   "title": "下一阶段感知与多机协作架构重构",
-  "description": "梳理下一阶段感知、本机地图、通信数据面、拓扑角色、多机协作、执行安全与诊断回放的总体架构；当前仅进行 Phase 1 规划。",
+  "description": "跟踪感知、本机地图、通信数据面、拓扑角色、多机协作、执行安全与诊断回放的总体架构及分步落地；C1/C2 已归档，C3 本机功能及性能/内存验收已完成，下一关键路径为 C4 通信数据面。",
   "status": "in_progress",
   "dev_type": null,
   "scope": null,
@@ -23,10 +23,11 @@
     "07-27-c2-local-observation-map",
     "07-27-c2-performance-memory-baseline",
     "07-29-octomap-backend-o1-known-bounds",
-    "08-01-c1-c2-perception-perf-memory-retest"
+    "08-01-c1-c2-perception-perf-memory-retest",
+    "08-03-c3-map-state-updates"
   ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "C3 的 snapshot/keyframe/delta、revision、原子 apply、乱序拒绝、本机 resync、exact-revision replay/oracle 和冻结版本性能/内存专项均已通过。历史 Phase 3 source-level bag 仅是当前不可用的可选兼容输入，不是功能缺口；shared-view alignment 消费证据仍保持开放。父任务继续 in_progress，下一关键路径为 C4。",
   "meta": {}
 }

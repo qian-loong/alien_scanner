@@ -10,6 +10,7 @@ import launch
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 import launch_testing
+from launch_ros.actions import Node
 from perception_interfaces.msg import HealthState, LidarObservation, LocalMapState
 import pytest
 import rclpy
@@ -41,12 +42,34 @@ def generate_test_description():
     launch_file = _package_share() / "launch" / "cave_full_ray_scene.launch.py"
     system = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(str(launch_file)),
-        launch_arguments={"show_rviz": "false"}.items(),
+        launch_arguments={
+            "show_rviz": "false",
+            "map_update_enabled": "true",
+        }.items(),
+    )
+    receiver = Node(
+        package="perception_map_update",
+        executable="perception_map_update_receiver_node",
+        name="cave_full_ray_map_update_receiver",
+        output="screen",
+        parameters=[
+            {
+                "map_update_topic": "/cave_scene/local_map/updates",
+                "local_map_state_topic": "/cave_scene/local_map/state",
+                "map_resync_service": "/cave_scene/local_map/request_resync",
+                "reconstructed_octomap_topic":
+                    "/cave_scene/map_update_receiver/octomap",
+                "expected_vehicle_id": "cave-scene-vehicle",
+                "requester_id": "cave-full-ray-map-update-receiver",
+                "resync_retry_period_s": 0.1,
+            }
+        ],
     )
     return launch.LaunchDescription(
         [
             launch.actions.SetEnvironmentVariable("ROS_DOMAIN_ID", TEST_DOMAIN_ID),
             system,
+            receiver,
             launch_testing.actions.ReadyToTest(),
         ]
     )
@@ -156,6 +179,13 @@ class TestCaveFullRaySceneIntegration(unittest.TestCase):
             and state.revision >= 100
             and state.known_bounds_max.x - state.known_bounds_min.x >= 9.0
         )
+
+    def _latest_diagnostic(self, name_fragment):
+        for array in reversed(self.diagnostics):
+            for status in array.status:
+                if name_fragment in status.name:
+                    return status, {entry.key: entry.value for entry in status.values}
+        return None, {}
 
     def test_continuous_scene_advances_then_drains_without_stationary_refresh(self):
         self.assertTrue(
@@ -290,6 +320,69 @@ class TestCaveFullRaySceneIntegration(unittest.TestCase):
             ),
             terminal_provenance,
         )
+
+        unique_observation_stamps = sorted(
+            {
+                observation.header.stamp.sec * 1_000_000_000
+                + observation.header.stamp.nanosec
+                for observation in self.observations
+            }
+        )
+        self.assertGreaterEqual(len(unique_observation_stamps), 190)
+        observation_duration_s = (
+            unique_observation_stamps[-1] - unique_observation_stamps[0]
+        ) / 1e9
+        self.assertGreater(observation_duration_s, 0.0)
+        self.assertGreaterEqual(
+            (len(unique_observation_stamps) - 1) / observation_duration_s,
+            9.5,
+        )
+        self.assertEqual(
+            self._stamp_key(after_drain.last_observation_stamp),
+            self._stamp_key(self.observations[-1].header.stamp),
+        )
+
+        def c3_drained():
+            _, producer = self._latest_diagnostic(
+                "cave_full_ray_local_map: map_update_producer"
+            )
+            _, receiver_values = self._latest_diagnostic(
+                "cave_full_ray_map_update_receiver: map_update_receiver"
+            )
+            return (
+                int(producer.get("published_revision", "0")) == terminal_identity[1]
+                and producer.get("pending") == "0"
+                and producer.get("in_flight") == "0"
+                and int(producer.get("published_keyframes", "0")) >= 1
+                and int(producer.get("published_deltas", "0")) >= 1
+                and receiver_values.get("receiver_state") == "1"
+                and int(receiver_values.get("map_epoch", "0")) == terminal_identity[0]
+                and int(receiver_values.get("revision", "0")) == terminal_identity[1]
+            )
+
+        self.assertTrue(
+            self._spin_until(c3_drained, timeout=3.0),
+            "C3 producer/receiver did not drain to the authoritative terminal revision",
+        )
+        _, producer_timing = self._latest_diagnostic(
+            "cave_full_ray_local_map: map_update_producer"
+        )
+        _, receiver_timing = self._latest_diagnostic(
+            "cave_full_ray_map_update_receiver: map_update_receiver"
+        )
+        for key in (
+            "traversal_duration_ns",
+            "canonicalize_duration_ns",
+            "content_hash_duration_ns",
+            "validation_duration_ns",
+            "diff_duration_ns",
+            "encode_duration_ns",
+            "update_hash_duration_ns",
+        ):
+            self.assertIn(key, producer_timing)
+            self.assertGreaterEqual(int(producer_timing[key]), 0)
+        self.assertIn("apply_duration_ns", receiver_timing)
+        self.assertGreaterEqual(int(receiver_timing["apply_duration_ns"]), 0)
 
         mapper_diagnostics = [
             status.message.lower()

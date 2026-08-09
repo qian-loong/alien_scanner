@@ -183,6 +183,11 @@ These rules apply to ROS 2 packages that install Python/XML launch files or use
   (`GroupAction(scoped=True)` or `<group scoped="true">`). Child-only values
   such as `show_rviz=false` must not change conditions evaluated later by the
   parent launch.
+- A test subscriber's callback arrival order across two ROS topics is not a
+  causal ordering guarantee. Pose-watermark or freshness assertions must use a
+  producer-stamped field, a same-source receipt/diagnostic, or a post-hoc set of
+  message stamps; never infer production ordering from the last callback seen on
+  a different subscription.
 
 ### 4. Validation & Error Matrix
 
@@ -197,6 +202,7 @@ These rules apply to ROS 2 packages that install Python/XML launch files or use
 | Producer process is respawned | New observations carry a different SessionID |
 | OctoMap RViz fails with an `OcTreeStamped` undefined symbol | Add the process-scoped `LD_PRELOAD=liboctomap.so` workaround to the RViz node |
 | A child include forces `show_rviz=false` and the parent's RViz silently does not start | Put the include in an explicit scoped group and verify the parent condition remains true |
+| A test derives cross-topic pose causality from callback arrival order | Treat the result as nondeterministic; assert an authoritative stamp/receipt contract instead |
 
 ### 5. Good / Base / Bad Cases
 
@@ -211,8 +217,19 @@ These rules apply to ROS 2 packages that install Python/XML launch files or use
   performance test counts repeated timestamps as distinct frames.
 - Good: a fixture include disables its own RViz inside a scoped group while the
   parent launch independently starts its one authoritative RViz process.
+- Good: a cave-scene observation is matched post-hoc to the PoseEstimate with
+  the same odometry acquisition stamp, because both messages derive from that
+  odometry sample.
+- Good: a profile-fixture observation checks both its same-stamp pose and its
+  `stamp + 50 ms` lead pose only because `FrozenProfileConfig::kPoseLeadNs`
+  explicitly defines that fixture contract.
 - Bad: a child include sets an unscoped argument with the same name used by a
   later parent-node condition.
+- Bad: recording the latest pose callback timestamp and requiring it to precede
+  every observation callback; DDS delivery and executor scheduling can invert
+  those callbacks even when the producer gate is correct.
+- Bad: copying a fixed lead-stamp offset from one fixture into another scene
+  whose producer guarantees only a same-stamp pose.
 
 ### 6. Tests Required
 
@@ -233,6 +250,13 @@ These rules apply to ROS 2 packages that install Python/XML launch files or use
 - Performance baselines use more than 100 unique frames, report loss plus
   average/P95/max latency, and separately report conversion and health-gate
   timings.
+- For cross-topic gate tests, collect the authoritative message stamps or
+  producer receipts first, then compare them post-hoc; callback arrival timing
+  may be reported as a diagnostic but must not be the correctness oracle.
+- Derive any expected pose-stamp offset from the fixture's declared production
+  contract. For same-source odometry scenes, assert matching acquisition
+  stamps; assert a fixed lead offset only when the fixture explicitly generates
+  it.
 
 ### 7. Wrong vs Correct
 
@@ -284,8 +308,13 @@ baseline.
 
 ### 2. Signatures
 
-- Unified runner: `scripts/profile-perception.sh <mode> <install-prefix>
-  <new-output-dir> <duration-seconds>`.
+- Unified local-map runner:
+  `scripts/profile-local-map.sh <mode> <install-prefix> <new-output-dir>
+  <duration-seconds> [bounded|expanding] [disabled|enabled|keyframe-only]`.
+- Stage-latency runner:
+  `scripts/profile-local-map.sh stage-latency <install-prefix>
+  <new-output-dir> <duration-seconds> [bounded|expanding] [callback|full]
+  [disabled|enabled|keyframe-only]`.
 - Supported mode names are explicit and closed; an unknown mode or an existing
   output directory is an error.
 - Repeated memory analysis consumes exactly three normally completed,
@@ -331,6 +360,25 @@ baseline.
   `(tracee_pid, t0_monotonic_ns, t1_monotonic_ns)` evidence identities are
   pairwise distinct, and recomputes workload and expected pidstat/smem sample
   completeness from raw data rather than trusting copied summary flags.
+- C3 local-map profiling has exactly three admitted modes. `disabled` has no
+  map-update publisher/subscriber or update evidence; `enabled` requires at
+  least one keyframe and one chained delta; `keyframe-only` requires only
+  keyframes. The target and sink parameters, ROS graph, sink v2 manifest,
+  update CSV, producer-diagnostic CSV, and run manifest must all agree on the
+  selected mode.
+- A C3 formal comparison uses one build and one workload for three independent
+  300-second runs per mode. The approximately 800-revision preflight/warmup is
+  outside the formal window. Tracee-only pidstat CPU statistics exclude the
+  first 60 formal samples; short smoke runs use their complete short window for
+  diagnostics and are not substituted for the formal matrix.
+- After the formal window, stop the input fixture first and require two later
+  producer diagnostics with `pending=0`, `in_flight=0`, and identical
+  published revision. That revision, the latest `LocalMapState` revision, and
+  the latest MapUpdate revision must match before declaring drain convergence.
+- Capture-time analysis and later read-only reanalysis are separate provenance
+  events. Preserve the raw directories and original summaries; record the
+  source-diff hash and the postprocessing analyzer SHA-256 instead of silently
+  replacing capture-time artifacts.
 - Write role exit codes, `valid`, `normal_completion`, actual duration,
   per-source workload counts, invalid reasons, and SHA-256 for every raw
   artifact. A report may cite only runs where both validity flags are true.
@@ -353,6 +401,11 @@ baseline.
 | Memcheck exits with the dedicated finding code and has a complete matching summary | Keep a valid run and record the finding |
 | The same plain-sample evidence is copied under different run directories | Reject it as duplicate evidence |
 | Fewer than three valid steady-state memory runs are available | Do not issue a sustained-growth conclusion |
+| C3 runtime parameters or graph disagree with the selected C3 mode | Stop before the formal window or mark the run invalid |
+| Disabled mode exposes/records map updates, or enabled mode lacks updates/producer diagnostics | Mark the run invalid |
+| Update identity, revision/hash chain, kind counters, or producer counters disagree | Reject the evidence before computing performance summaries |
+| Input stops but pending/in-flight work remains or final C2/C3 revisions differ | Mark drain as non-converged and the run invalid |
+| A later analyzer adds a derived metric | Reanalyze immutable raw directories and record the new analyzer/artifact hashes |
 
 ### 5. Good / Base / Bad Cases
 
@@ -365,6 +418,13 @@ baseline.
   target PID, profiler state, or same-window output.
 - Bad: accepting a report written after SIGKILL, treating Memcheck's finding
   exit code as tool failure, or inferring a leak from one RSS curve.
+- Good: the same frozen build completes disabled, enabled, and keyframe-only
+  3x300-second matrices, and each aggregate is regenerated from three distinct
+  raw evidence identities.
+- Base: a 25-second mode smoke proves graph, parser, and drain wiring before the
+  formal matrix; its CPU numbers are diagnostic only.
+- Bad: comparing modes from different builds, treating one failed smoke as a
+  capacity knee, or overwriting raw summaries when CPU postprocessing changes.
 
 ### 6. Tests Required
 
@@ -384,6 +444,13 @@ baseline.
 - Recompute three steady windows from raw pidstat/smem/smaps data and assert the
   documented means, percentiles, slopes, sample counts, and aggregate growth
   decision.
+- Unit-test C3 mode/parameter agreement, disabled zero-evidence behavior,
+  keyframe/delta chain and counter conservation, keyframe-only rejection of a
+  delta, and two-sample drain convergence. Run a short valid smoke in every C3
+  mode before capturing the 3x300-second formal matrix.
+- For a 300-second fixture, assert exactly 60 leading pidstat samples are
+  excluded from CPU summaries; for a short fixture, assert no samples are
+  excluded and the result is labeled as a short-window diagnostic.
 - Run synthetic positive and negative parser fixtures for perf control/lost
   samples, Heaptrack quantities, Massif stack-aware peak detail, Memcheck target
   identity, duplicate plain paths or evidence identities, low workload, and
@@ -397,6 +464,10 @@ Wrong:
 sleep "${DURATION}"
 kill -KILL "${profiler_pid}"
 echo "valid=true"
+
+# Mixes builds and never proves C3 caught up after input stopped.
+profile-local-map.sh plain-sample build-a run-disabled 300 bounded disabled
+profile-local-map.sh plain-sample build-b run-enabled 60 bounded enabled
 ```
 
 Correct:
@@ -408,6 +479,14 @@ monitor_formal_window # PID, starttime, zombie, workload roles
 perf_control disable  # require ACK after t1
 finalize_tool_normally
 validate_reports_and_hashes
+
+# Same build/workload/window; fixture stops before the bounded drain check.
+for c3_mode in disabled enabled keyframe-only; do
+  for run in 1 2 3; do
+    profile-local-map.sh plain-sample frozen-install \
+      "${c3_mode}-run${run}" 300 bounded "${c3_mode}"
+  done
+done
 ```
 
 ## Perception Fixture LiDAR Geometry Contracts

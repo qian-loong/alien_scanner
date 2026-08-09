@@ -22,7 +22,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
         "msg/PoseEstimate.msg"
         "msg/HealthState.msg"
         "msg/LocalMapState.msg"
+        "msg/MapUpdate.msg"
         "msg/SensorHealth.msg"
+        "srv/RequestMapResync.srv"
         DEPENDENCIES builtin_interfaces std_msgs geometry_msgs
 )
 

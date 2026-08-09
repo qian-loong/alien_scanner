@@ -65,6 +65,13 @@ These guides help you **ask the right questions before coding**.
 
 **Verification rule**: Every CRITICAL/WARNING finding must be verified against the actual code before prioritizing. Budget ~35% false-positive rate for AI reviews.
 
+### When Archiving Child Tasks
+
+- [ ] Update the parent task description and planning artifacts with the completed milestone and the next dependency.
+- [ ] Treat an `x/x done` child count as "all created children are done", not proof that the parent's full roadmap is complete.
+- [ ] Keep the parent `in_progress` while later planned deliverables remain, and do not create empty child tasks only to make the counter represent the roadmap.
+- [ ] Preserve final acceptance criteria for unimplemented children; mark only independently verified planning or implementation criteria complete.
+
 ---
 
 ## Pre-Modification Rule (CRITICAL)

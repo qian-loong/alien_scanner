@@ -1,11 +1,10 @@
 #include "perception_profiling/ProfileOracle.hpp"
 
-#include "perception_local_map/OctoMapBackend.hpp"
+#include "perception_profiling/ProfileMapHarness.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <map>
-#include <memory>
 #include <limits>
 #include <set>
 #include <stdexcept>
@@ -16,11 +15,9 @@ namespace PerceptionProfiling {
 
         using PerceptionLocalMap::AcquireStatus;
         using PerceptionLocalMap::CommitReceipt;
-        using PerceptionLocalMap::InputResult;
         using PerceptionLocalMap::InputStatus;
         using PerceptionLocalMap::LocalObservationMapper;
         using PerceptionLocalMap::OccupancyState;
-        using PerceptionLocalMap::OctoMapBackend;
 
         struct Census {
             VoxelCounts counts;
@@ -53,56 +50,6 @@ namespace PerceptionProfiling {
             return !left.has_value()
                    || (same_point(left->minimum, right->minimum)
                        && same_point(left->maximum, right->maximum));
-        }
-
-        std::unique_ptr<LocalObservationMapper> make_mapper(const ProfileScenario & scenario)
-        {
-            return std::make_unique<LocalObservationMapper>(
-                    scenario.mapper_config({20'000'000'000ULL, 0x0C2U}),
-                    [](const PerceptionLocalMap::MapGeometry & geometry) {
-                        return std::make_unique<OctoMapBackend>(geometry);
-                    });
-        }
-
-        PerceptionLocalMap::UpstreamHealth make_health(
-                const ProfileScenario & scenario,
-                std::int64_t receive_ns)
-        {
-            return {
-                    scenario.config().producer_source_id,
-                    scenario.config().producer_session,
-                    scenario.contract_fingerprint(),
-                    Perception::HealthState::Healthy,
-                    receive_ns,
-                    2'000'000'000LL};
-        }
-
-        InputResult submit_sample(
-                LocalObservationMapper & mapper,
-                const ProfileScenario & scenario,
-                const ScenarioSample & sample)
-        {
-            const auto observation_receive_ns = sample.observation_pose.stamp.nanoseconds;
-            const auto lead_receive_ns = sample.lead_pose.stamp.nanoseconds;
-            if(!mapper.submit_health(make_health(scenario, observation_receive_ns))) {
-                throw std::runtime_error("oracle health sample was rejected");
-            }
-            const auto observation_pose = mapper.submit_pose(
-                    sample.observation_pose, observation_receive_ns + 1);
-            if(observation_pose.status != InputStatus::Accepted) {
-                throw std::runtime_error(
-                        "oracle observation pose was rejected: " + observation_pose.diagnostic);
-            }
-            if(!mapper.submit_health(make_health(scenario, lead_receive_ns))) {
-                throw std::runtime_error("oracle lead health sample was rejected");
-            }
-            const auto lead_pose = mapper.submit_pose(sample.lead_pose, lead_receive_ns + 1);
-            if(lead_pose.status != InputStatus::Accepted) {
-                throw std::runtime_error(
-                        "oracle lead pose was rejected: " + lead_pose.diagnostic);
-            }
-            return mapper.submit_observation(
-                    sample.observation, scenario.extrinsic(), lead_receive_ns + 2);
         }
 
         Census census(
@@ -210,10 +157,10 @@ namespace PerceptionProfiling {
                     [](const auto & left, const auto & right) {
                         return left.upper_revision < right.upper_revision;
                     })->upper_revision;
-            auto mapper = make_mapper(scenario);
+            ProfileMapHarness harness(scenario);
             for(std::uint64_t sequence = 1U; sequence <= sequence_count; ++sequence) {
                 const auto sample = scenario.sample(sequence);
-                const auto result = submit_sample(*mapper, scenario, sample);
+                const auto result = harness.submit(sample);
                 if(result.status != InputStatus::Applied || !result.receipt.has_value()) {
                     continue;
                 }
@@ -226,7 +173,7 @@ namespace PerceptionProfiling {
                                        && revision <= bracket.upper_revision);
                 }
                 if(needs_census) {
-                    const auto exact = census(*mapper, result.receipt.value());
+                    const auto exact = census(harness.mapper(), result.receipt.value());
                     for(const auto & bracket : brackets) {
                         if(crossings.count(bracket.threshold) == 0U
                            && revision > bracket.lower_revision
@@ -292,14 +239,14 @@ namespace PerceptionProfiling {
 
         OracleRun run;
         run.mode = scenario_.mode();
-        auto mapper = make_mapper(scenario_);
+        ProfileMapHarness harness(scenario_);
         std::optional<Census> plateau_value;
         std::uint64_t plateau_candidate_revision = 0U;
         std::optional<OracleCheckpoint> final_checkpoint;
 
         for(std::uint64_t sequence = 1U; sequence <= options.sequence_count; ++sequence) {
             const auto sample = scenario_.sample(sequence);
-            const auto result = submit_sample(*mapper, scenario_, sample);
+            const auto result = harness.submit(sample);
             count_status(run, result.status);
             if(result.status != InputStatus::Applied || !result.receipt.has_value()) {
                 continue;
@@ -311,7 +258,7 @@ namespace PerceptionProfiling {
             const bool periodic_checkpoint =
                     result.receipt->revision % options.checkpoint_period_revisions == 0U;
             if(bounded_census || periodic_checkpoint || sequence == options.sequence_count) {
-                const auto exact = census(*mapper, result.receipt.value());
+                const auto exact = census(harness.mapper(), result.receipt.value());
                 if(bounded_census) {
                     if(!plateau_value.has_value()
                        || plateau_value->counts != exact.counts

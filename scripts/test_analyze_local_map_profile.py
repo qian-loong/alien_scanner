@@ -23,6 +23,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from lib import local_map_build_provenance as BUILD_PROVENANCE
 from lib import local_map_profile_analysis as ANALYSIS
+from lib import profile_c3_drain as C3_DRAIN
 from lib import profile_local_map_sampler as SAMPLER
 from lib import stage_latency_analysis as STAGE
 from lib import stage_latency_calibration as CALIBRATION
@@ -58,6 +59,7 @@ class AnalyzeLocalMapProfileTest(unittest.TestCase):
         count: int = 100,
         tracee_pid: int = 4200,
         t0_ns: int = 1_000_000_000,
+        c3_mode: str = "disabled",
         capacity_status: str = "not_reached",
         crossing_revision: int | None = None,
         stage_event_set: str = "full",
@@ -69,6 +71,7 @@ class AnalyzeLocalMapProfileTest(unittest.TestCase):
         manifest_lines = [
             f"mode={mode}",
             f"workload={workload}",
+            f"c3_mode={c3_mode}",
             f"duration_requested_s={int(duration_s)}",
             f"tracee_pid={tracee_pid}",
             f"t0_monotonic_ns={t0_ns}",
@@ -222,6 +225,155 @@ class AnalyzeLocalMapProfileTest(unittest.TestCase):
             ],
         )
 
+        map_updates = []
+        producer_diagnostics = []
+        if c3_mode != "disabled":
+            published_keyframes = 0
+            published_deltas = 0
+            previous_hash = "0" * 64
+            for offset, state in enumerate(states):
+                revision = state["revision"]
+                keyframe = c3_mode == "keyframe-only" or offset == 0
+                if keyframe:
+                    published_keyframes += 1
+                    kind = 1
+                    base_revision = 0
+                    base_hash = "0" * 64
+                else:
+                    published_deltas += 1
+                    kind = 2
+                    base_revision = revision - 1
+                    base_hash = previous_hash
+                content_hash = f"{revision:064x}"[-64:]
+                update_receipt = int(state["receipt_monotonic_ns"]) + 3_000_000
+                map_updates.append(
+                    {
+                        "receipt_monotonic_ns": update_receipt,
+                        "stamp_ns": state["stamp_ns"],
+                        "update_kind": kind,
+                        "vehicle_id": "profile-vehicle",
+                        "mapper_session_boot_ns": 123456,
+                        "mapper_session_suffix": 9,
+                        "map_epoch": 1,
+                        "base_revision": base_revision,
+                        "new_revision": revision,
+                        "revision_span": revision - base_revision,
+                        "observed_coalesced_receipt_count": 0,
+                        "known_cell_count": 2000,
+                        "operation_count": 0 if keyframe else 1,
+                        "canonical_payload_bytes": 1000 if keyframe else 24,
+                        "base_content_hash": base_hash,
+                        "content_hash": content_hash,
+                        "update_hash": f"{revision + 1:064x}"[-64:],
+                    }
+                )
+                producer_diagnostics.append(
+                    self.producer_diagnostic_row(
+                        update_receipt + 1_000_000,
+                        revision,
+                        published_keyframes,
+                        published_deltas,
+                    )
+                )
+                previous_hash = content_hash
+            producer_diagnostics.extend(
+                (
+                    self.producer_diagnostic_row(
+                        t1_ns + 100_000_000,
+                        first_revision + count - 1,
+                        published_keyframes,
+                        published_deltas,
+                    ),
+                    self.producer_diagnostic_row(
+                        t1_ns + 300_000_000,
+                        first_revision + count - 1,
+                        published_keyframes,
+                        published_deltas,
+                    ),
+                )
+            )
+
+        write_csv(
+            run_dir / "map_updates.csv",
+            (
+                "receipt_monotonic_ns", "stamp_ns", "update_kind", "vehicle_id",
+                "mapper_session_boot_ns", "mapper_session_suffix", "map_epoch",
+                "base_revision", "new_revision", "revision_span",
+                "observed_coalesced_receipt_count", "known_cell_count",
+                "operation_count", "canonical_payload_bytes", "base_content_hash",
+                "content_hash", "update_hash",
+            ),
+            map_updates,
+        )
+        write_csv(
+            run_dir / "map_update_producer_diagnostics.csv",
+            (
+                "receipt_monotonic_ns", "stamp_ns", "level", "name", "message",
+                "pending", "in_flight", "pending_revision", "in_flight_revision",
+                "published_revision", "coalesced_receipts", "superseded_receipts",
+                "published_keyframes", "published_deltas", "revision_only_deltas",
+                "publish_failures", "resource_rejections", "snapshot_cells",
+                "delta_operations", "payload_bytes", "acquire_duration_ns",
+                "materialize_duration_ns", "traversal_duration_ns",
+                "canonicalize_duration_ns", "content_hash_duration_ns",
+                "prepare_duration_ns", "validation_duration_ns", "diff_duration_ns",
+                "encode_duration_ns", "update_hash_duration_ns", "publish_duration_ns",
+            ),
+            producer_diagnostics,
+        )
+        keyframe_count = sum(row["update_kind"] == 1 for row in map_updates)
+        delta_count = sum(row["update_kind"] == 2 for row in map_updates)
+        run_dir.joinpath("sink_manifest.yaml").write_text(
+            "\n".join(
+                (
+                    "schema: alien-scanner/perception-profile-sink/v2",
+                    f"mode: {workload}",
+                    f"c3_mode: {c3_mode}",
+                    "summary:",
+                    f"  map_update_count: {len(map_updates)}",
+                    f"  map_update_keyframe_count: {keyframe_count}",
+                    f"  map_update_delta_count: {delta_count}",
+                    "  map_update_revision_only_delta_count: 0",
+                    f"  producer_diagnostic_count: {len(producer_diagnostics)}",
+                    "  normal_completion: true",
+                )
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        run_dir.joinpath("c3-runtime-parameters.txt").write_text(
+            "schema=alien-scanner/perception-c3-runtime-parameters/v1\n"
+            f"c3_mode={c3_mode}\n"
+            f"map_update_enabled={'false' if c3_mode == 'disabled' else 'true'}\n"
+            f"map_update.delta_enabled={'false' if c3_mode == 'keyframe-only' else 'true'}\n"
+            "map_update_topic=/profile/local_map/updates\n"
+            f"sink.c3_mode={c3_mode}\n"
+            "sink.map_update_topic=/profile/local_map/updates\n",
+            encoding="utf-8",
+        )
+        if c3_mode == "disabled":
+            drain_lines = (
+                "drain_start_monotonic_ns=1", "drain_end_monotonic_ns=2",
+                "drain_duration_ns=1", "drain_applicable=false",
+                "drain_converged=not_applicable", "drain_stable_samples=0",
+                "drain_latest_revision=none", "drain_published_revision=none",
+                "drain_update_revision=none",
+            )
+        else:
+            latest = first_revision + count - 1
+            drain_lines = (
+                f"drain_start_monotonic_ns={t1_ns}",
+                f"drain_end_monotonic_ns={t1_ns + 300_000_000}",
+                "drain_duration_ns=300000000", "drain_applicable=true",
+                "drain_converged=true", "drain_stable_samples=2",
+                f"drain_latest_revision={latest}",
+                f"drain_published_revision={latest}",
+                f"drain_update_revision={latest}",
+            )
+        run_dir.joinpath("drain-manifest.txt").write_text(
+            "".join(f"{line}\n" for line in drain_lines), encoding="utf-8"
+        )
+
         oracle_indices = sorted({0, count // 2, count - 1})
         oracle_rows = []
         for index in oracle_indices:
@@ -339,7 +491,49 @@ class AnalyzeLocalMapProfileTest(unittest.TestCase):
                 }
             )
         write_csv(run_dir / "memory-checkpoints.csv", SAMPLER.RESOURCE_COLUMNS, checkpoint_rows)
+        self.write_pidstat(run_dir, tracee_pid, max(1, int(duration_s)), 40.0)
         return run_dir
+
+    @staticmethod
+    def producer_diagnostic_row(
+        receipt: int,
+        revision: int,
+        keyframes: int,
+        deltas: int,
+    ) -> dict[str, object]:
+        return {
+            "receipt_monotonic_ns": receipt,
+            "stamp_ns": receipt,
+            "level": 0,
+            "name": "/profile_local_map: map_update_producer",
+            "message": "running",
+            "pending": 0,
+            "in_flight": 0,
+            "pending_revision": 0,
+            "in_flight_revision": 0,
+            "published_revision": revision,
+            "coalesced_receipts": 0,
+            "superseded_receipts": 0,
+            "published_keyframes": keyframes,
+            "published_deltas": deltas,
+            "revision_only_deltas": 0,
+            "publish_failures": 0,
+            "resource_rejections": 0,
+            "snapshot_cells": 2000,
+            "delta_operations": 1 if deltas else 0,
+            "payload_bytes": 24 if deltas else 1000,
+            "acquire_duration_ns": revision,
+            "materialize_duration_ns": revision + 1,
+            "traversal_duration_ns": revision + 2,
+            "canonicalize_duration_ns": revision + 3,
+            "content_hash_duration_ns": revision + 4,
+            "prepare_duration_ns": revision + 5,
+            "validation_duration_ns": revision + 6,
+            "diff_duration_ns": revision + 7,
+            "encode_duration_ns": revision + 8,
+            "update_hash_duration_ns": revision + 9,
+            "publish_duration_ns": revision + 10,
+        }
 
     def mutate_csv(self, path: Path, mutator) -> None:
         with path.open(newline="", encoding="utf-8") as stream:
@@ -849,11 +1043,121 @@ class AnalyzeLocalMapProfileTest(unittest.TestCase):
     def test_valid_bounded_run_uses_oracle_plateau_and_memory(self) -> None:
         result = ANALYSIS.analyze_run(self.make_run("bounded"))
         self.assertEqual("bounded", result["workload"])
+        self.assertEqual("disabled", result["c3_mode"])
         self.assertEqual(100, result["observation_count"])
         self.assertEqual(3, result["oracle_checkpoint_count"])
         self.assertEqual(2000, result["final_known"])
+        self.assertEqual(10, result["cpu"]["sample_count"])
+        self.assertEqual("full_short_window", result["cpu"]["sample_scope"])
+        self.assertEqual(40.0, result["cpu"]["mean_percent"])
         self.assertEqual(3, result["memory"]["sample_count"])
         self.assertIsNone(result["memory"]["rss_kib_bytes_per_known"])
+
+    def test_cpu_metrics_use_formal_samples_and_steady_300_second_window(self) -> None:
+        short_run = self.root / "cpu-short"
+        short_run.mkdir()
+        self.write_pidstat(short_run, 4200, 24, 40.0)
+        short = ANALYSIS._cpu_metrics(short_run, "4200", 25.0)
+        self.assertEqual(24, short["sample_count"])
+        self.assertEqual("full_short_window", short["sample_scope"])
+        self.assertEqual(0, short["leading_samples_excluded"])
+
+        formal_run = self.root / "cpu-formal"
+        formal_run.mkdir()
+        self.write_pidstat(formal_run, 4300, 300, 41.0)
+        formal = ANALYSIS._cpu_metrics(formal_run, "4300", 300.0)
+        self.assertEqual(240, formal["sample_count"])
+        self.assertEqual("steady_after_60s", formal["sample_scope"])
+        self.assertEqual(60, formal["leading_samples_excluded"])
+        self.assertEqual(41.0, formal["mean_percent"])
+
+    def test_c3_enabled_and_keyframe_only_evidence(self) -> None:
+        enabled = ANALYSIS.analyze_run(
+            self.make_run("c3-enabled", count=20, c3_mode="enabled")
+        )
+        self.assertEqual("enabled", enabled["c3_mode"])
+        self.assertEqual(20, enabled["c3"]["map_update_count"])
+        self.assertEqual(1, enabled["c3"]["published_keyframes"])
+        self.assertEqual(19, enabled["c3"]["published_deltas"])
+        self.assertEqual(20, enabled["c3"]["timing_sample_count"])
+        self.assertEqual("true", enabled["c3"]["drain_converged"])
+
+        keyframes = ANALYSIS.analyze_run(
+            self.make_run("c3-keyframes", count=20, c3_mode="keyframe-only")
+        )
+        self.assertEqual("keyframe-only", keyframes["c3_mode"])
+        self.assertEqual(20, keyframes["c3"]["published_keyframes"])
+        self.assertEqual(0, keyframes["c3"]["published_deltas"])
+
+    def test_c3_evidence_rejects_mode_chain_counter_and_drain_faults(self) -> None:
+        run_dir = self.make_run("c3-mode-mismatch", count=20, c3_mode="enabled")
+        manifest = run_dir / "sink_manifest.yaml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace(
+                "c3_mode: enabled", "c3_mode: keyframe-only"
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "disagree on c3_mode"):
+            ANALYSIS.analyze_run(run_dir)
+
+        run_dir = self.make_run("c3-chain", count=20, c3_mode="enabled")
+        self.mutate_csv(
+            run_dir / "map_updates.csv",
+            lambda rows: rows[1].update(
+                {"base_revision": "999", "revision_span": "2"}
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "base revision is not chained"):
+            ANALYSIS.analyze_run(run_dir)
+
+        run_dir = self.make_run("c3-keyframe-delta", count=20, c3_mode="keyframe-only")
+
+        def inject_delta(rows):
+            rows[1].update(
+                {
+                    "update_kind": "2",
+                    "base_revision": rows[0]["new_revision"],
+                    "base_content_hash": rows[0]["content_hash"],
+                    "revision_span": "1",
+                    "operation_count": "1",
+                }
+            )
+
+        self.mutate_csv(run_dir / "map_updates.csv", inject_delta)
+        with self.assertRaisesRegex(ValueError, "keyframe-only mode contains delta"):
+            ANALYSIS.analyze_run(run_dir)
+
+        run_dir = self.make_run("c3-counter", count=20, c3_mode="enabled")
+        self.mutate_csv(
+            run_dir / "map_update_producer_diagnostics.csv",
+            lambda rows: rows[-1].update({"published_deltas": "18"}),
+        )
+        with self.assertRaisesRegex(ValueError, "counter is not conserved"):
+            ANALYSIS.analyze_run(run_dir)
+
+        run_dir = self.make_run("c3-drain", count=20, c3_mode="enabled")
+        drain = run_dir / "drain-manifest.txt"
+        drain.write_text(
+            drain.read_text(encoding="utf-8").replace(
+                "drain_converged=true", "drain_converged=false"
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "two stable samples"):
+            ANALYSIS.analyze_run(run_dir)
+
+    def test_c3_drain_monitor_handles_enabled_and_disabled_modes(self) -> None:
+        enabled = self.make_run("drain-enabled", count=20, c3_mode="enabled")
+        output = self.root / "drain-enabled-result.txt"
+        start_ns = 1_000_000_000 + 2_000_000_000
+        self.assertEqual(0, C3_DRAIN.monitor(enabled, "enabled", start_ns, 0.2, output))
+        self.assertIn("drain_converged=true", output.read_text(encoding="utf-8"))
+
+        disabled = self.make_run("drain-disabled", count=20)
+        output = self.root / "drain-disabled-result.txt"
+        self.assertEqual(0, C3_DRAIN.monitor(disabled, "disabled", 1, 0.2, output))
+        self.assertIn("drain_converged=not_applicable", output.read_text(encoding="utf-8"))
 
     def test_bounded_run_rejects_unproven_or_changing_plateau(self) -> None:
         run_dir = self.make_run("not-plateau")
@@ -2238,11 +2542,27 @@ class AnalyzeLocalMapProfileTest(unittest.TestCase):
         results = [ANALYSIS.analyze_run(path) for path in runs]
         aggregate = ANALYSIS.aggregate_runs(results)
         self.assertEqual(3, aggregate["run_count"])
+        self.assertEqual([40.0, 40.0, 40.0], aggregate["cpu_percent"]["mean_percent"])
         self.assertFalse(aggregate["suspected_sustained_growth"])
         results[2]["tracee_pid"] = results[0]["tracee_pid"]
         results[2]["t0_monotonic_ns"] = results[0]["t0_monotonic_ns"]
         results[2]["t1_monotonic_ns"] = results[0]["t1_monotonic_ns"]
         with self.assertRaisesRegex(ValueError, "duplicate evidence"):
+            ANALYSIS.aggregate_runs(results)
+
+    def test_three_run_aggregate_rejects_mixed_c3_modes(self) -> None:
+        runs = [
+            self.make_run(
+                f"mixed-c3-{index}",
+                count=20,
+                c3_mode="enabled" if index == 2 else "disabled",
+                tracee_pid=4300 + index,
+                t0_ns=1_000_000_000 + index * 10_000_000_000,
+            )
+            for index in range(3)
+        ]
+        results = [ANALYSIS.analyze_run(path) for path in runs]
+        with self.assertRaisesRegex(ValueError, "one C3 mode"):
             ANALYSIS.aggregate_runs(results)
 
     def test_sampler_parsers_and_capacity_safety(self) -> None:

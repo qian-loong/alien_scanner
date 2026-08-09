@@ -1,0 +1,29 @@
+uint8 REASON_INITIAL_BASELINE = 1
+uint8 REASON_GAP = 2
+uint8 REASON_EPOCH_CHANGE = 3
+uint8 REASON_HASH_CONFLICT = 4
+uint8 REASON_LOCAL_STATE_INVALID = 5
+
+string requester_id
+uint64 requester_session_boot_time_ns
+uint32 requester_session_random_suffix
+string client_request_id
+
+bool bootstrap_latest
+string expected_vehicle_id
+uint64 expected_mapper_session_boot_time_ns
+uint32 expected_mapper_session_random_suffix
+uint64 expected_map_epoch
+
+uint64 receiver_revision
+uint8[32] receiver_content_hash
+uint8 reason
+---
+bool accepted
+string correlation_id
+string current_vehicle_id
+uint64 current_mapper_session_boot_time_ns
+uint32 current_mapper_session_random_suffix
+uint64 current_map_epoch
+uint64 current_revision
+string diagnostic

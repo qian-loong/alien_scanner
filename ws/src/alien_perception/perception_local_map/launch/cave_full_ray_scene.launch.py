@@ -25,6 +25,10 @@ def _launch_setup(context):
     )
     if not math.isfinite(scanner_startup_delay_s) or scanner_startup_delay_s < 0.0:
         raise ValueError("scanner_startup_delay_s must be finite and non-negative")
+    map_update_enabled_text = LaunchConfiguration("map_update_enabled").perform(context)
+    if map_update_enabled_text.lower() not in ("true", "false"):
+        raise ValueError("map_update_enabled must be true or false")
+    map_update_enabled = map_update_enabled_text.lower() == "true"
     config = load_scene_config(config_path)
     frames = config["frames"]
     topics = config["topics"]
@@ -165,6 +169,9 @@ def _launch_setup(context):
         "health_topic": topics["health"],
         "state_topic": topics["local_map_state"],
         "octomap_topic": topics["local_map_octomap"],
+        "map_update_enabled": map_update_enabled,
+        "map_update_topic": topics["local_map_updates"],
+        "map_resync_service": topics["local_map_resync"],
         "sensor_timeout_s": contract["sensor_timeout_s"],
         "health_timeout_s": 1.0,
         "pose_receive_timeout_s": contract["pose_timeout_s"],
@@ -239,6 +246,7 @@ def generate_launch_description():
             DeclareLaunchArgument("scene_config", default_value=default_config),
             DeclareLaunchArgument("show_rviz", default_value="true"),
             DeclareLaunchArgument("scanner_startup_delay_s", default_value="0.0"),
+            DeclareLaunchArgument("map_update_enabled", default_value="false"),
             OpaqueFunction(function=_launch_setup),
         ]
     )

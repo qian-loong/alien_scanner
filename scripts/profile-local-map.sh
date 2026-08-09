@@ -3,11 +3,12 @@ set -uo pipefail
 
 usage()
 {
-    echo "usage: $0 <mode> <install-prefix> <new-output-dir> <duration-seconds> [bounded|expanding] [callback|full]" >&2
+    echo "usage: $0 <mode> <install-prefix> <new-output-dir> <duration-seconds> [bounded|expanding] [disabled|enabled|keyframe-only]" >&2
+    echo "usage: $0 stage-latency <install-prefix> <new-output-dir> <duration-seconds> [bounded|expanding] [callback|full] [disabled|enabled|keyframe-only]" >&2
     echo "modes: plain-sample capacity-ramp perf-stat perf-record ros-trace stage-latency heaptrack asan-smoke lsan-smoke valgrind-memcheck valgrind-massif" >&2
 }
 
-if [[ $# -lt 4 || $# -gt 6 ]]; then
+if [[ $# -lt 4 || $# -gt 7 ]]; then
     usage
     exit 2
 fi
@@ -17,7 +18,8 @@ INSTALL_PREFIX="$(readlink -f "$2")"
 OUTPUT_DIR="$3"
 DURATION="$4"
 WORKLOAD="${5:-bounded}"
-STAGE_EVENT_SET="${6:-full}"
+STAGE_EVENT_SET="none"
+C3_MODE="disabled"
 case "${MODE}" in
     plain-sample|capacity-ramp|perf-stat|perf-record|ros-trace|stage-latency|heaptrack|asan-smoke|lsan-smoke|valgrind-memcheck|valgrind-massif)
         ;;
@@ -34,15 +36,37 @@ if [[ "${WORKLOAD}" != bounded && "${WORKLOAD}" != expanding ]]; then
     exit 2
 fi
 if [[ "${MODE}" == stage-latency ]]; then
+    STAGE_EVENT_SET="${6:-full}"
+    C3_MODE="${7:-disabled}"
     if [[ "${STAGE_EVENT_SET}" != callback && "${STAGE_EVENT_SET}" != full ]]; then
         echo "stage-latency event set must be callback or full" >&2
         exit 2
     fi
-elif (( $# == 6 )); then
+elif (( $# == 7 )); then
     echo "stage event set is valid only for stage-latency mode" >&2
     exit 2
-else
-    STAGE_EVENT_SET=none
+elif (( $# == 6 )); then
+    C3_MODE="$6"
+    if [[ "${C3_MODE}" == callback || "${C3_MODE}" == full ]]; then
+        echo "stage event set is valid only for stage-latency mode" >&2
+        exit 2
+    fi
+fi
+case "${C3_MODE}" in
+    disabled|enabled|keyframe-only)
+        ;;
+    *)
+        echo "c3 mode must be disabled, enabled, or keyframe-only" >&2
+        exit 2
+        ;;
+esac
+MAP_UPDATE_ENABLED=false
+C3_DELTA_ENABLED=true
+if [[ "${C3_MODE}" == enabled || "${C3_MODE}" == keyframe-only ]]; then
+    MAP_UPDATE_ENABLED=true
+fi
+if [[ "${C3_MODE}" == keyframe-only ]]; then
+    C3_DELTA_ENABLED=false
 fi
 if [[ ! "${DURATION}" =~ ^[1-9][0-9]*$ ]]; then
     echo "duration must be a positive integer" >&2
@@ -74,9 +98,10 @@ PROFILE_SAMPLER="${SCRIPT_DIR}/lib/profile_local_map_sampler.py"
 PROFILE_STAGE_ANALYZER="${SCRIPT_DIR}/lib/stage_latency_analysis.py"
 PROFILE_BUILD_PROVENANCE="${SCRIPT_DIR}/lib/local_map_build_provenance.py"
 PROFILE_ANALYZER="${SCRIPT_DIR}/analyze-local-map-profile.py"
+PROFILE_C3_DRAIN="${SCRIPT_DIR}/lib/profile_c3_drain.py"
 for required_file in "${PROFILE_RUNNER_COMMON}" "${PROFILE_REPORT_PARSER}" \
     "${PROFILE_ROLE_MONITOR}" "${PROFILE_SAMPLER}" "${PROFILE_STAGE_ANALYZER}" \
-    "${PROFILE_BUILD_PROVENANCE}" "${PROFILE_ANALYZER}"; do
+    "${PROFILE_BUILD_PROVENANCE}" "${PROFILE_ANALYZER}" "${PROFILE_C3_DRAIN}"; do
     if [[ ! -r "${required_file}" ]]; then
         echo "missing profiling asset: ${required_file}" >&2
         exit 2
@@ -467,6 +492,7 @@ fi
     echo "mode=${MODE}"
     echo "workload=${WORKLOAD}"
     echo "duration_requested_s=${DURATION}"
+    echo "c3_mode=${C3_MODE}"
     [[ "${MODE}" == stage-latency ]] && echo "stage_event_set=${STAGE_EVENT_SET}"
     echo "started_at=$(date --iso-8601=ns)"
     echo "source_revision=${SOURCE_REVISION}"
@@ -482,6 +508,7 @@ fi
     echo "stage_latency_analysis_sha256=$(sha256sum "${PROFILE_STAGE_ANALYZER}" | awk '{print $1}')"
     echo "profile_build_provenance_sha256=$(sha256sum "${PROFILE_BUILD_PROVENANCE}" | awk '{print $1}')"
     echo "analysis_script_sha256=$(sha256sum "${PROFILE_ANALYZER}" | awk '{print $1}')"
+    echo "c3_drain_script_sha256=$(sha256sum "${PROFILE_C3_DRAIN}" | awk '{print $1}')"
     echo "workload_yaml_sha256=$(sha256sum "${WORKLOAD_YAML}" | awk '{print $1}')"
     echo "container_id=$(hostname)"
     echo "image_id=${PROFILE_IMAGE_ID}"
@@ -615,7 +642,13 @@ find_matching_descendant()
 
 start_target()
 {
-    local target_args=("${EXPECTED_TARGET_EXE}" --ros-args --params-file "${WORKLOAD_YAML}" -r __node:=profile_local_map)
+    local target_args=(
+        "${EXPECTED_TARGET_EXE}" --ros-args --params-file "${WORKLOAD_YAML}"
+        -r __node:=profile_local_map
+        -p "map_update_enabled:=${MAP_UPDATE_ENABLED}"
+        -p "map_update.delta_enabled:=${C3_DELTA_ENABLED}"
+        -p map_update_topic:=/profile/local_map/updates
+    )
     local heaptrack_process_model=""
     case "${MODE}" in
         heaptrack)
@@ -738,6 +771,7 @@ start_sink()
 {
     setsid taskset -c 1 "${SINK_EXE}" --ros-args \
         -p mode:="${WORKLOAD}" -p output_directory:="${OUTPUT_DIR}" \
+        -p c3_mode:="${C3_MODE}" -p map_update_topic:=/profile/local_map/updates \
         > "${OUTPUT_DIR}/sink.log" 2>&1 &
     SINK_PID=$!
     SINK_PGID="$(wait_for_isolated_pgid "${SINK_PID}")" || return 1
@@ -790,6 +824,8 @@ capture_graph()
         safe="$(tr '/' '_' <<< "${topic}" | sed 's/^_//')"
         ros2 topic info "${topic}" --verbose > "${OUTPUT_DIR}/graph-${safe}.txt" 2>&1 || return 1
     done
+    ros2 node info /profile_local_map > "${OUTPUT_DIR}/target-node-info.txt" 2>&1 || return 1
+    ros2 node info /perception_profile_sink > "${OUTPUT_DIR}/sink-node-info.txt" 2>&1 || return 1
     grep -Eq '^Publisher count: 1$' "${OUTPUT_DIR}/graph-profile_perception_observations.txt" || return 1
     grep -Eq '^Subscription count: 2$' "${OUTPUT_DIR}/graph-profile_perception_observations.txt" || return 1
     grep -Eq '^Publisher count: 1$' "${OUTPUT_DIR}/graph-profile_perception_pose.txt" || return 1
@@ -800,6 +836,19 @@ capture_graph()
         grep -Eq '^Publisher count: 1$' "${OUTPUT_DIR}/graph-${topic}.txt" || return 1
         grep -Eq '^Subscription count: 1$' "${OUTPUT_DIR}/graph-${topic}.txt" || return 1
     done
+    if [[ "${C3_MODE}" == disabled ]]; then
+        if grep -Eq '^/profile/local_map/updates([[:space:]]|$)' "${OUTPUT_DIR}/topic-list.txt" \
+            || grep -Fq '/profile/local_map/updates' "${OUTPUT_DIR}/target-node-info.txt" \
+            || grep -Fq '/profile/local_map/updates' "${OUTPUT_DIR}/sink-node-info.txt"; then
+            return 1
+        fi
+    else
+        local update_graph="${OUTPUT_DIR}/graph-profile_local_map_updates.txt"
+        ros2 topic info /profile/local_map/updates --verbose > "${update_graph}" 2>&1 \
+            || return 1
+        grep -Eq '^Publisher count: 1$' "${update_graph}" || return 1
+        grep -Eq '^Subscription count: 1$' "${update_graph}" || return 1
+    fi
     grep -q 'Node name: perception_profile_fixture' "${OUTPUT_DIR}/graph-tf_static.txt" || return 1
 }
 
@@ -825,13 +874,16 @@ capture_parameters_and_tf()
 {
     ros2 param dump /profile_local_map > "${OUTPUT_DIR}/target-params.yaml" 2>&1 || return 1
     ros2 param dump /perception_profile_fixture > "${OUTPUT_DIR}/fixture-params.yaml" 2>&1 || return 1
+    ros2 param dump /perception_profile_sink > "${OUTPUT_DIR}/sink-params.yaml" 2>&1 || return 1
     python3 - "${OUTPUT_DIR}/target-params.yaml" "${OUTPUT_DIR}/fixture-params.yaml" \
-        "${WORKLOAD}" <<'PY' || return 1
+        "${OUTPUT_DIR}/sink-params.yaml" "${WORKLOAD}" "${C3_MODE}" \
+        "${OUTPUT_DIR}/c3-runtime-parameters.txt" <<'PY' || return 1
 import math
 import sys
+from pathlib import Path
 import yaml
 
-target_path, fixture_path, workload = sys.argv[1:]
+target_path, fixture_path, sink_path, workload, c3_mode, output_path = sys.argv[1:]
 
 def parameters(path, node):
     with open(path, encoding="utf-8") as stream:
@@ -840,6 +892,7 @@ def parameters(path, node):
 
 target = parameters(target_path, "/profile_local_map")
 fixture = parameters(fixture_path, "/perception_profile_fixture")
+sink = parameters(sink_path, "/perception_profile_sink")
 expected = {
     "backend_type": "octomap",
     "source_local_map_frame": "map",
@@ -861,6 +914,36 @@ if sensor.get("ray_evidence") != "full_ray" or sensor.get("frame_id") != "profil
     raise SystemExit("profile_scan descriptor is not the frozen FullRay sensor")
 if fixture.get("mode") != workload or fixture.get("sequence_limit") != 0:
     raise SystemExit("fixture mode or sequence limit differs from the requested workload")
+
+def dotted(root, dotted_key):
+    current = root
+    for key in dotted_key.split("."):
+        if not isinstance(current, dict) or key not in current:
+            return root.get(dotted_key) if isinstance(root, dict) else None
+        current = current[key]
+    return current
+
+target_enabled = dotted(target, "map_update_enabled")
+delta_enabled = dotted(target, "map_update.delta_enabled")
+target_topic = dotted(target, "map_update_topic")
+if target_enabled != (c3_mode != "disabled"):
+    raise SystemExit("map_update_enabled does not match c3_mode")
+if delta_enabled != (c3_mode != "keyframe-only"):
+    raise SystemExit("map_update.delta_enabled does not match c3_mode")
+if target_topic != "/profile/local_map/updates":
+    raise SystemExit("target map_update_topic is not fixed to the profiling topic")
+if dotted(sink, "c3_mode") != c3_mode or dotted(sink, "map_update_topic") != target_topic:
+    raise SystemExit("sink C3 parameters do not match the target")
+Path(output_path).write_text(
+    "\n".join((
+        "schema=alien-scanner/perception-c3-runtime-parameters/v1",
+        f"c3_mode={c3_mode}",
+        f"map_update_enabled={str(bool(target_enabled)).lower()}",
+        f"map_update.delta_enabled={str(bool(delta_enabled)).lower()}",
+        f"map_update_topic={target_topic}",
+        f"sink.c3_mode={dotted(sink, 'c3_mode')}",
+        f"sink.map_update_topic={dotted(sink, 'map_update_topic')}",
+    )) + "\n", encoding="utf-8")
 PY
     timeout 10 ros2 topic echo /tf_static tf2_msgs/msg/TFMessage --once \
         --qos-reliability reliable --qos-durability transient_local \
@@ -1391,6 +1474,10 @@ if ! validate_pidstat_bracket "${PIDSTAT_START_MONOTONIC_NS}" \
     "${PIDSTAT_BRACKET_MARGIN_NS}"; then
     invalidate "pidstat did not tightly bracket the formal window"
 fi
+stop_group "${FIXTURE_PID}" "${FIXTURE_PGID}" fixture "${FIXTURE_STARTTIME}"
+FIXTURE_PID=""
+DRAIN_START_MONOTONIC_NS="$(monotonic_ns)"
+
 stop_group "${PIDSTAT_PID}" "${PIDSTAT_PGID}" pidstat "${PIDSTAT_STARTTIME}" TERM
 PIDSTAT_PID=""
 
@@ -1401,11 +1488,18 @@ case "${MODE}" in
 esac
 stop_group "${SAMPLER_PID}" "${SAMPLER_PGID}" checkpoint_sampler "${SAMPLER_STARTTIME}" TERM
 SAMPLER_PID=""
+if [[ "${C3_MODE}" == disabled ]]; then
+    python3 "${PROFILE_C3_DRAIN}" monitor "${OUTPUT_DIR}" "${C3_MODE}" \
+        "${DRAIN_START_MONOTONIC_NS}" 1 "${OUTPUT_DIR}/drain-manifest.txt" \
+        || invalidate "disabled C3 mode produced map-update evidence"
+else
+    python3 "${PROFILE_C3_DRAIN}" monitor "${OUTPUT_DIR}" "${C3_MODE}" \
+        "${DRAIN_START_MONOTONIC_NS}" 30 "${OUTPUT_DIR}/drain-manifest.txt" \
+        || invalidate "C3 producer did not converge during drain"
+fi
 stop_target
 stop_group "${SINK_PID}" "${SINK_PGID}" sink "${SINK_STARTTIME}"
 SINK_PID=""
-stop_group "${FIXTURE_PID}" "${FIXTURE_PGID}" fixture "${FIXTURE_STARTTIME}"
-FIXTURE_PID=""
 
 generate_reports
 if [[ "${MODE}" == asan-smoke || "${MODE}" == lsan-smoke ]]; then

@@ -19,6 +19,31 @@ find_package(ament_cmake REQUIRED)
 if(NOT TARGET perception_core::perception_core)
   find_package(perception_core REQUIRED)
 endif()
+if(NOT TARGET perception_map_update::core AND
+   NOT TARGET perception_map_update::perception_map_update_core)
+  find_package(perception_map_update REQUIRED)
+endif()
+if(TARGET perception_map_update::core)
+  set(PERCEPTION_MAP_UPDATE_CORE_TARGET perception_map_update::core)
+else()
+  set(PERCEPTION_MAP_UPDATE_CORE_TARGET
+    perception_map_update::perception_map_update_core
+  )
+endif()
+if(TARGET perception_map_update::ros)
+  set(PERCEPTION_MAP_UPDATE_ROS_TARGET perception_map_update::ros)
+else()
+  set(PERCEPTION_MAP_UPDATE_ROS_TARGET
+    perception_map_update::perception_map_update_ros
+  )
+endif()
+if(TARGET perception_map_update::parameters)
+  set(PERCEPTION_MAP_UPDATE_PARAMETERS_TARGET perception_map_update::parameters)
+else()
+  set(PERCEPTION_MAP_UPDATE_PARAMETERS_TARGET
+    perception_map_update::perception_map_update_parameters
+  )
+endif()
 if(NOT TARGET perception_interfaces__rosidl_typesupport_cpp)
   find_package(perception_interfaces REQUIRED)
 endif()
@@ -30,6 +55,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(Threads REQUIRED)
 
 if(PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS)
   find_package(PkgConfig REQUIRED)
@@ -53,12 +79,16 @@ set(PERCEPTION_LOCAL_MAP_CORE_HEADERS
   include/perception_local_map/OccupancyBackend.hpp
   include/perception_local_map/SensorExtrinsicRegistry.hpp
   include/perception_local_map/LocalObservationMapper.hpp
+  include/perception_local_map/CanonicalSnapshotAdapter.hpp
+  include/perception_local_map/AsyncMapUpdateProducer.hpp
 )
 
 add_library(perception_local_map_core STATIC
   src/MapTypes.cpp
   src/SensorExtrinsicRegistry.cpp
   src/LocalObservationMapper.cpp
+  src/CanonicalSnapshotAdapter.cpp
+  src/AsyncMapUpdateProducer.cpp
 )
 target_sources(perception_local_map_core PRIVATE ${PERCEPTION_LOCAL_MAP_CORE_HEADERS})
 add_library(${PROJECT_NAME}::core ALIAS perception_local_map_core)
@@ -69,7 +99,11 @@ target_include_directories(perception_local_map_core PUBLIC
   ${EIGEN3_INCLUDE_DIRS}
 )
 target_compile_features(perception_local_map_core PUBLIC cxx_std_17)
-target_link_libraries(perception_local_map_core PUBLIC perception_core::perception_core)
+target_link_libraries(perception_local_map_core PUBLIC
+  perception_core::perception_core
+  ${PERCEPTION_MAP_UPDATE_CORE_TARGET}
+  Threads::Threads
+)
 if(PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS)
   target_compile_definitions(perception_local_map_core PRIVATE
     PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS=1
@@ -109,6 +143,8 @@ target_include_directories(perception_local_map_node PRIVATE
 target_link_libraries(perception_local_map_node
   perception_local_map_core
   perception_local_map_octomap
+  ${PERCEPTION_MAP_UPDATE_ROS_TARGET}
+  ${PERCEPTION_MAP_UPDATE_PARAMETERS_TARGET}
   ${OCTOMAP_LIBRARIES}
 )
 if(PERCEPTION_LOCAL_MAP_ENABLE_STAGE_LATENCY_TRACEPOINTS)
@@ -195,12 +231,13 @@ if(BUILD_TESTING)
     TIMEOUT 30
   )
   add_launch_test(test/test_local_map_integration.py TIMEOUT 90)
+  add_launch_test(test/test_map_update_closed_loop.py TIMEOUT 60)
   add_launch_test(test/test_local_map_invalid_config.py TIMEOUT 30)
   add_launch_test(test/test_cave_full_ray_scene_integration.py TIMEOUT 45)
   add_launch_test(test/test_cave_full_ray_scene_rviz_smoke.py TIMEOUT 30)
 endif()
 
 ament_export_include_directories(include)
-ament_export_dependencies(perception_core Eigen3 octomap)
+ament_export_dependencies(perception_core perception_map_update Eigen3 octomap Threads)
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_package()

@@ -1,0 +1,10 @@
+<launch>
+  <arg name="receiver_params_file"
+       default="$(find-pkg-share perception_map_update)/config/map_update_reference.yaml"/>
+  <node pkg="perception_map_update"
+        exec="perception_map_update_receiver_node"
+        name="perception_map_update_receiver_node"
+        output="screen">
+    <param from="$(var receiver_params_file)"/>
+  </node>
+</launch>

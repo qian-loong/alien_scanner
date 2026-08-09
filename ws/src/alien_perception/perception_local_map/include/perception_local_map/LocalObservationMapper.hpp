@@ -67,6 +67,8 @@ namespace PerceptionLocalMap {
         MapIdentity                       identity;
         MapGeometry                       geometry;
         std::optional<AxisAlignedBounds>   known_bounds;
+        std::optional<CommitProvenance>    last_commit;
+        Perception::MapperContractFingerprint contract_fingerprint;
     };
 
     class MapReadTransaction

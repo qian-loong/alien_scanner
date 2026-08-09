@@ -1,67 +1,18 @@
 #include "perception_profiling/ProfileDataSink.hpp"
+#include "perception_profiling/ProfileMapHarness.hpp"
+#include "perception_profiling/MapUpdateAcceptanceScenarios.hpp"
+#include "perception_profiling/MapUpdateReplayOracle.hpp"
 #include "perception_profiling/ProfileOracle.hpp"
 #include "perception_profiling/ProfileScenario.hpp"
-
-#include "perception_local_map/OctoMapBackend.hpp"
 
 #include <gtest/gtest.h>
 
 #include <cmath>
 #include <filesystem>
 #include <limits>
-#include <memory>
 #include <string>
 
 namespace PerceptionProfiling::Test {
-    namespace {
-
-        std::unique_ptr<PerceptionLocalMap::LocalObservationMapper> make_mapper(
-                const ProfileScenario & scenario)
-        {
-            return std::make_unique<PerceptionLocalMap::LocalObservationMapper>(
-                    scenario.mapper_config({30'000'000'000ULL, 3U}),
-                    [](const PerceptionLocalMap::MapGeometry & geometry) {
-                        return std::make_unique<PerceptionLocalMap::OctoMapBackend>(geometry);
-                    });
-        }
-
-        PerceptionLocalMap::InputResult submit(
-                PerceptionLocalMap::LocalObservationMapper & mapper,
-                const ProfileScenario & scenario,
-                const ScenarioSample & sample)
-        {
-            const auto fingerprint = scenario.contract_fingerprint();
-            const auto health = [&](std::int64_t receive_ns) {
-                ASSERT_TRUE(mapper.submit_health(
-                        {scenario.config().producer_source_id,
-                         scenario.config().producer_session,
-                         fingerprint,
-                         Perception::HealthState::Healthy,
-                         receive_ns,
-                         2'000'000'000LL}));
-            };
-            health(sample.observation_pose.stamp.nanoseconds);
-            EXPECT_EQ(
-                    mapper.submit_pose(
-                                  sample.observation_pose,
-                                  sample.observation_pose.stamp.nanoseconds + 1)
-                            .status,
-                    PerceptionLocalMap::InputStatus::Accepted);
-            health(sample.lead_pose.stamp.nanoseconds);
-            EXPECT_EQ(
-                    mapper.submit_pose(
-                                  sample.lead_pose,
-                                  sample.lead_pose.stamp.nanoseconds + 1)
-                            .status,
-                    PerceptionLocalMap::InputStatus::Accepted);
-            return mapper.submit_observation(
-                    sample.observation,
-                    scenario.extrinsic(),
-                    sample.lead_pose.stamp.nanoseconds + 2);
-        }
-
-    }// namespace
-
     TEST(ProfileScenario, DeterministicUniqueSequenceAndBoundedMotionHaveNoJump)
     {
         const ProfileScenario first(ScenarioMode::Bounded);
@@ -177,16 +128,16 @@ namespace PerceptionProfiling::Test {
     TEST(ProfileOracle, RealMapperPreservesOriginFreeAndNoReturnBoundaryUnknown)
     {
         const ProfileScenario scenario(ScenarioMode::Expanding);
-        auto mapper = make_mapper(scenario);
+        ProfileMapHarness harness(scenario, {30'000'000'000ULL, 3U});
         std::optional<PerceptionLocalMap::CommitReceipt> receipt;
         for(std::uint64_t sequence = 1U; sequence <= 6U; ++sequence) {
-            const auto result = submit(*mapper, scenario, scenario.sample(sequence));
+            const auto result = harness.submit(scenario.sample(sequence));
             if(result.status == PerceptionLocalMap::InputStatus::Applied) {
                 receipt = result.receipt;
             }
         }
         ASSERT_TRUE(receipt.has_value());
-        auto acquired = mapper->acquire_read_transaction(receipt.value());
+        auto acquired = harness.mapper().acquire_read_transaction(receipt.value());
         ASSERT_EQ(acquired.status, PerceptionLocalMap::AcquireStatus::Ready);
         ASSERT_TRUE(acquired.transaction.has_value());
         const double x = scenario.sample(6U).observation_pose.position.x();
@@ -202,6 +153,185 @@ namespace PerceptionProfiling::Test {
                                          + scenario.config().range_max_m})
                         .state,
                 PerceptionLocalMap::OccupancyState::Unknown);
+    }
+
+    TEST(MapUpdateReplayOracle, ExactRevisionProductionPipelineMatchesEveryCheckpoint)
+    {
+        const MapUpdateReplayOracle oracle(ProfileScenario(ScenarioMode::Canonical));
+        MapUpdateReplayOptions options;
+        options.sequence_count = 12U;
+        const auto run = oracle.run(options);
+
+        ASSERT_TRUE(run.all_checkpoints_match()) << run.final_comparison.diagnostic;
+        EXPECT_EQ(run.rejected_input_count, 0U);
+        EXPECT_EQ(run.unavailable_input_count, 1U);
+        EXPECT_EQ(run.backend_fault_input_count, 0U);
+        ASSERT_EQ(run.checkpoints.size(), run.applied_input_count);
+        ASSERT_FALSE(run.checkpoints.empty());
+        EXPECT_EQ(run.keyframe_count, 1U);
+        EXPECT_EQ(run.delta_count + run.keyframe_count, run.checkpoints.size());
+        EXPECT_EQ(
+                run.checkpoints.front().update_kind,
+                PerceptionMapUpdate::UpdateKind::Keyframe);
+        for(const auto & checkpoint : run.checkpoints) {
+            EXPECT_TRUE(checkpoint.comparison.matches)
+                    << "revision " << checkpoint.revision << ": "
+                    << checkpoint.comparison.diagnostic;
+            EXPECT_EQ(checkpoint.source_cell_count, checkpoint.reconstructed_cell_count);
+            EXPECT_TRUE(
+                    checkpoint.apply_status
+                            == PerceptionMapUpdate::ApplyUpdateStatus::AppliedKeyframe
+                    || checkpoint.apply_status
+                               == PerceptionMapUpdate::ApplyUpdateStatus::AppliedDelta);
+        }
+        ASSERT_TRUE(run.final_oracle.has_value());
+        ASSERT_TRUE(run.final_reconstructed.has_value());
+        EXPECT_EQ(run.final_oracle->revision, run.checkpoints.back().revision);
+        EXPECT_EQ(run.final_oracle->cells, run.final_reconstructed->cells);
+    }
+
+    TEST(MapUpdateReplayOracle, FixedInputRepeatsRevisionHashAndUpdateKind)
+    {
+        const MapUpdateReplayOptions options {8U, 16U, {}};
+        const auto first = MapUpdateReplayOracle(
+                                   ProfileScenario(ScenarioMode::Bounded))
+                                   .run(options);
+        const auto second = MapUpdateReplayOracle(
+                                    ProfileScenario(ScenarioMode::Bounded))
+                                    .run(options);
+
+        ASSERT_TRUE(first.all_checkpoints_match());
+        ASSERT_TRUE(second.all_checkpoints_match());
+        ASSERT_EQ(first.checkpoints.size(), second.checkpoints.size());
+        for(std::size_t index = 0U; index < first.checkpoints.size(); ++index) {
+            const auto & left = first.checkpoints[index];
+            const auto & right = second.checkpoints[index];
+            EXPECT_EQ(left.sequence, right.sequence);
+            EXPECT_EQ(left.revision, right.revision);
+            EXPECT_EQ(left.update_kind, right.update_kind);
+            EXPECT_EQ(left.operation_count, right.operation_count);
+            EXPECT_EQ(left.payload_bytes, right.payload_bytes);
+            EXPECT_EQ(left.content_hash, right.content_hash);
+            EXPECT_EQ(left.update_hash, right.update_hash);
+        }
+        ASSERT_TRUE(first.final_oracle.has_value());
+        ASSERT_TRUE(second.final_oracle.has_value());
+        EXPECT_EQ(first.final_oracle->cells, second.final_oracle->cells);
+        EXPECT_EQ(first.final_oracle->content_hash, second.final_oracle->content_hash);
+    }
+
+    TEST(MapUpdateAcceptanceScenarios, GapRetainsMapUntilCorrelatedKeyframeRecovers)
+    {
+        MapUpdateReplayOptions options;
+        options.sequence_count = 8U;
+        const auto replay = MapUpdateReplayOracle(
+                                    ProfileScenario(ScenarioMode::Bounded))
+                                    .run(options);
+        ASSERT_TRUE(replay.all_checkpoints_match());
+        ASSERT_EQ(replay.acceptance_snapshots.size(), 3U);
+
+        const auto run = MapUpdateAcceptanceScenarios::resync_recovery(
+                replay.acceptance_snapshots);
+        ASSERT_TRUE(run.passed) << run.diagnostic;
+        ASSERT_EQ(run.stages.size(), 4U);
+        EXPECT_EQ(run.stages[0].kind, MapUpdateAcceptanceStageKind::ReadyBaseline);
+        EXPECT_EQ(run.stages[0].receiver_state,
+                  PerceptionMapUpdate::ReceiverState::Ready);
+        EXPECT_EQ(run.stages[1].kind, MapUpdateAcceptanceStageKind::DeltaDropped);
+        EXPECT_EQ(run.stages[2].kind, MapUpdateAcceptanceStageKind::GapRejected);
+        EXPECT_EQ(run.stages[2].apply_status,
+                  PerceptionMapUpdate::ApplyUpdateStatus::RejectedGap);
+        EXPECT_EQ(run.stages[2].receiver_state,
+                  PerceptionMapUpdate::ReceiverState::ResyncRequired);
+        ASSERT_TRUE(run.stages[0].receiver_map.has_value());
+        ASSERT_TRUE(run.stages[2].receiver_map.has_value());
+        EXPECT_EQ(run.stages[0].receiver_map->revision,
+                  run.stages[2].receiver_map->revision);
+        EXPECT_EQ(run.stages[0].receiver_map->cells,
+                  run.stages[2].receiver_map->cells);
+        EXPECT_EQ(run.stages[3].kind, MapUpdateAcceptanceStageKind::ResyncRecovered);
+        EXPECT_EQ(run.stages[3].correlation_id, "replay-resync-1");
+        EXPECT_EQ(run.stages[3].receiver_state,
+                  PerceptionMapUpdate::ReceiverState::Ready);
+        ASSERT_TRUE(run.stages[3].receiver_map.has_value());
+        EXPECT_EQ(run.stages[3].receiver_map->revision,
+                  replay.acceptance_snapshots[2].revision);
+        EXPECT_EQ(run.stages[3].receiver_map->cells,
+                  replay.acceptance_snapshots[2].cells);
+    }
+
+    TEST(MapUpdateAcceptanceScenarios, EpochResetRejectsOldChainAndBuildsNewBaseline)
+    {
+        MapUpdateReplayOptions options;
+        options.sequence_count = 8U;
+        const auto replay = MapUpdateReplayOracle(
+                                    ProfileScenario(ScenarioMode::Bounded))
+                                    .run(options);
+        ASSERT_TRUE(replay.all_checkpoints_match());
+
+        const auto run = MapUpdateAcceptanceScenarios::epoch_reset(
+                replay.acceptance_snapshots);
+        ASSERT_TRUE(run.passed) << run.diagnostic;
+        ASSERT_EQ(run.stages.size(), 4U);
+        EXPECT_EQ(run.stages[0].kind, MapUpdateAcceptanceStageKind::EpochBaseline);
+        EXPECT_EQ(run.stages[1].kind,
+                  MapUpdateAcceptanceStageKind::NewEpochAdmitted);
+        EXPECT_EQ(run.stages[1].receiver_state,
+                  PerceptionMapUpdate::ReceiverState::ResyncRequired);
+        EXPECT_EQ(run.stages[2].kind,
+                  MapUpdateAcceptanceStageKind::OldEpochRejected);
+        EXPECT_EQ(run.stages[2].apply_status,
+                  PerceptionMapUpdate::ApplyUpdateStatus::RejectedAdmission);
+        ASSERT_TRUE(run.stages[0].receiver_map.has_value());
+        ASSERT_TRUE(run.stages[2].receiver_map.has_value());
+        EXPECT_EQ(run.stages[0].receiver_map->source,
+                  run.stages[2].receiver_map->source);
+        EXPECT_EQ(run.stages[0].receiver_map->revision,
+                  run.stages[2].receiver_map->revision);
+        EXPECT_EQ(run.stages[3].kind,
+                  MapUpdateAcceptanceStageKind::EpochRecovered);
+        EXPECT_EQ(run.stages[3].receiver_state,
+                  PerceptionMapUpdate::ReceiverState::Ready);
+        ASSERT_TRUE(run.stages[3].receiver_map.has_value());
+        EXPECT_EQ(run.stages[3].receiver_map->source.map_epoch,
+                  replay.acceptance_snapshots[0].source.map_epoch + 1U);
+        EXPECT_EQ(run.stages[3].receiver_map->revision, 1U);
+        EXPECT_EQ(run.stages[3].receiver_map->cells,
+                  replay.acceptance_snapshots[0].cells);
+    }
+
+    TEST(MapUpdateReplayOracle, ReportsBoundedMissingUnexpectedAndStateDifferences)
+    {
+        MapUpdateReplayOptions options;
+        options.sequence_count = 3U;
+        const auto run = MapUpdateReplayOracle(
+                                 ProfileScenario(ScenarioMode::Expanding))
+                                 .run(options);
+        ASSERT_TRUE(run.all_checkpoints_match());
+        ASSERT_TRUE(run.final_oracle.has_value());
+        ASSERT_TRUE(run.final_reconstructed.has_value());
+        ASSERT_GE(run.final_reconstructed->cells.size(), 3U);
+
+        auto changed = *run.final_reconstructed;
+        changed.cells[0].state = changed.cells[0].state
+                == PerceptionMapUpdate::CellState::Free
+                ? PerceptionMapUpdate::CellState::Occupied
+                : PerceptionMapUpdate::CellState::Free;
+        changed.cells.erase(changed.cells.begin() + 1);
+        auto unexpected = changed.cells.back();
+        ++unexpected.index.z;
+        changed.cells.push_back(unexpected);
+
+        const auto comparison = MapUpdateReplayOracle::compare(
+                *run.final_oracle, changed, 1U);
+        EXPECT_FALSE(comparison.matches);
+        EXPECT_EQ(comparison.missing_cell_count, 1U);
+        EXPECT_EQ(comparison.unexpected_cell_count, 1U);
+        EXPECT_EQ(comparison.state_mismatch_count, 1U);
+        EXPECT_EQ(comparison.missing_cell_samples.size(), 1U);
+        EXPECT_EQ(comparison.unexpected_cell_samples.size(), 1U);
+        EXPECT_EQ(comparison.state_mismatch_samples.size(), 1U);
+        EXPECT_EQ(comparison.diagnostic, "cell mismatch: missing=1, unexpected=1, state=1");
     }
 
     TEST(ProfileOracle, CheckpointsGrowAndMilestonesUseFirstExactCrossing)
@@ -302,7 +432,7 @@ namespace PerceptionProfiling::Test {
         std::filesystem::remove_all(directory);
         const ProfileScenario scenario(ScenarioMode::Bounded);
         {
-            ProfileDataSink sink(directory, scenario);
+            ProfileDataSink sink(directory, scenario, C3ProfileMode::Enabled);
             const auto sample = scenario.sample(1U);
             sink.record_observation(sample.observation, 1);
             auto changed = sample.observation;
@@ -356,7 +486,65 @@ namespace PerceptionProfiling::Test {
                      true,
                      1U});
             sink.record_diagnostic({10, 0, 1U, "target", "expected warning"});
+            DiagnosticProjection producer_diagnostic {
+                    11,
+                    0,
+                    0U,
+                    "/profile_local_map: map_update_producer",
+                    "running"};
+            producer_diagnostic.values = {
+                    {"pending", "0"},
+                    {"in_flight", "0"},
+                    {"pending_revision", "0"},
+                    {"in_flight_revision", "0"},
+                    {"published_revision", "2"},
+                    {"coalesced_receipts", "1"},
+                    {"superseded_receipts", "0"},
+                    {"published_keyframes", "1"},
+                    {"published_deltas", "1"},
+                    {"revision_only_deltas", "1"},
+                    {"publish_failures", "0"},
+                    {"resource_rejections", "0"},
+                    {"snapshot_cells", "25"},
+                    {"delta_operations", "0"},
+                    {"payload_bytes", "4"},
+                    {"acquire_duration_ns", "1"},
+                    {"materialize_duration_ns", "2"},
+                    {"traversal_duration_ns", "3"},
+                    {"canonicalize_duration_ns", "4"},
+                    {"content_hash_duration_ns", "5"},
+                    {"prepare_duration_ns", "6"},
+                    {"validation_duration_ns", "7"},
+                    {"diff_duration_ns", "8"},
+                    {"encode_duration_ns", "9"},
+                    {"update_hash_duration_ns", "10"},
+                    {"publish_duration_ns", "11"},
+            };
+            sink.record_diagnostic(producer_diagnostic);
             sink.record_snapshot({11, 0, 1U, true, 0.2, 100U});
+            MapUpdateProjection keyframe;
+            keyframe.receipt_monotonic_ns = 12;
+            keyframe.update_kind = 1U;
+            keyframe.vehicle_id = "profile-vehicle";
+            keyframe.mapper_session = {1U, 2U};
+            keyframe.map_epoch = 1U;
+            keyframe.new_revision = 1U;
+            keyframe.revision_span = 1U;
+            keyframe.known_cell_count = 25U;
+            keyframe.canonical_payload_bytes = 404U;
+            keyframe.content_hash[0] = 1U;
+            keyframe.update_hash[0] = 2U;
+            sink.record_map_update(keyframe);
+            auto delta = keyframe;
+            delta.receipt_monotonic_ns = 13;
+            delta.update_kind = 2U;
+            delta.base_revision = 1U;
+            delta.new_revision = 2U;
+            delta.base_content_hash = keyframe.content_hash;
+            delta.revision_span = 1U;
+            delta.canonical_payload_bytes = 4U;
+            delta.update_hash[0] = 3U;
+            sink.record_map_update(delta);
             sink.finalize(true);
             EXPECT_EQ(sink.summary().observation_count, 4U);
             EXPECT_EQ(sink.summary().unique_observation_count, 3U);
@@ -369,12 +557,21 @@ namespace PerceptionProfiling::Test {
             EXPECT_EQ(sink.summary().revision_heartbeat_count, 1U);
             EXPECT_EQ(sink.summary().revision_gaps, 1U);
             EXPECT_EQ(sink.summary().revision_regressions, 1U);
+            EXPECT_EQ(sink.summary().producer_diagnostic_count, 1U);
+            EXPECT_EQ(sink.summary().map_update_count, 2U);
+            EXPECT_EQ(sink.summary().map_update_keyframe_count, 1U);
+            EXPECT_EQ(sink.summary().map_update_delta_count, 1U);
+            EXPECT_EQ(sink.summary().map_update_revision_only_delta_count, 1U);
             EXPECT_TRUE(sink.summary().normal_completion);
         }
         EXPECT_TRUE(std::filesystem::exists(directory / "observations.csv"));
         EXPECT_TRUE(std::filesystem::exists(directory / "states.csv"));
+        EXPECT_TRUE(std::filesystem::exists(directory / "map_updates.csv"));
+        EXPECT_TRUE(std::filesystem::exists(
+                directory / "map_update_producer_diagnostics.csv"));
         EXPECT_TRUE(std::filesystem::exists(directory / "sink_manifest.yaml"));
         EXPECT_THROW(ProfileDataSink(directory, scenario), std::invalid_argument);
+        EXPECT_THROW(parse_c3_profile_mode("invalid"), std::invalid_argument);
         std::filesystem::remove_all(directory);
     }
 

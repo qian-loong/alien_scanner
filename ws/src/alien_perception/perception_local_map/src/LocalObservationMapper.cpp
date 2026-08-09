@@ -1279,7 +1279,11 @@ namespace PerceptionLocalMap {
             return {AcquireStatus::Unavailable, std::nullopt};
         }
         MapReadMetadata metadata {
-                impl_->identity, impl_->config.geometry, impl_->storage->backend->known_bounds()};
+                impl_->identity,
+                impl_->config.geometry,
+                impl_->storage->backend->known_bounds(),
+                impl_->last_commit,
+                impl_->fingerprint};
         auto transaction_impl = std::make_unique<MapReadTransaction::Impl>(
                 impl_->storage, std::move(lock), impl_->storage->backend.get(),
                 impl_->storage->fence, std::move(metadata));
@@ -1305,7 +1309,11 @@ namespace PerceptionLocalMap {
             return {AcquireStatus::Unavailable, std::nullopt};
         }
         MapReadMetadata metadata {
-                impl_->identity, impl_->config.geometry, impl_->storage->backend->known_bounds()};
+                impl_->identity,
+                impl_->config.geometry,
+                impl_->storage->backend->known_bounds(),
+                impl_->last_commit,
+                impl_->fingerprint};
         auto transaction_impl = std::make_unique<MapReadTransaction::Impl>(
                 impl_->storage, std::move(lock), impl_->storage->backend.get(),
                 impl_->storage->fence, std::move(metadata));

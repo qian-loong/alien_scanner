@@ -1,0 +1,116 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.25
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 115; 120; 125
+      Enabled: true
+      Name: ReplayWorldGrid
+      Plane: XY
+      Reference Frame: replay_world
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: ExactRevisionMaps
+          Namespaces:
+            replay_map/oracle_occupied: true
+            replay_map/reconstructed_occupied: true
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /map_update_replay/map_markers
+          Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: ReplayDifferences
+          Namespaces:
+            replay_diff/missing: true
+            replay_diff/state: true
+            replay_diff/unexpected: true
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /map_update_replay/differences
+          Value: true
+      Enabled: true
+      Name: C3 Baseline Equivalence
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: ResyncStoryboard
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /map_update_replay/resync/markers
+          Value: true
+      Enabled: false
+      Name: C3 Resync Recovery
+      Value: false
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: EpochResetStoryboard
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /map_update_replay/epoch_reset/markers
+          Value: true
+      Enabled: false
+      Name: C3 Epoch Reset
+      Value: false
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Frame Timeout: 15
+      Marker Scale: 0.8
+      Name: ReplayFrames
+      Show Arrows: false
+      Show Axes: true
+      Show Names: true
+      Update Interval: 0
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 38; 41; 44
+    Fixed Frame: replay_world
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 48
+      Focal Point:
+        X: 10
+        Y: 0
+        Z: 1.5
+      Name: Current View
+      Pitch: -0.55
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 4.75
+Window Geometry:
+  Height: 900
+  Width: 1440

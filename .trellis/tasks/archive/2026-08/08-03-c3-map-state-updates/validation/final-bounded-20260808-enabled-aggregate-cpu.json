@@ -1,0 +1,527 @@
+{
+  "aggregate": {
+    "c3_mode": "enabled",
+    "cpu_percent": {
+      "max_percent": [
+        80.0,
+        73.0,
+        73.0
+      ],
+      "mean_percent": [
+        66.98816666666667,
+        66.90504166666666,
+        67.54079166666666
+      ],
+      "p95_percent": [
+        70.0,
+        70.0,
+        71.0
+      ]
+    },
+    "run_count": 3,
+    "slopes_kib_per_minute": {
+      "pss_kib_slope_per_minute": [
+        448.0219642749987,
+        0.0,
+        -0.6366944012736718
+      ],
+      "rss_kib_slope_per_minute": [
+        448.0219642749987,
+        0.0,
+        0.0
+      ],
+      "uss_kib_slope_per_minute": [
+        448.0219642749987,
+        0.0,
+        0.0
+      ]
+    },
+    "suspected_sustained_growth": false,
+    "workload": "bounded"
+  },
+  "runs": [
+    {
+      "c3": {
+        "drain_converged": "true",
+        "map_update_count": 3805,
+        "mode": "enabled",
+        "producer_diagnostic_count": 1917,
+        "published_deltas": 3775,
+        "published_keyframes": 30,
+        "revision_only_deltas": 3725,
+        "timing": {
+          "acquire_duration_ns": {
+            "count": 1904,
+            "max_ns": 30779,
+            "mean_ns": 3241.7415966386557,
+            "p50_ns": 2874,
+            "p95_ns": 4948,
+            "p99_ns": 12020
+          },
+          "canonicalize_duration_ns": {
+            "count": 1904,
+            "max_ns": 19976995,
+            "mean_ns": 6896081.321428572,
+            "p50_ns": 6923830,
+            "p95_ns": 8282315,
+            "p99_ns": 8943201
+          },
+          "content_hash_duration_ns": {
+            "count": 1904,
+            "max_ns": 15840317,
+            "mean_ns": 6365124.195378152,
+            "p50_ns": 6417083,
+            "p95_ns": 7244335,
+            "p99_ns": 7801125
+          },
+          "diff_duration_ns": {
+            "count": 1904,
+            "max_ns": 15108617,
+            "mean_ns": 2215989.7384453784,
+            "p50_ns": 2248511,
+            "p95_ns": 2761276,
+            "p99_ns": 3104192
+          },
+          "encode_duration_ns": {
+            "count": 1904,
+            "max_ns": 5986807,
+            "mean_ns": 46770.940126050424,
+            "p50_ns": 1290,
+            "p95_ns": 2192,
+            "p99_ns": 161417
+          },
+          "materialize_duration_ns": {
+            "count": 1904,
+            "max_ns": 75807702,
+            "mean_ns": 49107232.70955882,
+            "p50_ns": 49946774,
+            "p95_ns": 54430450,
+            "p99_ns": 57575687
+          },
+          "prepare_duration_ns": {
+            "count": 1904,
+            "max_ns": 23957113,
+            "mean_ns": 9258005.456932774,
+            "p50_ns": 9328297,
+            "p95_ns": 10465300,
+            "p99_ns": 13235133
+          },
+          "publish_duration_ns": {
+            "count": 1904,
+            "max_ns": 3748376,
+            "mean_ns": 125108.03098739496,
+            "p50_ns": 102420,
+            "p95_ns": 159391,
+            "p99_ns": 445338
+          },
+          "traversal_duration_ns": {
+            "count": 1904,
+            "max_ns": 53068841,
+            "mean_ns": 35656912.362920165,
+            "p50_ns": 36200550,
+            "p95_ns": 39803685,
+            "p99_ns": 42405958
+          },
+          "update_hash_duration_ns": {
+            "count": 1904,
+            "max_ns": 3062948,
+            "mean_ns": 35624.02521008404,
+            "p50_ns": 13780,
+            "p95_ns": 26282,
+            "p99_ns": 153006
+          },
+          "validation_duration_ns": {
+            "count": 1904,
+            "max_ns": 13422505,
+            "mean_ns": 6954366.680672269,
+            "p50_ns": 7037653,
+            "p95_ns": 7898372,
+            "p99_ns": 8424216
+          }
+        },
+        "timing_sample_count": 1904
+      },
+      "c3_mode": "enabled",
+      "capacity": {
+        "crossing_revision": null,
+        "required_end_revision": null,
+        "segmented_evidence_available": false,
+        "status": "not_reached"
+      },
+      "cpu": {
+        "leading_samples_excluded": 60,
+        "max_percent": 80.0,
+        "mean_percent": 66.98816666666667,
+        "p50_percent": 67.0,
+        "p95_percent": 70.0,
+        "sample_count": 240,
+        "sample_scope": "steady_after_60s"
+      },
+      "duration_actual_s": 300.09455711,
+      "final_free": 226338,
+      "final_known": 230520,
+      "final_occupied": 4182,
+      "fingerprint": "dbb82f3d1f5e4f4d6490bf067e6719bdb1e5f6932a55f61f3f84935c4e10ed71",
+      "first_revision": 804,
+      "last_revision": 3805,
+      "latency": null,
+      "map_epoch": 1,
+      "memory": {
+        "checkpoint_count": 30,
+        "known_delta": 0,
+        "pss_kib_bytes_per_known": null,
+        "pss_kib_delta": 2020,
+        "pss_kib_mean": 83422.7630662021,
+        "pss_kib_peak": 83935,
+        "pss_kib_per_revision": 0.696551724137931,
+        "pss_kib_slope_per_minute": 448.0219642749987,
+        "revision_delta": 2900,
+        "rss_kib_bytes_per_known": null,
+        "rss_kib_delta": 2020,
+        "rss_kib_mean": 104003.7630662021,
+        "rss_kib_peak": 104516,
+        "rss_kib_per_revision": 0.696551724137931,
+        "rss_kib_slope_per_minute": 448.0219642749987,
+        "sample_count": 287,
+        "uss_kib_bytes_per_known": null,
+        "uss_kib_delta": 2020,
+        "uss_kib_mean": 79567.7630662021,
+        "uss_kib_peak": 80080,
+        "uss_kib_per_revision": 0.696551724137931,
+        "uss_kib_slope_per_minute": 448.0219642749987
+      },
+      "mode": "plain-sample",
+      "observation_count": 3001,
+      "oracle_checkpoint_count": 30,
+      "revision_count": 3002,
+      "run_dir": "D:\\WorkDir\\alien-scanner\\.trellis\\tasks\\08-03-c3-map-state-updates\\validation\\final-bounded-20260808-enabled-run1",
+      "snapshot_count": 3001,
+      "t0_monotonic_ns": 5354002677461,
+      "t1_monotonic_ns": 5654097234571,
+      "tracee_pid": 21860,
+      "workload": "bounded"
+    },
+    {
+      "c3": {
+        "drain_converged": "true",
+        "map_update_count": 3803,
+        "mode": "enabled",
+        "producer_diagnostic_count": 1916,
+        "published_deltas": 3773,
+        "published_keyframes": 30,
+        "revision_only_deltas": 3723,
+        "timing": {
+          "acquire_duration_ns": {
+            "count": 1903,
+            "max_ns": 35873,
+            "mean_ns": 2920.199684708355,
+            "p50_ns": 2603,
+            "p95_ns": 4699,
+            "p99_ns": 8189
+          },
+          "canonicalize_duration_ns": {
+            "count": 1903,
+            "max_ns": 17188329,
+            "mean_ns": 6790323.992643195,
+            "p50_ns": 6837693,
+            "p95_ns": 8173273,
+            "p99_ns": 9357916
+          },
+          "content_hash_duration_ns": {
+            "count": 1903,
+            "max_ns": 10258288,
+            "mean_ns": 6371180.8318444565,
+            "p50_ns": 6428805,
+            "p95_ns": 7257303,
+            "p99_ns": 7822021
+          },
+          "diff_duration_ns": {
+            "count": 1903,
+            "max_ns": 4804393,
+            "mean_ns": 2084097.1297950605,
+            "p50_ns": 2107079,
+            "p95_ns": 2559054,
+            "p99_ns": 2898174
+          },
+          "encode_duration_ns": {
+            "count": 1903,
+            "max_ns": 6616943,
+            "mean_ns": 46628.477141355754,
+            "p50_ns": 1276,
+            "p95_ns": 2174,
+            "p99_ns": 107582
+          },
+          "materialize_duration_ns": {
+            "count": 1903,
+            "max_ns": 67681049,
+            "mean_ns": 48813704.856542304,
+            "p50_ns": 49805314,
+            "p95_ns": 53729501,
+            "p99_ns": 57344451
+          },
+          "prepare_duration_ns": {
+            "count": 1903,
+            "max_ns": 17481302,
+            "mean_ns": 9087890.457698371,
+            "p50_ns": 9199632,
+            "p95_ns": 10172671,
+            "p99_ns": 11184533
+          },
+          "publish_duration_ns": {
+            "count": 1903,
+            "max_ns": 2096926,
+            "mean_ns": 116386.02154492906,
+            "p50_ns": 97665,
+            "p95_ns": 151514,
+            "p99_ns": 409865
+          },
+          "traversal_duration_ns": {
+            "count": 1903,
+            "max_ns": 49793672,
+            "mean_ns": 35471634.97687861,
+            "p50_ns": 36189571,
+            "p95_ns": 39230099,
+            "p99_ns": 42273250
+          },
+          "update_hash_duration_ns": {
+            "count": 1903,
+            "max_ns": 2789892,
+            "mean_ns": 34529.27430373095,
+            "p50_ns": 13254,
+            "p95_ns": 23698,
+            "p99_ns": 75125
+          },
+          "validation_duration_ns": {
+            "count": 1903,
+            "max_ns": 10399167,
+            "mean_ns": 6917692.998423542,
+            "p50_ns": 7017396,
+            "p95_ns": 7816502,
+            "p99_ns": 8273372
+          }
+        },
+        "timing_sample_count": 1903
+      },
+      "c3_mode": "enabled",
+      "capacity": {
+        "crossing_revision": null,
+        "required_end_revision": null,
+        "segmented_evidence_available": false,
+        "status": "not_reached"
+      },
+      "cpu": {
+        "leading_samples_excluded": 60,
+        "max_percent": 73.0,
+        "mean_percent": 66.90504166666666,
+        "p50_percent": 67.0,
+        "p95_percent": 70.0,
+        "sample_count": 240,
+        "sample_scope": "steady_after_60s"
+      },
+      "duration_actual_s": 300.089943733,
+      "final_free": 226338,
+      "final_known": 230520,
+      "final_occupied": 4182,
+      "fingerprint": "dbb82f3d1f5e4f4d6490bf067e6719bdb1e5f6932a55f61f3f84935c4e10ed71",
+      "first_revision": 802,
+      "last_revision": 3803,
+      "latency": null,
+      "map_epoch": 1,
+      "memory": {
+        "checkpoint_count": 30,
+        "known_delta": 0,
+        "pss_kib_bytes_per_known": null,
+        "pss_kib_delta": 0,
+        "pss_kib_mean": 83528.0,
+        "pss_kib_peak": 83528,
+        "pss_kib_per_revision": 0.0,
+        "pss_kib_slope_per_minute": 0.0,
+        "revision_delta": 2900,
+        "rss_kib_bytes_per_known": null,
+        "rss_kib_delta": 0,
+        "rss_kib_mean": 104212.0,
+        "rss_kib_peak": 104212,
+        "rss_kib_per_revision": 0.0,
+        "rss_kib_slope_per_minute": 0.0,
+        "sample_count": 287,
+        "uss_kib_bytes_per_known": null,
+        "uss_kib_delta": 0,
+        "uss_kib_mean": 79800.0,
+        "uss_kib_peak": 79800,
+        "uss_kib_per_revision": 0.0,
+        "uss_kib_slope_per_minute": 0.0
+      },
+      "mode": "plain-sample",
+      "observation_count": 3001,
+      "oracle_checkpoint_count": 30,
+      "revision_count": 3002,
+      "run_dir": "D:\\WorkDir\\alien-scanner\\.trellis\\tasks\\08-03-c3-map-state-updates\\validation\\final-bounded-20260808-enabled-run2",
+      "snapshot_count": 3001,
+      "t0_monotonic_ns": 5916107497053,
+      "t1_monotonic_ns": 6216197440786,
+      "tracee_pid": 25075,
+      "workload": "bounded"
+    },
+    {
+      "c3": {
+        "drain_converged": "true",
+        "map_update_count": 3803,
+        "mode": "enabled",
+        "producer_diagnostic_count": 1916,
+        "published_deltas": 3773,
+        "published_keyframes": 30,
+        "revision_only_deltas": 3723,
+        "timing": {
+          "acquire_duration_ns": {
+            "count": 1903,
+            "max_ns": 185834,
+            "mean_ns": 3947.122963741461,
+            "p50_ns": 3635,
+            "p95_ns": 5061,
+            "p99_ns": 10785
+          },
+          "canonicalize_duration_ns": {
+            "count": 1903,
+            "max_ns": 11985329,
+            "mean_ns": 6871144.795585917,
+            "p50_ns": 6891364,
+            "p95_ns": 8411566,
+            "p99_ns": 9439329
+          },
+          "content_hash_duration_ns": {
+            "count": 1903,
+            "max_ns": 9942098,
+            "mean_ns": 6298354.011560693,
+            "p50_ns": 6358494,
+            "p95_ns": 7163719,
+            "p99_ns": 7792730
+          },
+          "diff_duration_ns": {
+            "count": 1903,
+            "max_ns": 9586902,
+            "mean_ns": 2300332.223331582,
+            "p50_ns": 2317014,
+            "p95_ns": 2795257,
+            "p99_ns": 3124602
+          },
+          "encode_duration_ns": {
+            "count": 1903,
+            "max_ns": 6655113,
+            "mean_ns": 47621.44140830268,
+            "p50_ns": 1361,
+            "p95_ns": 2254,
+            "p99_ns": 124871
+          },
+          "materialize_duration_ns": {
+            "count": 1903,
+            "max_ns": 67654369,
+            "mean_ns": 49024799.51129795,
+            "p50_ns": 49864378,
+            "p95_ns": 54791189,
+            "p99_ns": 58830495
+          },
+          "prepare_duration_ns": {
+            "count": 1903,
+            "max_ns": 17031381,
+            "mean_ns": 9235562.59169732,
+            "p50_ns": 9337146,
+            "p95_ns": 10501561,
+            "p99_ns": 12014940
+          },
+          "publish_duration_ns": {
+            "count": 1903,
+            "max_ns": 2336115,
+            "mean_ns": 119352.10825013136,
+            "p50_ns": 99847,
+            "p95_ns": 147864,
+            "p99_ns": 314564
+          },
+          "traversal_duration_ns": {
+            "count": 1903,
+            "max_ns": 52182257,
+            "mean_ns": 35664425.499737255,
+            "p50_ns": 36265727,
+            "p95_ns": 40107673,
+            "p99_ns": 43986912
+          },
+          "update_hash_duration_ns": {
+            "count": 1903,
+            "max_ns": 2897630,
+            "mean_ns": 35006.73620599054,
+            "p50_ns": 13743,
+            "p95_ns": 25119,
+            "p99_ns": 65297
+          },
+          "validation_duration_ns": {
+            "count": 1903,
+            "max_ns": 9260979,
+            "mean_ns": 6847348.796111403,
+            "p50_ns": 6956694,
+            "p95_ns": 7761907,
+            "p99_ns": 8289756
+          }
+        },
+        "timing_sample_count": 1903
+      },
+      "c3_mode": "enabled",
+      "capacity": {
+        "crossing_revision": null,
+        "required_end_revision": null,
+        "segmented_evidence_available": false,
+        "status": "not_reached"
+      },
+      "cpu": {
+        "leading_samples_excluded": 60,
+        "max_percent": 73.0,
+        "mean_percent": 67.54079166666666,
+        "p50_percent": 67.33,
+        "p95_percent": 71.0,
+        "sample_count": 240,
+        "sample_scope": "steady_after_60s"
+      },
+      "duration_actual_s": 300.098777802,
+      "final_free": 226338,
+      "final_known": 230520,
+      "final_occupied": 4182,
+      "fingerprint": "dbb82f3d1f5e4f4d6490bf067e6719bdb1e5f6932a55f61f3f84935c4e10ed71",
+      "first_revision": 802,
+      "last_revision": 3802,
+      "latency": null,
+      "map_epoch": 1,
+      "memory": {
+        "checkpoint_count": 30,
+        "known_delta": 0,
+        "pss_kib_bytes_per_known": null,
+        "pss_kib_delta": -9,
+        "pss_kib_mean": 81629.56445993032,
+        "pss_kib_peak": 81638,
+        "pss_kib_per_revision": -0.003103448275862069,
+        "pss_kib_slope_per_minute": -0.6366944012736718,
+        "revision_delta": 2900,
+        "rss_kib_bytes_per_known": null,
+        "rss_kib_delta": 0,
+        "rss_kib_mean": 102392.0,
+        "rss_kib_peak": 102392,
+        "rss_kib_per_revision": 0.0,
+        "rss_kib_slope_per_minute": 0.0,
+        "sample_count": 287,
+        "uss_kib_bytes_per_known": null,
+        "uss_kib_delta": 0,
+        "uss_kib_mean": 77996.0,
+        "uss_kib_peak": 77996,
+        "uss_kib_per_revision": 0.0,
+        "uss_kib_slope_per_minute": 0.0
+      },
+      "mode": "plain-sample",
+      "observation_count": 3001,
+      "oracle_checkpoint_count": 30,
+      "revision_count": 3001,
+      "run_dir": "D:\\WorkDir\\alien-scanner\\.trellis\\tasks\\08-03-c3-map-state-updates\\validation\\final-bounded-20260808-enabled-run3",
+      "snapshot_count": 3001,
+      "t0_monotonic_ns": 6456766931953,
+      "t1_monotonic_ns": 6756865709755,
+      "tracee_pid": 28291,
+      "workload": "bounded"
+    }
+  ]
+}
