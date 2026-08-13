@@ -510,16 +510,24 @@ def parse_memcheck_report(
         r"HEAP SUMMARY:",
         r"in use at exit:",
         r"total heap usage:",
-        r"LEAK SUMMARY:",
-        r"definitely lost:\s+[\d,]+ bytes",
-        r"indirectly lost:\s+[\d,]+ bytes",
-        r"possibly lost:\s+[\d,]+ bytes",
-        r"still reachable:\s+[\d,]+ bytes",
         r"ERROR SUMMARY:\s+\d+ errors? from \d+ contexts?",
     )
     missing = [pattern for pattern in required_patterns if re.search(pattern, text) is None]
     if missing:
         raise ValueError("missing Memcheck sections: " + ", ".join(missing))
+
+    all_freed = "All heap blocks were freed -- no leaks are possible" in text
+    if not all_freed:
+        leak_patterns = (
+            r"LEAK SUMMARY:",
+            r"definitely lost:\s+[\d,]+ bytes",
+            r"indirectly lost:\s+[\d,]+ bytes",
+            r"possibly lost:\s+[\d,]+ bytes",
+            r"still reachable:\s+[\d,]+ bytes",
+        )
+        missing = [pattern for pattern in leak_patterns if re.search(pattern, text) is None]
+        if missing:
+            raise ValueError("missing Memcheck sections: " + ", ".join(missing))
 
     def bytes_for(label: str) -> int:
         match = re.search(rf"{label}:\s+([\d,]+) bytes", text)
@@ -529,10 +537,10 @@ def parse_memcheck_report(
     def matching_line(fragment: str) -> str:
         return next(line for line in text.splitlines() if fragment in line)
 
-    definite_bytes = bytes_for("definitely lost")
-    indirect_bytes = bytes_for("indirectly lost")
-    possible_bytes = bytes_for("possibly lost")
-    reachable_bytes = bytes_for("still reachable")
+    definite_bytes = 0 if all_freed else bytes_for("definitely lost")
+    indirect_bytes = 0 if all_freed else bytes_for("indirectly lost")
+    possible_bytes = 0 if all_freed else bytes_for("possibly lost")
+    reachable_bytes = 0 if all_freed else bytes_for("still reachable")
     error_match = re.search(r"ERROR SUMMARY:\s+(\d+) errors?", text)
     assert error_match is not None
     error_count = int(error_match.group(1))
@@ -540,25 +548,42 @@ def parse_memcheck_report(
         r"Invalid (?:read|write|free|delete)|Mismatched free|Source and destination overlap",
         text,
     ) is not None
+    uninitialized_access = re.search(
+        r"Use of uninitialised value|Conditional jump or move depends on uninitialised|"
+        r"Syscall param .* uninitialised|Uninitialised value was created",
+        text,
+    ) is not None
     other_error = (
         error_count > 0
         and not invalid_access
+        and not uninitialized_access
         and definite_bytes == 0
         and indirect_bytes == 0
+        and possible_bytes == 0
     )
-    finding = error_count > 0 or definite_bytes > 0 or indirect_bytes > 0
+    finding = (
+        error_count > 0
+        or definite_bytes > 0
+        or indirect_bytes > 0
+        or possible_bytes > 0
+    )
 
-    summary_fragments = (
+    summary_fragments = [
         "HEAP SUMMARY:",
         "in use at exit:",
         "total heap usage:",
-        "LEAK SUMMARY:",
-        "definitely lost:",
-        "indirectly lost:",
-        "possibly lost:",
-        "still reachable:",
-        "ERROR SUMMARY:",
-    )
+    ]
+    if all_freed:
+        summary_fragments.append("All heap blocks were freed -- no leaks are possible")
+    else:
+        summary_fragments.extend((
+            "LEAK SUMMARY:",
+            "definitely lost:",
+            "indirectly lost:",
+            "possibly lost:",
+            "still reachable:",
+        ))
+    summary_fragments.append("ERROR SUMMARY:")
     with summary_path.open("w", encoding="utf-8") as stream:
         for fragment in summary_fragments:
             stream.write(matching_line(fragment) + "\n")
@@ -569,9 +594,12 @@ def parse_memcheck_report(
         "still_reachable_bytes": reachable_bytes,
         "error_count": error_count,
         "invalid_access": str(invalid_access).lower(),
+        "uninitialized_access": str(uninitialized_access).lower(),
         "other_error": str(other_error).lower(),
         "finding": str(finding).lower(),
+        "all_heap_blocks_freed": str(all_freed).lower(),
         "target_verified": "true",
+        "gate_pass": str(not finding).lower(),
     }
     write_key_values(quality_path, quality)
     return quality

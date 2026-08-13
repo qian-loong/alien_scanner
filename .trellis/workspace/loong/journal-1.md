@@ -244,3 +244,37 @@ docs/perception-real-chain-retest.md.
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Complete C4 communication data plane
+
+**Date**: 2026-08-13
+**Task**: Complete C4 communication data plane
+**Branch**: `phase/4-c4-communication-data-plane`
+
+### Summary
+
+完成 C4 通信数据面、可视化验收、正式性能内存矩阵、sanitizer/memcheck、证据分层，并确认 C5 前实施分块不可变快照与 COW。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `add6ca3` | (see git log) |
+| `1459593` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

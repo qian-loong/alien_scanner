@@ -1,0 +1,38 @@
+<launch>
+  <arg name="input_topic" default="map_updates"/>
+  <arg name="routed_topic" default="routed_map_updates"/>
+  <arg name="accepted_topic" default="accepted_map_updates"/>
+  <arg name="ack_topic" default="delivery_acks"/>
+  <arg name="resync_service" default="request_routed_map_resync"/>
+  <arg name="producer_id" default="mapper_endpoint"/>
+  <arg name="producer_session_boot_time_ns" default="1"/>
+  <arg name="producer_session_random_suffix" default="1"/>
+  <arg name="expected_vehicle_id" default="drone_0"/>
+  <arg name="expected_mapper_session_boot_time_ns" default="1"/>
+  <arg name="expected_mapper_session_random_suffix" default="1"/>
+  <arg name="expected_map_epoch" default="1"/>
+
+  <node pkg="swarm_data_plane" exec="map_update_route_source_node"
+        name="map_update_route_source" output="screen">
+    <param name="input_topic" value="$(var input_topic)"/>
+    <param name="output_topic" value="$(var routed_topic)"/>
+    <param name="producer_id" value="$(var producer_id)"/>
+    <param name="producer_session_boot_time_ns" value="$(var producer_session_boot_time_ns)"/>
+    <param name="producer_session_random_suffix" value="$(var producer_session_random_suffix)"/>
+  </node>
+
+  <node pkg="swarm_data_plane" exec="map_update_route_receiver_node"
+        name="map_update_route_receiver" output="screen">
+    <param name="input_topic" value="$(var routed_topic)"/>
+    <param name="accepted_topic" value="$(var accepted_topic)"/>
+    <param name="ack_topic" value="$(var ack_topic)"/>
+    <param name="resync_service" value="$(var resync_service)"/>
+    <param name="expected_producer_id" value="$(var producer_id)"/>
+    <param name="expected_producer_session_boot_time_ns" value="$(var producer_session_boot_time_ns)"/>
+    <param name="expected_producer_session_random_suffix" value="$(var producer_session_random_suffix)"/>
+    <param name="expected_vehicle_id" value="$(var expected_vehicle_id)"/>
+    <param name="expected_mapper_session_boot_time_ns" value="$(var expected_mapper_session_boot_time_ns)"/>
+    <param name="expected_mapper_session_random_suffix" value="$(var expected_mapper_session_random_suffix)"/>
+    <param name="expected_map_epoch" value="$(var expected_map_epoch)"/>
+  </node>
+</launch>

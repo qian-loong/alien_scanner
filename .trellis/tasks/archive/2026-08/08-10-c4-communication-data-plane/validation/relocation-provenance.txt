@@ -1,0 +1,12 @@
+schema=alien-scanner/c4-profile-evidence-relocation/v1
+relocated_on=2026-08-13
+capture_repository_root=.trellis/tasks/08-10-c4-communication-data-plane/validation
+local_raw_root=profiling-archive/c4-communication-data-plane-20260812/raw
+git_summary_root=.trellis/tasks/archive/2026-08/08-10-c4-communication-data-plane/validation
+raw_file_count=470
+raw_total_bytes=7558122
+raw_tree_manifest_sha256=95427f7a263a5ce5c745ee066f257d06b65d0bb9492fa081e88c62c5409043bd
+raw_tree_manifest_format=sorted lowercase-sha256 two-spaces forward-slash-relative-path newline
+capture_paths_preserved=true
+raw_files_modified=false
+git_summary_files_are_hash_verified_copies=true

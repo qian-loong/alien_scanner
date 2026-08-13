@@ -1,0 +1,5 @@
+==16034== HEAP SUMMARY:
+==16034==     in use at exit: 0 bytes in 0 blocks
+==16034==   total heap usage: 5,974 allocs, 5,974 frees, 390,762 bytes allocated
+==16034== All heap blocks were freed -- no leaks are possible
+==16034== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)

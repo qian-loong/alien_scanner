@@ -1,0 +1,7 @@
+uint16 protocol_version
+string<=128 aggregate_id
+uint64 aggregate_session_boot_time_ns
+uint32 aggregate_session_random_suffix
+uint64 aggregate_revision
+swarm_data_interfaces/ContributorRevision[<=64] contributors
+uint8[32] manifest_hash

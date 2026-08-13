@@ -1,0 +1,9 @@
+==10164== HEAP SUMMARY:
+==10164==     in use at exit: 194,905 bytes in 182 blocks
+==10164==   total heap usage: 37,908 allocs, 37,726 frees, 8,576,421 bytes allocated
+==10164== LEAK SUMMARY:
+==10164==    definitely lost: 0 bytes in 0 blocks
+==10164==    indirectly lost: 0 bytes in 0 blocks
+==10164==      possibly lost: 768 bytes in 2 blocks
+==10164==    still reachable: 194,137 bytes in 180 blocks
+==10164== ERROR SUMMARY: 2 errors from 2 contexts (suppressed: 0 from 0)

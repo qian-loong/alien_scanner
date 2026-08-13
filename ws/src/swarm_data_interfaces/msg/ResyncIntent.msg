@@ -1,0 +1,25 @@
+uint8 REASON_INITIAL_BASELINE = 1
+uint8 REASON_GAP = 2
+uint8 REASON_EPOCH_CHANGE = 3
+uint8 REASON_HASH_CONFLICT = 4
+uint8 REASON_LOCAL_STATE_INVALID = 5
+
+uint16 protocol_version
+string<=128 requester_id
+uint64 requester_session_boot_time_ns
+uint32 requester_session_random_suffix
+string<=128 client_request_id
+
+string<=128 target_producer_id
+uint64 target_producer_session_boot_time_ns
+uint32 target_producer_session_random_suffix
+uint64 route_epoch
+
+bool bootstrap_latest
+string<=128 expected_vehicle_id
+uint64 expected_mapper_session_boot_time_ns
+uint32 expected_mapper_session_random_suffix
+uint64 expected_map_epoch
+uint64 receiver_revision
+uint8[32] receiver_content_hash
+uint8 reason

@@ -1,0 +1,225 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Tree Height: 780
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.2
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 105; 112; 120
+      Enabled: true
+      Name: Ground Reference
+      Plane: XY
+      Reference Frame: map
+      Value: true
+    - Alpha: 0.1
+      Autocompute Intensity Bounds: true
+      Class: rviz_default_plugins/PointCloud2
+      Color: 145; 155; 165
+      Enabled: true
+      Name: Cave Truth (Oracle Only)
+      Position Transformer: XYZ
+      Size (Pixels): 2
+      Style: Points
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /c4/cave/truth
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 30; 220; 105
+          Enabled: true
+          Head Diameter: 0.22
+          Head Length: 0.3
+          Line Style: Lines
+          Line Width: 0.07
+          Name: A1 Path
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /c4/cave/a1/path
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 255; 85; 90
+          Enabled: true
+          Head Diameter: 0.22
+          Head Length: 0.3
+          Line Style: Lines
+          Line Width: 0.07
+          Name: A2 Path
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /c4/cave/a2/path
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 80; 170; 255
+          Enabled: true
+          Head Diameter: 0.22
+          Head Length: 0.3
+          Line Style: Lines
+          Line Width: 0.07
+          Name: B Short Path and Hover
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /c4/cave/b/path
+          Value: true
+      Enabled: true
+      Name: Flight Paths
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Class: octomap_rviz_plugins/OccupancyGrid
+          Enabled: true
+          Max. Height Display: 3.4028234663852886e+38
+          Max. Octree Depth: 16
+          Min. Height Display: -3.4028234663852886e+38
+          Name: B Accepted A1 Map
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /c4/cave/b/a1/accepted_octomap
+          Value: true
+          Voxel Alpha: 0.35
+          Voxel Coloring: Z-Axis
+          Voxel Rendering: Occupied Voxels
+        - Class: octomap_rviz_plugins/OccupancyGrid
+          Enabled: true
+          Max. Height Display: 3.4028234663852886e+38
+          Max. Octree Depth: 16
+          Min. Height Display: -3.4028234663852886e+38
+          Name: B Accepted A2 Map (Freezes During Gap)
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /c4/cave/b/a2/accepted_octomap
+          Value: true
+          Voxel Alpha: 0.35
+          Voxel Coloring: Z-Axis
+          Voxel Rendering: Occupied Voxels
+      Enabled: true
+      Name: B Authoritative Accepted Maps
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Class: octomap_rviz_plugins/OccupancyGrid
+          Enabled: false
+          Max. Height Display: 3.4028234663852886e+38
+          Max. Octree Depth: 16
+          Min. Height Display: -3.4028234663852886e+38
+          Name: A1 Source Local Map
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /c4/cave/a1/local_map/octomap
+          Value: false
+          Voxel Alpha: 0.35
+          Voxel Coloring: Z-Axis
+          Voxel Rendering: Occupied Voxels
+        - Class: octomap_rviz_plugins/OccupancyGrid
+          Enabled: false
+          Max. Height Display: 3.4028234663852886e+38
+          Max. Octree Depth: 16
+          Min. Height Display: -3.4028234663852886e+38
+          Name: A2 Source Local Map
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /c4/cave/a2/local_map/octomap
+          Value: false
+          Voxel Alpha: 0.35
+          Voxel Coloring: Z-Axis
+          Voxel Rendering: Occupied Voxels
+      Enabled: false
+      Name: Source Maps (Optional Comparison)
+      Value: false
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Communication Status and Links
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /c4/cave/b/communication_status
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Source vs B Difference (Non-authoritative Oracle)
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /c4/cave/b/map_difference_oracle
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: false
+      Frame Timeout: 15
+      Marker Scale: 0.35
+      Name: Vehicle TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Update Interval: 0
+      Value: false
+  Enabled: true
+  Global Options:
+    Background Color: 28; 31; 35
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 28
+      Focal Point:
+        X: 4
+        Y: 0
+        Z: 1.5
+      Name: Current View
+      Pitch: -0.78
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 4.65
+Window Geometry:
+  Height: 960
+  Width: 1500

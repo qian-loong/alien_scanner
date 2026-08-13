@@ -1,0 +1,290 @@
+{
+  "environment": {
+    "cgroup": [
+      "0::/"
+    ],
+    "cpu_affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21
+    ],
+    "cpu_count": 22,
+    "git_commit": "add6ca3d61d5daebda56b65d3f1512bbfe1b0469",
+    "git_dirty": true,
+    "image_id": "sha256:6eb20770ab231c3a9e270b63c469fe12356d1d99f51b991f34d6ba65d88f0d52",
+    "kernel": "6.10.14-linuxkit",
+    "platform": "Linux-6.10.14-linuxkit-x86_64-with-glibc2.39",
+    "rmw_implementation": "default"
+  },
+  "formal": false,
+  "instrumentation": null,
+  "memory": {
+    "pss_mean_kib": 391368.0,
+    "pss_peak_kib": 405640,
+    "pss_slope_kib_per_min": 102736.63720934783,
+    "rss_mean_kib": 406348.0,
+    "rss_peak_kib": 420620,
+    "rss_slope_kib_per_min": 102736.63720934783,
+    "sample_count": 5,
+    "uss_mean_kib": 378560.0,
+    "uss_peak_kib": 392832,
+    "uss_slope_kib_per_min": 102736.63720934783
+  },
+  "mismatches": [],
+  "network_bytes": {
+    "application_cdr_bytes": 32572190,
+    "payload_bytes": 32376254,
+    "scope": "application CDR only; excludes DDS/RTPS, IP, and link-layer overhead"
+  },
+  "processes": {
+    "receiver": {
+      "cmdline": [
+        "/workspaces/alien-scanner/ws/build-c4-profile-asan/swarm_data_plane/c4_resource_profile_receiver",
+        "--ros-args",
+        "-p",
+        "expected_sources:=2",
+        "-p",
+        "qos_depth:=4",
+        "-p",
+        "target_cells_per_source:=500000",
+        "-p",
+        "summary_path:=/workspaces/alien-scanner/.trellis/tasks/08-10-c4-communication-data-plane/validation/asan-expanding-2x500k/receiver-summary.tsv",
+        "-p",
+        "per_source_path:=/workspaces/alien-scanner/.trellis/tasks/08-10-c4-communication-data-plane/validation/asan-expanding-2x500k/receiver-per-source.tsv",
+        "-p",
+        "ready_path:=/workspaces/alien-scanner/.trellis/tasks/08-10-c4-communication-data-plane/validation/asan-expanding-2x500k/receiver-ready.tsv",
+        "-p",
+        "input_topic:=/c4/profile/domain_198/routed_updates"
+      ],
+      "exe": "/workspaces/alien-scanner/ws/build-c4-profile-asan/swarm_data_plane/c4_resource_profile_receiver",
+      "pid": 15863,
+      "process_group_id": 15863,
+      "starttime_ticks": 853798,
+      "state": "S"
+    },
+    "receiver_launcher": {
+      "cmdline": [
+        "/workspaces/alien-scanner/ws/build-c4-profile-asan/swarm_data_plane/c4_resource_profile_receiver",
+        "--ros-args",
+        "-p",
+        "expected_sources:=2",
+        "-p",
+        "qos_depth:=4",
+        "-p",
+        "target_cells_per_source:=500000",
+        "-p",
+        "summary_path:=/workspaces/alien-scanner/.trellis/tasks/08-10-c4-communication-data-plane/validation/asan-expanding-2x500k/receiver-summary.tsv",
+        "-p",
+        "per_source_path:=/workspaces/alien-scanner/.trellis/tasks/08-10-c4-communication-data-plane/validation/asan-expanding-2x500k/receiver-per-source.tsv",
+        "-p",
+        "ready_path:=/workspaces/alien-scanner/.trellis/tasks/08-10-c4-communication-data-plane/validation/asan-expanding-2x500k/receiver-ready.tsv",
+        "-p",
+        "input_topic:=/c4/profile/domain_198/routed_updates"
+      ],
+      "exe": "/workspaces/alien-scanner/ws/build-c4-profile-asan/swarm_data_plane/c4_resource_profile_receiver",
+      "pid": 15863,
+      "process_group_id": 15863,
+      "starttime_ticks": 853798,
+      "state": "S"
+    },
+    "source": {
+      "cmdline": [
+        "/workspaces/alien-scanner/ws/build-c4-profile-asan/swarm_data_plane/c4_resource_profile_source",
+        "--ros-args",
+        "-p",
+        "workload_mode:=expanding",
+        "-p",
+        "source_count:=2",
+        "-p",
+        "cells_per_source:=500000",
+        "-p",
+        "initial_cells_per_source:=10000",
+        "-p",
+        "delta_operations:=4096",
+        "-p",
+        "rate_hz_per_source:=5.0",
+        "-p",
+        "qos_depth:=4",
+        "-p",
+        "summary_path:=/workspaces/alien-scanner/.trellis/tasks/08-10-c4-communication-data-plane/validation/asan-expanding-2x500k/source-summary.tsv",
+        "-p",
+        "per_source_path:=/workspaces/alien-scanner/.trellis/tasks/08-10-c4-communication-data-plane/validation/asan-expanding-2x500k/source-per-source.tsv",
+        "-p",
+        "output_topic:=/c4/profile/domain_198/routed_updates"
+      ],
+      "exe": "/workspaces/alien-scanner/ws/build-c4-profile-asan/swarm_data_plane/c4_resource_profile_source",
+      "pid": 15864,
+      "process_group_id": 15864,
+      "starttime_ticks": 853798,
+      "state": "D"
+    }
+  },
+  "provenance": {
+    "complete": true,
+    "receiver_compile_command": {
+      "database": "/workspaces/alien-scanner/ws/build-c4-profile-asan/swarm_data_plane/compile_commands.json",
+      "entry": {
+        "command": "/usr/bin/c++ -DDEFAULT_RMW_IMPLEMENTATION=rmw_fastrtps_cpp -DFASTCDR_DYN_LINK -I/workspaces/alien-scanner/ws/src/swarm_data_plane/include -isystem /opt/ros/jazzy/include/rclcpp -isystem /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_map_update/include -isystem /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_core/include -isystem /usr/include/eigen3 -isystem /opt/ros/jazzy/include/builtin_interfaces -isystem /opt/ros/jazzy/include/rosidl_runtime_c -isystem /opt/ros/jazzy/include/rcutils -isystem /opt/ros/jazzy/include/rosidl_typesupport_interface -isystem /opt/ros/jazzy/include/fastcdr -isystem /opt/ros/jazzy/include/rosidl_runtime_cpp -isystem /opt/ros/jazzy/include/rosidl_typesupport_fastrtps_cpp -isystem /opt/ros/jazzy/include/rmw -isystem /opt/ros/jazzy/include/rosidl_dynamic_typesupport -isystem /opt/ros/jazzy/include/rosidl_typesupport_fastrtps_c -isystem /opt/ros/jazzy/include/rosidl_typesupport_introspection_c -isystem /opt/ros/jazzy/include/rosidl_typesupport_introspection_cpp -isystem /opt/ros/jazzy/include/std_msgs -isystem /opt/ros/jazzy/include/geometry_msgs -isystem /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/include/perception_interfaces -isystem /opt/ros/jazzy/include/service_msgs -isystem /opt/ros/jazzy/include/libstatistics_collector -isystem /opt/ros/jazzy/include/rcl -isystem /opt/ros/jazzy/include/rcl_interfaces -isystem /opt/ros/jazzy/include/rcl_logging_interface -isystem /opt/ros/jazzy/include/rcl_yaml_param_parser -isystem /opt/ros/jazzy/include/type_description_interfaces -isystem /opt/ros/jazzy/include/rcpputils -isystem /opt/ros/jazzy/include/statistics_msgs -isystem /opt/ros/jazzy/include/rosgraph_msgs -isystem /opt/ros/jazzy/include/rosidl_typesupport_cpp -isystem /opt/ros/jazzy/include/rosidl_typesupport_c -isystem /opt/ros/jazzy/include/tracetools -isystem /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/include/swarm_data_interfaces -O1 -g -DNDEBUG -fno-omit-frame-pointer -fsanitize=address -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles/c4_resource_profile_receiver.dir/test/C4ResourceProfileReceiver.cpp.o -c /workspaces/alien-scanner/ws/src/swarm_data_plane/test/C4ResourceProfileReceiver.cpp",
+        "directory": "/workspaces/alien-scanner/ws/build-c4-profile-asan/swarm_data_plane",
+        "file": "/workspaces/alien-scanner/ws/src/swarm_data_plane/test/C4ResourceProfileReceiver.cpp",
+        "output": "CMakeFiles/c4_resource_profile_receiver.dir/test/C4ResourceProfileReceiver.cpp.o"
+      }
+    },
+    "receiver_elf": {
+      "build_id": "3ddfc17f92b169b7ac9154f7a9ce0a77f9a1fdc8",
+      "ldd": "\tlinux-vdso.so.1 (0x00007fa448c25000)\n\tlibasan.so.8 => /lib/x86_64-linux-gnu/libasan.so.8 (0x00007fa448200000)\n\tlibrclcpp.so => /opt/ros/jazzy/lib/librclcpp.so (0x00007fa447e00000)\n\tliblibstatistics_collector.so => /opt/ros/jazzy/lib/liblibstatistics_collector.so (0x00007fa448a9e000)\n\tlibrcl.so => /opt/ros/jazzy/lib/librcl.so (0x00007fa448a57000)\n\tlibrmw_implementation.so => /opt/ros/jazzy/lib/librmw_implementation.so (0x00007fa448a4a000)\n\tlibtype_description_interfaces__rosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/libtype_description_interfaces__rosidl_typesupport_fastrtps_c.so (0x00007fa448a39000)\n\tlibtype_description_interfaces__rosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/libtype_description_interfaces__rosidl_typesupport_introspection_c.so (0x00007fa448a2b000)\n\tlibtype_description_interfaces__rosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/libtype_description_interfaces__rosidl_typesupport_fastrtps_cpp.so (0x00007fa448a15000)\n\tlibtype_description_interfaces__rosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/libtype_description_interfaces__rosidl_typesupport_introspection_cpp.so (0x00007fa448a03000)\n\tlibtype_description_interfaces__rosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/libtype_description_interfaces__rosidl_typesupport_cpp.so (0x00007fa4489f9000)\n\tlibtype_description_interfaces__rosidl_generator_py.so => /opt/ros/jazzy/lib/libtype_description_interfaces__rosidl_generator_py.so (0x00007fa4489ee000)\n\tlibtype_description_interfaces__rosidl_typesupport_c.so => /opt/ros/jazzy/lib/libtype_description_interfaces__rosidl_typesupport_c.so (0x00007fa4489e5000)\n\tlibtype_description_interfaces__rosidl_generator_c.so => /opt/ros/jazzy/lib/libtype_description_interfaces__rosidl_generator_c.so (0x00007fa4489cd000)\n\tlibrcl_interfaces__rosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/librcl_interfaces__rosidl_typesupport_fastrtps_c.so (0x00007fa44899a000)\n\tlibrcl_interfaces__rosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/librcl_interfaces__rosidl_typesupport_introspection_c.so (0x00007fa44896d000)\n\tlibrcl_interfaces__rosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/librcl_interfaces__rosidl_typesupport_fastrtps_cpp.so (0x00007fa44892a000)\n\tlibrcl_interfaces__rosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/librcl_interfaces__rosidl_typesupport_introspection_cpp.so (0x00007fa4488ee000)\n\tlibrcl_interfaces__rosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/librcl_interfaces__rosidl_typesupport_cpp.so (0x00007fa4488d3000)\n\tlibrcl_interfaces__rosidl_generator_py.so => /opt/ros/jazzy/lib/librcl_interfaces__rosidl_generator_py.so (0x00007fa4481de000)\n\tlibrcl_interfaces__rosidl_typesupport_c.so => /opt/ros/jazzy/lib/librcl_interfaces__rosidl_typesupport_c.so (0x00007fa4481ce000)\n\tlibrcl_interfaces__rosidl_generator_c.so => /opt/ros/jazzy/lib/librcl_interfaces__rosidl_generator_c.so (0x00007fa448180000)\n\tlibrcl_yaml_param_parser.so => /opt/ros/jazzy/lib/librcl_yaml_param_parser.so (0x00007fa448174000)\n\tlibrosgraph_msgs__rosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/librosgraph_msgs__rosidl_typesupport_fastrtps_c.so (0x00007fa44816f000)\n\tlibrosgraph_msgs__rosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/librosgraph_msgs__rosidl_typesupport_fastrtps_cpp.so (0x00007fa448169000)\n\tlibrosgraph_msgs__rosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/librosgraph_msgs__rosidl_typesupport_introspection_c.so (0x00007fa448164000)\n\tlibrosgraph_msgs__rosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/librosgraph_msgs__rosidl_typesupport_introspection_cpp.so (0x00007fa44815f000)\n\tlibrosgraph_msgs__rosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/librosgraph_msgs__rosidl_typesupport_cpp.so (0x00007fa448158000)\n\tlibrosgraph_msgs__rosidl_generator_py.so => /opt/ros/jazzy/lib/librosgraph_msgs__rosidl_generator_py.so (0x00007fa448153000)\n\tlibrosgraph_msgs__rosidl_typesupport_c.so => /opt/ros/jazzy/lib/librosgraph_msgs__rosidl_typesupport_c.so (0x00007fa44814e000)\n\tlibrosgraph_msgs__rosidl_generator_c.so => /opt/ros/jazzy/lib/librosgraph_msgs__rosidl_generator_c.so (0x00007fa448149000)\n\tlibstatistics_msgs__rosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/libstatistics_msgs__rosidl_typesupport_fastrtps_c.so (0x00007fa448141000)\n\tlibstatistics_msgs__rosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/libstatistics_msgs__rosidl_typesupport_fastrtps_cpp.so (0x00007fa448136000)\n\tlibstatistics_msgs__rosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/libstatistics_msgs__rosidl_typesupport_introspection_c.so (0x00007fa448130000)\n\tlibstatistics_msgs__rosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/libstatistics_msgs__rosidl_typesupport_introspection_cpp.so (0x00007fa44812a000)\n\tlibstatistics_msgs__rosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/libstatistics_msgs__rosidl_typesupport_cpp.so (0x00007fa448124000)\n\tlibstatistics_msgs__rosidl_generator_py.so => /opt/ros/jazzy/lib/libstatistics_msgs__rosidl_generator_py.so (0x00007fa44811d000)\n\tlibstatistics_msgs__rosidl_typesupport_c.so => /opt/ros/jazzy/lib/libstatistics_msgs__rosidl_typesupport_c.so (0x00007fa448116000)\n\tlibstatistics_msgs__rosidl_generator_c.so => /opt/ros/jazzy/lib/libstatistics_msgs__rosidl_generator_c.so (0x00007fa44810d000)\n\tlibtracetools.so => /opt/ros/jazzy/lib/libtracetools.so (0x00007fa4480f3000)\n\tliblttng-ust.so.1 => /lib/x86_64-linux-gnu/liblttng-ust.so.1 (0x00007fa448070000)\n\tliblttng-ust-common.so.1 => /lib/x86_64-linux-gnu/liblttng-ust-common.so.1 (0x00007fa448063000)\n\tlibrcl_logging_interface.so => /opt/ros/jazzy/lib/librcl_logging_interface.so (0x00007fa447dfb000)\n\tlibcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x00007fa447800000)\n\tlibswarm_data_interfaces__rosidl_typesupport_fastrtps_c.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/lib/libswarm_data_interfaces__rosidl_typesupport_fastrtps_c.so (0x00007fa447db5000)\n\tlibswarm_data_interfaces__rosidl_typesupport_fastrtps_cpp.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/lib/libswarm_data_interfaces__rosidl_typesupport_fastrtps_cpp.so (0x00007fa447d70000)\n\tlibswarm_data_interfaces__rosidl_typesupport_introspection_c.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/lib/libswarm_data_interfaces__rosidl_typesupport_introspection_c.so (0x00007fa447d57000)\n\tlibswarm_data_interfaces__rosidl_typesupport_introspection_cpp.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/lib/libswarm_data_interfaces__rosidl_typesupport_introspection_cpp.so (0x00007fa447d29000)\n\tlibswarm_data_interfaces__rosidl_typesupport_cpp.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/lib/libswarm_data_interfaces__rosidl_typesupport_cpp.so (0x00007fa4477e9000)\n\tlibswarm_data_interfaces__rosidl_generator_py.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/lib/libswarm_data_interfaces__rosidl_generator_py.so (0x00007fa4477cd000)\n\tlibperception_interfaces__rosidl_typesupport_fastrtps_c.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/lib/libperception_interfaces__rosidl_typesupport_fastrtps_c.so (0x00007fa44777a000)\n\tlibperception_interfaces__rosidl_typesupport_introspection_c.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/lib/libperception_interfaces__rosidl_typesupport_introspection_c.so (0x00007fa44775d000)\n\tlibperception_interfaces__rosidl_typesupport_fastrtps_cpp.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/lib/libperception_interfaces__rosidl_typesupport_fastrtps_cpp.so (0x00007fa44770e000)\n\tlibperception_interfaces__rosidl_typesupport_introspection_cpp.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/lib/libperception_interfaces__rosidl_typesupport_introspection_cpp.so (0x00007fa4476df000)\n\tlibperception_interfaces__rosidl_typesupport_cpp.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/lib/libperception_interfaces__rosidl_typesupport_cpp.so (0x00007fa447d15000)\n\tlibperception_interfaces__rosidl_generator_py.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/lib/libperception_interfaces__rosidl_generator_py.so (0x00007fa4476bb000)\n\tlibswarm_data_interfaces__rosidl_typesupport_c.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/lib/libswarm_data_interfaces__rosidl_typesupport_c.so (0x00007fa4476ad000)\n\tlibperception_interfaces__rosidl_typesupport_c.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/lib/libperception_interfaces__rosidl_typesupport_c.so (0x00007fa44769e000)\n\tlibswarm_data_interfaces__rosidl_generator_c.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/lib/libswarm_data_interfaces__rosidl_generator_c.so (0x00007fa447666000)\n\tlibperception_interfaces__rosidl_generator_c.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/lib/libperception_interfaces__rosidl_generator_c.so (0x00007fa44762b000)\n\tlibgeometry_msgs__rosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/libgeometry_msgs__rosidl_typesupport_fastrtps_c.so (0x00007fa44760a000)\n\tlibgeometry_msgs__rosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/libgeometry_msgs__rosidl_typesupport_introspection_c.so (0x00007fa4475f7000)\n\tlibgeometry_msgs__rosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/libgeometry_msgs__rosidl_typesupport_fastrtps_cpp.so (0x00007fa4475d0000)\n\tlibgeometry_msgs__rosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/libgeometry_msgs__rosidl_typesupport_introspection_cpp.so (0x00007fa4475ba000)\n\tlibgeometry_msgs__rosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/libgeometry_msgs__rosidl_typesupport_cpp.so (0x00007fa4475ac000)\n\tlibgeometry_msgs__rosidl_generator_py.so => /opt/ros/jazzy/lib/libgeometry_msgs__rosidl_generator_py.so (0x00007fa447594000)\n\tlibstd_msgs__rosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/libstd_msgs__rosidl_typesupport_fastrtps_c.so (0x00007fa447576000)\n\tlibstd_msgs__rosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/libstd_msgs__rosidl_typesupport_fastrtps_cpp.so (0x00007fa44754d000)\n\tlibstd_msgs__rosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/libstd_msgs__rosidl_typesupport_introspection_c.so (0x00007fa447538000)\n\tlibstd_msgs__rosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/libstd_msgs__rosidl_typesupport_introspection_cpp.so (0x00007fa447522000)\n\tlibstd_msgs__rosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/libstd_msgs__rosidl_typesupport_cpp.so (0x00007fa447516000)\n\tlibstd_msgs__rosidl_generator_py.so => /opt/ros/jazzy/lib/libstd_msgs__rosidl_generator_py.so (0x00007fa4474fe000)\n\tlibgeometry_msgs__rosidl_typesupport_c.so => /opt/ros/jazzy/lib/libgeometry_msgs__rosidl_typesupport_c.so (0x00007fa4474f1000)\n\tlibstd_msgs__rosidl_typesupport_c.so => /opt/ros/jazzy/lib/libstd_msgs__rosidl_typesupport_c.so (0x00007fa4474e6000)\n\tlibgeometry_msgs__rosidl_generator_c.so => /opt/ros/jazzy/lib/libgeometry_msgs__rosidl_generator_c.so (0x00007fa4474a8000)\n\tlibstd_msgs__rosidl_generator_c.so => /opt/ros/jazzy/lib/libstd_msgs__rosidl_generator_c.so (0x00007fa447477000)\n\tlibservice_msgs__rosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/libservice_msgs__rosidl_typesupport_fastrtps_c.so (0x00007fa447471000)\n\tlibservice_msgs__rosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/libservice_msgs__rosidl_typesupport_introspection_c.so (0x00007fa44746a000)\n\tlibservice_msgs__rosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/libservice_msgs__rosidl_typesupport_fastrtps_cpp.so (0x00007fa447464000)\n\tlibservice_msgs__rosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/libservice_msgs__rosidl_typesupport_introspection_cpp.so (0x00007fa44745f000)\n\tlibservice_msgs__rosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/libservice_msgs__rosidl_typesupport_cpp.so (0x00007fa44745a000)\n\tlibbuiltin_interfaces__rosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/libbuiltin_interfaces__rosidl_typesupport_fastrtps_c.so (0x00007fa447454000)\n\tlibrosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/librosidl_typesupport_fastrtps_c.so (0x00007fa44744d000)\n\tlibbuiltin_interfaces__rosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/libbuiltin_interfaces__rosidl_typesupport_introspection_c.so (0x00007fa447448000)\n\tlibbuiltin_interfaces__rosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/libbuiltin_interfaces__rosidl_typesupport_fastrtps_cpp.so (0x00007fa447442000)\n\tlibrosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/librosidl_typesupport_fastrtps_cpp.so (0x00007fa44743d000)\n\tlibrmw.so => /opt/ros/jazzy/lib/librmw.so (0x00007fa447432000)\n\tlibrosidl_dynamic_typesupport.so => /opt/ros/jazzy/lib/librosidl_dynamic_typesupport.so (0x00007fa447417000)\n\tlibfastcdr.so.2 => /opt/ros/jazzy/lib/libfastcdr.so.2 (0x00007fa4473fe000)\n\tlibbuiltin_interfaces__rosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/libbuiltin_interfaces__rosidl_typesupport_introspection_cpp.so (0x00007fa4473f9000)\n\tlibrosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/librosidl_typesupport_introspection_cpp.so (0x00007fa4473f4000)\n\tlibrosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/librosidl_typesupport_introspection_c.so (0x00007fa4473ef000)\n\tlibbuiltin_interfaces__rosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/libbuiltin_interfaces__rosidl_typesupport_cpp.so (0x00007fa4473e8000)\n\tlibrosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/librosidl_typesupport_cpp.so (0x00007fa4473e2000)\n\tlibbuiltin_interfaces__rosidl_generator_py.so => /opt/ros/jazzy/lib/libbuiltin_interfaces__rosidl_generator_py.so (0x00007fa4473dd000)\n\tlibservice_msgs__rosidl_typesupport_c.so => /opt/ros/jazzy/lib/libservice_msgs__rosidl_typesupport_c.so (0x00007fa4473d8000)\n\tlibbuiltin_interfaces__rosidl_typesupport_c.so => /opt/ros/jazzy/lib/libbuiltin_interfaces__rosidl_typesupport_c.so (0x00007fa4473d3000)\n\tlibservice_msgs__rosidl_generator_c.so => /opt/ros/jazzy/lib/libservice_msgs__rosidl_generator_c.so (0x00007fa4473cc000)\n\tlibbuiltin_interfaces__rosidl_generator_c.so => /opt/ros/jazzy/lib/libbuiltin_interfaces__rosidl_generator_c.so (0x00007fa4473c5000)\n\tlibrosidl_typesupport_c.so => /opt/ros/jazzy/lib/librosidl_typesupport_c.so (0x00007fa4473bf000)\n\tlibrcpputils.so => /opt/ros/jazzy/lib/librcpputils.so (0x00007fa4473b0000)\n\tlibrosidl_runtime_c.so => /opt/ros/jazzy/lib/librosidl_runtime_c.so (0x00007fa447391000)\n\tlibrcutils.so => /opt/ros/jazzy/lib/librcutils.so (0x00007fa44736f000)\n\tlibatomic.so.1 => /lib/x86_64-linux-gnu/libatomic.so.1 (0x00007fa447364000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007fa447000000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007fa446f17000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007fa447336000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007fa446c00000)\n\tlibament_index_cpp.so => /opt/ros/jazzy/lib/libament_index_cpp.so (0x00007fa447328000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007fa448c27000)\n\tlibrcl_logging_spdlog.so => /opt/ros/jazzy/lib/librcl_logging_spdlog.so (0x00007fa44731e000)\n\tlibyaml-0.so.2 => /lib/x86_64-linux-gnu/libyaml-0.so.2 (0x00007fa4472fd000)\n\tlibservice_msgs__rosidl_generator_py.so => /opt/ros/jazzy/lib/libservice_msgs__rosidl_generator_py.so (0x00007fa4472f8000)\n\tlibpython3.12.so.1.0 => /lib/x86_64-linux-gnu/libpython3.12.so.1.0 (0x00007fa446200000)\n\tlibnuma.so.1 => /lib/x86_64-linux-gnu/libnuma.so.1 (0x00007fa4472e8000)\n\tliblttng-ust-tracepoint.so.1 => /lib/x86_64-linux-gnu/liblttng-ust-tracepoint.so.1 (0x00007fa4472cb000)\n\tlibspdlog.so.1.12 => /lib/x86_64-linux-gnu/libspdlog.so.1.12 (0x00007fa446e90000)\n\tlibz.so.1 => /lib/x86_64-linux-gnu/libz.so.1 (0x00007fa4472ab000)\n\tlibexpat.so.1 => /lib/x86_64-linux-gnu/libexpat.so.1 (0x00007fa44727f000)\n\tlibfmt.so.9 => /lib/x86_64-linux-gnu/libfmt.so.9 (0x00007fa446e6f000)\n",
+      "ldd_returncode": 0,
+      "path": "/workspaces/alien-scanner/ws/build-c4-profile-asan/swarm_data_plane/c4_resource_profile_receiver",
+      "readelf_returncode": 0,
+      "sha256": "fd26ca0f053a332e0df2f8582a8bfdc673a86ca4a836a10eaa66dcf5e4b05542"
+    },
+    "receiver_fixture_sha256": "e0674fc32b29f6e51f6a3b28addc6172be905d89e11308a9ac497de707d97d6b",
+    "report_parser_sha256": "76765347cf903bb76f741a41f817dc15e2b3088c09b05f49a287f86df85d3b8f",
+    "runner_sha256": "c9908c7832b4b7718ce87d727be1e7eb08bc6d5136bc4edb1100a5941365fc62",
+    "source_compile_command": {
+      "database": "/workspaces/alien-scanner/ws/build-c4-profile-asan/swarm_data_plane/compile_commands.json",
+      "entry": {
+        "command": "/usr/bin/c++ -DDEFAULT_RMW_IMPLEMENTATION=rmw_fastrtps_cpp -DFASTCDR_DYN_LINK -I/workspaces/alien-scanner/ws/src/swarm_data_plane/include -isystem /opt/ros/jazzy/include/rclcpp -isystem /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_map_update/include -isystem /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_core/include -isystem /usr/include/eigen3 -isystem /opt/ros/jazzy/include/builtin_interfaces -isystem /opt/ros/jazzy/include/rosidl_runtime_c -isystem /opt/ros/jazzy/include/rcutils -isystem /opt/ros/jazzy/include/rosidl_typesupport_interface -isystem /opt/ros/jazzy/include/fastcdr -isystem /opt/ros/jazzy/include/rosidl_runtime_cpp -isystem /opt/ros/jazzy/include/rosidl_typesupport_fastrtps_cpp -isystem /opt/ros/jazzy/include/rmw -isystem /opt/ros/jazzy/include/rosidl_dynamic_typesupport -isystem /opt/ros/jazzy/include/rosidl_typesupport_fastrtps_c -isystem /opt/ros/jazzy/include/rosidl_typesupport_introspection_c -isystem /opt/ros/jazzy/include/rosidl_typesupport_introspection_cpp -isystem /opt/ros/jazzy/include/std_msgs -isystem /opt/ros/jazzy/include/geometry_msgs -isystem /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/include/perception_interfaces -isystem /opt/ros/jazzy/include/service_msgs -isystem /opt/ros/jazzy/include/libstatistics_collector -isystem /opt/ros/jazzy/include/rcl -isystem /opt/ros/jazzy/include/rcl_interfaces -isystem /opt/ros/jazzy/include/rcl_logging_interface -isystem /opt/ros/jazzy/include/rcl_yaml_param_parser -isystem /opt/ros/jazzy/include/type_description_interfaces -isystem /opt/ros/jazzy/include/rcpputils -isystem /opt/ros/jazzy/include/statistics_msgs -isystem /opt/ros/jazzy/include/rosgraph_msgs -isystem /opt/ros/jazzy/include/rosidl_typesupport_cpp -isystem /opt/ros/jazzy/include/rosidl_typesupport_c -isystem /opt/ros/jazzy/include/tracetools -isystem /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/include/swarm_data_interfaces -O1 -g -DNDEBUG -fno-omit-frame-pointer -fsanitize=address -std=c++17 -Wall -Wextra -Wpedantic -o CMakeFiles/c4_resource_profile_source.dir/test/C4ResourceProfileSource.cpp.o -c /workspaces/alien-scanner/ws/src/swarm_data_plane/test/C4ResourceProfileSource.cpp",
+        "directory": "/workspaces/alien-scanner/ws/build-c4-profile-asan/swarm_data_plane",
+        "file": "/workspaces/alien-scanner/ws/src/swarm_data_plane/test/C4ResourceProfileSource.cpp",
+        "output": "CMakeFiles/c4_resource_profile_source.dir/test/C4ResourceProfileSource.cpp.o"
+      }
+    },
+    "source_elf": {
+      "build_id": "366cf19a36789a505985eb9baa9be5beaf33606f",
+      "ldd": "\tlinux-vdso.so.1 (0x00007fd623f57000)\n\tlibasan.so.8 => /lib/x86_64-linux-gnu/libasan.so.8 (0x00007fd623600000)\n\tlibrclcpp.so => /opt/ros/jazzy/lib/librclcpp.so (0x00007fd623200000)\n\tliblibstatistics_collector.so => /opt/ros/jazzy/lib/liblibstatistics_collector.so (0x00007fd623e5f000)\n\tlibrcl.so => /opt/ros/jazzy/lib/librcl.so (0x00007fd623e18000)\n\tlibrmw_implementation.so => /opt/ros/jazzy/lib/librmw_implementation.so (0x00007fd623e0b000)\n\tlibtype_description_interfaces__rosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/libtype_description_interfaces__rosidl_typesupport_fastrtps_c.so (0x00007fd623dfa000)\n\tlibtype_description_interfaces__rosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/libtype_description_interfaces__rosidl_typesupport_introspection_c.so (0x00007fd623dec000)\n\tlibtype_description_interfaces__rosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/libtype_description_interfaces__rosidl_typesupport_fastrtps_cpp.so (0x00007fd623dd6000)\n\tlibtype_description_interfaces__rosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/libtype_description_interfaces__rosidl_typesupport_introspection_cpp.so (0x00007fd623dc4000)\n\tlibtype_description_interfaces__rosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/libtype_description_interfaces__rosidl_typesupport_cpp.so (0x00007fd623dba000)\n\tlibtype_description_interfaces__rosidl_generator_py.so => /opt/ros/jazzy/lib/libtype_description_interfaces__rosidl_generator_py.so (0x00007fd623daf000)\n\tlibtype_description_interfaces__rosidl_typesupport_c.so => /opt/ros/jazzy/lib/libtype_description_interfaces__rosidl_typesupport_c.so (0x00007fd623da6000)\n\tlibtype_description_interfaces__rosidl_generator_c.so => /opt/ros/jazzy/lib/libtype_description_interfaces__rosidl_generator_c.so (0x00007fd623d8e000)\n\tlibrcl_interfaces__rosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/librcl_interfaces__rosidl_typesupport_fastrtps_c.so (0x00007fd623d5b000)\n\tlibrcl_interfaces__rosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/librcl_interfaces__rosidl_typesupport_introspection_c.so (0x00007fd623d2e000)\n\tlibrcl_interfaces__rosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/librcl_interfaces__rosidl_typesupport_fastrtps_cpp.so (0x00007fd623ceb000)\n\tlibrcl_interfaces__rosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/librcl_interfaces__rosidl_typesupport_introspection_cpp.so (0x00007fd6235c6000)\n\tlibrcl_interfaces__rosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/librcl_interfaces__rosidl_typesupport_cpp.so (0x00007fd6235ab000)\n\tlibrcl_interfaces__rosidl_generator_py.so => /opt/ros/jazzy/lib/librcl_interfaces__rosidl_generator_py.so (0x00007fd623589000)\n\tlibrcl_interfaces__rosidl_typesupport_c.so => /opt/ros/jazzy/lib/librcl_interfaces__rosidl_typesupport_c.so (0x00007fd623cd9000)\n\tlibrcl_interfaces__rosidl_generator_c.so => /opt/ros/jazzy/lib/librcl_interfaces__rosidl_generator_c.so (0x00007fd62353b000)\n\tlibrcl_yaml_param_parser.so => /opt/ros/jazzy/lib/librcl_yaml_param_parser.so (0x00007fd62352f000)\n\tlibrosgraph_msgs__rosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/librosgraph_msgs__rosidl_typesupport_fastrtps_c.so (0x00007fd623cd2000)\n\tlibrosgraph_msgs__rosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/librosgraph_msgs__rosidl_typesupport_fastrtps_cpp.so (0x00007fd623529000)\n\tlibrosgraph_msgs__rosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/librosgraph_msgs__rosidl_typesupport_introspection_c.so (0x00007fd623524000)\n\tlibrosgraph_msgs__rosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/librosgraph_msgs__rosidl_typesupport_introspection_cpp.so (0x00007fd62351f000)\n\tlibrosgraph_msgs__rosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/librosgraph_msgs__rosidl_typesupport_cpp.so (0x00007fd623518000)\n\tlibrosgraph_msgs__rosidl_generator_py.so => /opt/ros/jazzy/lib/librosgraph_msgs__rosidl_generator_py.so (0x00007fd623513000)\n\tlibrosgraph_msgs__rosidl_typesupport_c.so => /opt/ros/jazzy/lib/librosgraph_msgs__rosidl_typesupport_c.so (0x00007fd62350e000)\n\tlibrosgraph_msgs__rosidl_generator_c.so => /opt/ros/jazzy/lib/librosgraph_msgs__rosidl_generator_c.so (0x00007fd623509000)\n\tlibstatistics_msgs__rosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/libstatistics_msgs__rosidl_typesupport_fastrtps_c.so (0x00007fd623501000)\n\tlibstatistics_msgs__rosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/libstatistics_msgs__rosidl_typesupport_fastrtps_cpp.so (0x00007fd6234f6000)\n\tlibstatistics_msgs__rosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/libstatistics_msgs__rosidl_typesupport_introspection_c.so (0x00007fd6234f0000)\n\tlibstatistics_msgs__rosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/libstatistics_msgs__rosidl_typesupport_introspection_cpp.so (0x00007fd6234ea000)\n\tlibstatistics_msgs__rosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/libstatistics_msgs__rosidl_typesupport_cpp.so (0x00007fd6234e4000)\n\tlibstatistics_msgs__rosidl_generator_py.so => /opt/ros/jazzy/lib/libstatistics_msgs__rosidl_generator_py.so (0x00007fd6234dd000)\n\tlibstatistics_msgs__rosidl_typesupport_c.so => /opt/ros/jazzy/lib/libstatistics_msgs__rosidl_typesupport_c.so (0x00007fd6234d6000)\n\tlibstatistics_msgs__rosidl_generator_c.so => /opt/ros/jazzy/lib/libstatistics_msgs__rosidl_generator_c.so (0x00007fd6234cd000)\n\tlibtracetools.so => /opt/ros/jazzy/lib/libtracetools.so (0x00007fd6234b3000)\n\tliblttng-ust.so.1 => /lib/x86_64-linux-gnu/liblttng-ust.so.1 (0x00007fd62317d000)\n\tliblttng-ust-common.so.1 => /lib/x86_64-linux-gnu/liblttng-ust-common.so.1 (0x00007fd6234a6000)\n\tlibrcl_logging_interface.so => /opt/ros/jazzy/lib/librcl_logging_interface.so (0x00007fd62349f000)\n\tlibcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x00007fd622c00000)\n\tlibswarm_data_interfaces__rosidl_typesupport_fastrtps_c.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/lib/libswarm_data_interfaces__rosidl_typesupport_fastrtps_c.so (0x00007fd623137000)\n\tlibswarm_data_interfaces__rosidl_typesupport_fastrtps_cpp.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/lib/libswarm_data_interfaces__rosidl_typesupport_fastrtps_cpp.so (0x00007fd622bbb000)\n\tlibswarm_data_interfaces__rosidl_typesupport_introspection_c.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/lib/libswarm_data_interfaces__rosidl_typesupport_introspection_c.so (0x00007fd623486000)\n\tlibswarm_data_interfaces__rosidl_typesupport_introspection_cpp.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/lib/libswarm_data_interfaces__rosidl_typesupport_introspection_cpp.so (0x00007fd622b8d000)\n\tlibswarm_data_interfaces__rosidl_typesupport_cpp.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/lib/libswarm_data_interfaces__rosidl_typesupport_cpp.so (0x00007fd62346d000)\n\tlibswarm_data_interfaces__rosidl_generator_py.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/lib/libswarm_data_interfaces__rosidl_generator_py.so (0x00007fd62311b000)\n\tlibperception_interfaces__rosidl_typesupport_fastrtps_c.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/lib/libperception_interfaces__rosidl_typesupport_fastrtps_c.so (0x00007fd622b3a000)\n\tlibperception_interfaces__rosidl_typesupport_introspection_c.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/lib/libperception_interfaces__rosidl_typesupport_introspection_c.so (0x00007fd622b1d000)\n\tlibperception_interfaces__rosidl_typesupport_fastrtps_cpp.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/lib/libperception_interfaces__rosidl_typesupport_fastrtps_cpp.so (0x00007fd622ace000)\n\tlibperception_interfaces__rosidl_typesupport_introspection_cpp.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/lib/libperception_interfaces__rosidl_typesupport_introspection_cpp.so (0x00007fd622a9f000)\n\tlibperception_interfaces__rosidl_typesupport_cpp.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/lib/libperception_interfaces__rosidl_typesupport_cpp.so (0x00007fd622a8b000)\n\tlibperception_interfaces__rosidl_generator_py.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/lib/libperception_interfaces__rosidl_generator_py.so (0x00007fd622a67000)\n\tlibswarm_data_interfaces__rosidl_typesupport_c.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/lib/libswarm_data_interfaces__rosidl_typesupport_c.so (0x00007fd62345d000)\n\tlibperception_interfaces__rosidl_typesupport_c.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/lib/libperception_interfaces__rosidl_typesupport_c.so (0x00007fd622a5a000)\n\tlibswarm_data_interfaces__rosidl_generator_c.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/swarm_data_interfaces/lib/libswarm_data_interfaces__rosidl_generator_c.so (0x00007fd622a22000)\n\tlibperception_interfaces__rosidl_generator_c.so => /workspaces/alien-scanner/ws/install-c4-profile-asan/perception_interfaces/lib/libperception_interfaces__rosidl_generator_c.so (0x00007fd6229e7000)\n\tlibgeometry_msgs__rosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/libgeometry_msgs__rosidl_typesupport_fastrtps_c.so (0x00007fd6229c6000)\n\tlibgeometry_msgs__rosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/libgeometry_msgs__rosidl_typesupport_introspection_c.so (0x00007fd6229b3000)\n\tlibgeometry_msgs__rosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/libgeometry_msgs__rosidl_typesupport_fastrtps_cpp.so (0x00007fd62298e000)\n\tlibgeometry_msgs__rosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/libgeometry_msgs__rosidl_typesupport_introspection_cpp.so (0x00007fd622978000)\n\tlibgeometry_msgs__rosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/libgeometry_msgs__rosidl_typesupport_cpp.so (0x00007fd62296a000)\n\tlibgeometry_msgs__rosidl_generator_py.so => /opt/ros/jazzy/lib/libgeometry_msgs__rosidl_generator_py.so (0x00007fd622952000)\n\tlibstd_msgs__rosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/libstd_msgs__rosidl_typesupport_fastrtps_c.so (0x00007fd622934000)\n\tlibstd_msgs__rosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/libstd_msgs__rosidl_typesupport_fastrtps_cpp.so (0x00007fd62290d000)\n\tlibstd_msgs__rosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/libstd_msgs__rosidl_typesupport_introspection_c.so (0x00007fd6228f8000)\n\tlibstd_msgs__rosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/libstd_msgs__rosidl_typesupport_introspection_cpp.so (0x00007fd6228e2000)\n\tlibstd_msgs__rosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/libstd_msgs__rosidl_typesupport_cpp.so (0x00007fd6228d6000)\n\tlibstd_msgs__rosidl_generator_py.so => /opt/ros/jazzy/lib/libstd_msgs__rosidl_generator_py.so (0x00007fd6228be000)\n\tlibgeometry_msgs__rosidl_typesupport_c.so => /opt/ros/jazzy/lib/libgeometry_msgs__rosidl_typesupport_c.so (0x00007fd6228b1000)\n\tlibstd_msgs__rosidl_typesupport_c.so => /opt/ros/jazzy/lib/libstd_msgs__rosidl_typesupport_c.so (0x00007fd6228a6000)\n\tlibgeometry_msgs__rosidl_generator_c.so => /opt/ros/jazzy/lib/libgeometry_msgs__rosidl_generator_c.so (0x00007fd622868000)\n\tlibstd_msgs__rosidl_generator_c.so => /opt/ros/jazzy/lib/libstd_msgs__rosidl_generator_c.so (0x00007fd622837000)\n\tlibservice_msgs__rosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/libservice_msgs__rosidl_typesupport_fastrtps_c.so (0x00007fd622831000)\n\tlibservice_msgs__rosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/libservice_msgs__rosidl_typesupport_introspection_c.so (0x00007fd62282a000)\n\tlibservice_msgs__rosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/libservice_msgs__rosidl_typesupport_fastrtps_cpp.so (0x00007fd622824000)\n\tlibservice_msgs__rosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/libservice_msgs__rosidl_typesupport_introspection_cpp.so (0x00007fd62281f000)\n\tlibservice_msgs__rosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/libservice_msgs__rosidl_typesupport_cpp.so (0x00007fd62281a000)\n\tlibbuiltin_interfaces__rosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/libbuiltin_interfaces__rosidl_typesupport_fastrtps_c.so (0x00007fd622814000)\n\tlibrosidl_typesupport_fastrtps_c.so => /opt/ros/jazzy/lib/librosidl_typesupport_fastrtps_c.so (0x00007fd62280d000)\n\tlibbuiltin_interfaces__rosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/libbuiltin_interfaces__rosidl_typesupport_introspection_c.so (0x00007fd622808000)\n\tlibbuiltin_interfaces__rosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/libbuiltin_interfaces__rosidl_typesupport_fastrtps_cpp.so (0x00007fd622802000)\n\tlibrosidl_typesupport_fastrtps_cpp.so => /opt/ros/jazzy/lib/librosidl_typesupport_fastrtps_cpp.so (0x00007fd6227fd000)\n\tlibrmw.so => /opt/ros/jazzy/lib/librmw.so (0x00007fd6227f2000)\n\tlibrosidl_dynamic_typesupport.so => /opt/ros/jazzy/lib/librosidl_dynamic_typesupport.so (0x00007fd6227d7000)\n\tlibfastcdr.so.2 => /opt/ros/jazzy/lib/libfastcdr.so.2 (0x00007fd6227be000)\n\tlibbuiltin_interfaces__rosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/libbuiltin_interfaces__rosidl_typesupport_introspection_cpp.so (0x00007fd6227b9000)\n\tlibrosidl_typesupport_introspection_cpp.so => /opt/ros/jazzy/lib/librosidl_typesupport_introspection_cpp.so (0x00007fd6227b4000)\n\tlibrosidl_typesupport_introspection_c.so => /opt/ros/jazzy/lib/librosidl_typesupport_introspection_c.so (0x00007fd6227af000)\n\tlibbuiltin_interfaces__rosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/libbuiltin_interfaces__rosidl_typesupport_cpp.so (0x00007fd6227a8000)\n\tlibrosidl_typesupport_cpp.so => /opt/ros/jazzy/lib/librosidl_typesupport_cpp.so (0x00007fd6227a2000)\n\tlibbuiltin_interfaces__rosidl_generator_py.so => /opt/ros/jazzy/lib/libbuiltin_interfaces__rosidl_generator_py.so (0x00007fd62279d000)\n\tlibservice_msgs__rosidl_typesupport_c.so => /opt/ros/jazzy/lib/libservice_msgs__rosidl_typesupport_c.so (0x00007fd622798000)\n\tlibbuiltin_interfaces__rosidl_typesupport_c.so => /opt/ros/jazzy/lib/libbuiltin_interfaces__rosidl_typesupport_c.so (0x00007fd622793000)\n\tlibservice_msgs__rosidl_generator_c.so => /opt/ros/jazzy/lib/libservice_msgs__rosidl_generator_c.so (0x00007fd62278c000)\n\tlibbuiltin_interfaces__rosidl_generator_c.so => /opt/ros/jazzy/lib/libbuiltin_interfaces__rosidl_generator_c.so (0x00007fd622785000)\n\tlibrosidl_typesupport_c.so => /opt/ros/jazzy/lib/librosidl_typesupport_c.so (0x00007fd62277f000)\n\tlibrcpputils.so => /opt/ros/jazzy/lib/librcpputils.so (0x00007fd622770000)\n\tlibrosidl_runtime_c.so => /opt/ros/jazzy/lib/librosidl_runtime_c.so (0x00007fd622751000)\n\tlibrcutils.so => /opt/ros/jazzy/lib/librcutils.so (0x00007fd62272f000)\n\tlibatomic.so.1 => /lib/x86_64-linux-gnu/libatomic.so.1 (0x00007fd622724000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007fd622400000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007fd622317000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007fd6226f6000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007fd622000000)\n\tlibament_index_cpp.so => /opt/ros/jazzy/lib/libament_index_cpp.so (0x00007fd6226e8000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007fd623f59000)\n\tlibrcl_logging_spdlog.so => /opt/ros/jazzy/lib/librcl_logging_spdlog.so (0x00007fd6226de000)\n\tlibyaml-0.so.2 => /lib/x86_64-linux-gnu/libyaml-0.so.2 (0x00007fd6226bd000)\n\tlibservice_msgs__rosidl_generator_py.so => /opt/ros/jazzy/lib/libservice_msgs__rosidl_generator_py.so (0x00007fd6226b8000)\n\tlibpython3.12.so.1.0 => /lib/x86_64-linux-gnu/libpython3.12.so.1.0 (0x00007fd621600000)\n\tlibnuma.so.1 => /lib/x86_64-linux-gnu/libnuma.so.1 (0x00007fd6226a8000)\n\tliblttng-ust-tracepoint.so.1 => /lib/x86_64-linux-gnu/liblttng-ust-tracepoint.so.1 (0x00007fd62268b000)\n\tlibspdlog.so.1.12 => /lib/x86_64-linux-gnu/libspdlog.so.1.12 (0x00007fd622290000)\n\tlibz.so.1 => /lib/x86_64-linux-gnu/libz.so.1 (0x00007fd622274000)\n\tlibexpat.so.1 => /lib/x86_64-linux-gnu/libexpat.so.1 (0x00007fd622248000)\n\tlibfmt.so.9 => /lib/x86_64-linux-gnu/libfmt.so.9 (0x00007fd622227000)\n",
+      "ldd_returncode": 0,
+      "path": "/workspaces/alien-scanner/ws/build-c4-profile-asan/swarm_data_plane/c4_resource_profile_source",
+      "readelf_returncode": 0,
+      "sha256": "dc084a4841c741c534b3f7659fe50c45f23155c67fc9065e2678623850b16dfb"
+    },
+    "source_fixture_sha256": "70a546f5e6dbe901255a373d515cba8e0a08ebde2fcc6641d6f94922a09e06b0"
+  },
+  "receiver": {
+    "application_queue_peak": 0,
+    "apply_count": 314,
+    "apply_max_ns": 45785438,
+    "apply_p50_upper_ns": 33554431,
+    "apply_p95_upper_ns": 67108863,
+    "apply_p99_upper_ns": 67108863,
+    "apply_total_ns": 8537782493,
+    "callback_count": 314,
+    "callback_max_ns": 52317125,
+    "callback_p50_upper_ns": 33554431,
+    "callback_p95_upper_ns": 67108863,
+    "callback_p99_upper_ns": 67108863,
+    "callback_total_ns": 8566005146,
+    "decode_count": 314,
+    "decode_max_ns": 355608,
+    "decode_p50_upper_ns": 65535,
+    "decode_p95_upper_ns": 131071,
+    "decode_p99_upper_ns": 262143,
+    "decode_total_ns": 18438091,
+    "deltas_applied": 312,
+    "endpoint_count_anomalies": 0,
+    "expected_sources": 2,
+    "final_cells_total": 1000000,
+    "keyframes_applied": 2,
+    "max_recent_messages_per_source": 256,
+    "max_recent_messages_total": 512,
+    "messages_applied": 314,
+    "messages_duplicate": 0,
+    "messages_received": 314,
+    "messages_rejected": 0,
+    "normal_completion": 1,
+    "origin_age_count": 314,
+    "origin_age_max_ns": 115053682,
+    "origin_age_p50_upper_ns": 16777215,
+    "origin_age_p95_upper_ns": 67108863,
+    "origin_age_p99_upper_ns": 67108863,
+    "origin_age_total_ns": 5196541200,
+    "origin_clock_anomalies": 0,
+    "payload_bytes_received": 32376254,
+    "qos_history_depth": 4,
+    "schema_version": 1,
+    "sources_seen": 2
+  },
+  "receiver_cpu": {
+    "cpu_seconds": 2.03,
+    "single_core_percent": 40.590081675528424,
+    "window_elapsed_s": 5.00122176700097,
+    "wording": "record-only; host contention makes absolute CPU uncertain by about +/-30%"
+  },
+  "receiver_ready": {
+    "cells_per_source": 500000,
+    "ready_monotonic_ns": 8563708941554,
+    "schema_version": 1,
+    "sources_ready": 2
+  },
+  "receiver_tool": "plain",
+  "sanitizer": {
+    "asan_options": "detect_leaks=1:halt_on_error=1:exitcode=23:log_path=/workspaces/alien-scanner/.trellis/tasks/08-10-c4-communication-data-plane/validation/asan-expanding-2x500k/asan",
+    "configured": true,
+    "enabled": true,
+    "gate_pass": true,
+    "lsan_options": null,
+    "report_files": []
+  },
+  "schema_version": 1,
+  "smem_crosscheck": {
+    "pid": 15863,
+    "pss_kib": 405525,
+    "raw": "15863   420608   405525   392820 ",
+    "returncode": 0,
+    "rss_kib": 420608,
+    "uss_kib": 392820
+  },
+  "source": {
+    "application_serialized_bytes": 32572190,
+    "conversion_failures": 0,
+    "deltas_sent": 312,
+    "endpoint_count_anomalies": 0,
+    "keyframes_sent": 2,
+    "messages_sent": 314,
+    "normal_completion": 1,
+    "payload_bytes_sent": 32376254,
+    "schema_version": 1,
+    "serialization_failures": 0,
+    "source_count": 2,
+    "workload_mode": "expanding"
+  },
+  "stage_breakdown": {
+    "apply_fraction_of_callback": 0.9967052724672738,
+    "decode_fraction_of_callback": 0.0021524725570133342,
+    "other_fraction_of_callback": 0.001142254975712853
+  },
+  "valid": true,
+  "workload": {
+    "cells_per_source": 500000,
+    "delta_operations": 4096,
+    "initial_cells_per_source": 10000,
+    "mode": "expanding",
+    "qos_depth": 4,
+    "rate_hz_per_source": 5.0,
+    "ready_timeout_s": 180.0,
+    "ros_domain_id": 198,
+    "sample_period_s": 1.0,
+    "source_count": 2,
+    "warmup_s": 2.0,
+    "window_s": 5.0
+  }
+}

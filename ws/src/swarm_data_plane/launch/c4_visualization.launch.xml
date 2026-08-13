@@ -1,0 +1,20 @@
+<launch>
+  <arg name="show_rviz" default="true"/>
+  <arg name="publish_rate_hz" default="2.0"/>
+  <arg name="scenario_step_period_s" default="1.0"/>
+
+  <node pkg="swarm_data_plane"
+        exec="c4_visualization_fixture"
+        name="c4_visualization_fixture"
+        output="screen">
+    <param name="publish_rate_hz" value="$(var publish_rate_hz)"/>
+    <param name="scenario_step_period_s" value="$(var scenario_step_period_s)"/>
+  </node>
+
+  <node if="$(var show_rviz)"
+        pkg="rviz2"
+        exec="rviz2"
+        name="c4_visualization_rviz"
+        args="-d $(find-pkg-share swarm_data_plane)/config/c4_data_plane_visualization.rviz"
+        output="screen"/>
+</launch>

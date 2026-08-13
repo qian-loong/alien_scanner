@@ -1,0 +1,11 @@
+parse_valid=true
+total_runtime_s=25.63
+allocation_calls=57997
+temporary_allocations=12459
+peak_heap=19.16M
+peak_rss_with_overhead=50.45M
+total_memory_leaked=357.78K
+peak_heap_bytes=20090716
+peak_rss_with_overhead_bytes=52900659
+total_memory_leaked_bytes=366367
+gate_pass=true

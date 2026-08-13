@@ -1,0 +1,10 @@
+parse_valid=true
+snapshot_count=2265
+peak_snapshot=45
+peak_time_s=1.233000
+peak_total_bytes=19149226
+final_snapshot=2264
+final_time_s=25.629000
+final_total_bytes=431342
+target_verified=true
+gate_pass=true

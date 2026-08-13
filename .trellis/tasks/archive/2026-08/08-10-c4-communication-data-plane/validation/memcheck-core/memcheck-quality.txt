@@ -1,0 +1,12 @@
+definite_lost_bytes=0
+indirect_lost_bytes=0
+possibly_lost_bytes=0
+still_reachable_bytes=0
+error_count=0
+invalid_access=false
+uninitialized_access=false
+other_error=false
+finding=false
+all_heap_blocks_freed=true
+target_verified=true
+gate_pass=true

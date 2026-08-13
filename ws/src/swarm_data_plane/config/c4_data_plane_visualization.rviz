@@ -1,0 +1,104 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.18
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 110; 118; 128
+      Enabled: true
+      Name: C4WorldGrid
+      Plane: XY
+      Reference Frame: c4_visualization_world
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: EdgeRecoveryMarkers
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /c4/visualization/edge_recovery
+          Value: true
+      Enabled: true
+      Name: 1 Edge Recovery A to B
+      Value: true
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: false
+          Name: EdgeAggregationMarkers
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /c4/visualization/edge_aggregation
+          Value: true
+      Enabled: false
+      Name: 2 Edge Aggregation A1 A2 to B
+      Value: false
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: false
+          Name: UpstreamRecoveryMarkers
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /c4/visualization/upstream_recovery
+          Value: true
+      Enabled: false
+      Name: 3 Upstream Recovery B to C
+      Value: false
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: false
+          Name: MultihopTtlMarkers
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /c4/visualization/multihop_ttl
+          Value: true
+      Enabled: false
+      Name: 4 Multi-hop TTL B1 B2 to C
+      Value: false
+  Enabled: true
+  Global Options:
+    Background Color: 32; 35; 39
+    Fixed Frame: c4_visualization_world
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 75
+      Focal Point:
+        X: 30
+        Y: 0
+        Z: 1.5
+      Name: Current View
+      Pitch: 0.35
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 1.57
+Window Geometry:
+  Height: 900
+  Width: 1440

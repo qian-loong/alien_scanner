@@ -320,6 +320,9 @@ baseline.
 - Repeated memory analysis consumes exactly three normally completed,
   independently captured run directories:
   `scripts/analyze-perception-profile.py <run-a> <run-b> <run-c>`.
+- Memcheck report parser:
+  `scripts/lib/profile_report_parsers.py memcheck <log> <summary> <quality>
+  <expected-target>`.
 
 ### 3. Contracts
 
@@ -349,6 +352,12 @@ baseline.
   trace category, or ambiguous target makes the run invalid; a complete
   Memcheck report with a configured finding exit code remains valid evidence of
   a finding.
+- A complete Memcheck report has either the explicit
+  `All heap blocks were freed -- no leaks are possible` line or a complete
+  `LEAK SUMMARY` containing definite, indirect, possible, and reachable byte
+  counts. Treat invalid/uninitialized accesses and definite, indirect, or
+  possible lost bytes as strict-gate findings; `still reachable` is disclosed
+  but does not by itself fail the strict leak gate.
 - `normal_completion=true` requires reaching the full stop/finalization state
   with no forced signal escalation, PID/starttime/PGID mismatch, premature role
   exit, or unexpected role exit code. Keep this independent from `valid`: a
@@ -399,6 +408,9 @@ baseline.
 | Trace cannot filter callback/take/publish by the target vpid | Mark the trace run invalid |
 | Heap/Memcheck/Massif summary is incomplete or the tool was force-killed | Mark invalid and rerun |
 | Memcheck exits with the dedicated finding code and has a complete matching summary | Keep a valid run and record the finding |
+| Memcheck says all heap blocks were freed and has zero errors | Parse all leak counts as zero and pass the strict gate |
+| Memcheck reports any possibly lost bytes | Preserve the report and fail the strict gate, even when definite/indirect lost are zero |
+| Memcheck reports uninitialized-value use | Set the uninitialized-access finding and fail the strict gate |
 | The same plain-sample evidence is copied under different run directories | Reject it as duplicate evidence |
 | Fewer than three valid steady-state memory runs are available | Do not issue a sustained-growth conclusion |
 | C3 runtime parameters or graph disagree with the selected C3 mode | Stop before the formal window or mark the run invalid |
@@ -418,6 +430,10 @@ baseline.
   target PID, profiler state, or same-window output.
 - Bad: accepting a report written after SIGKILL, treating Memcheck's finding
   exit code as tool failure, or inferring a leak from one RSS curve.
+- Good: a ROS-free target emits the all-freed report variant and the parser
+  records zero leak counts without requiring a nonexistent `LEAK SUMMARY`.
+- Bad: ignoring `possibly lost` so a third-party TLS finding is silently
+  reported as a strict pass; preserve and attribute the stack instead.
 - Good: the same frozen build completes disabled, enabled, and keyframe-only
   3x300-second matrices, and each aggregate is regenerated from three distinct
   raw evidence identities.
@@ -453,7 +469,8 @@ baseline.
   excluded and the result is labeled as a short-window diagnostic.
 - Run synthetic positive and negative parser fixtures for perf control/lost
   samples, Heaptrack quantities, Massif stack-aware peak detail, Memcheck target
-  identity, duplicate plain paths or evidence identities, low workload, and
+  identity, both Memcheck report shapes, possible-lost and uninitialized-access
+  findings, duplicate plain paths or evidence identities, low workload, and
   incomplete sampler output.
 
 ### 7. Wrong vs Correct
@@ -487,6 +504,23 @@ for c3_mode in disabled enabled keyframe-only; do
       "${c3_mode}-run${run}" 300 bounded "${c3_mode}"
   done
 done
+```
+
+Wrong:
+
+```python
+finding = definite_bytes > 0 or indirect_bytes > 0
+```
+
+Correct:
+
+```python
+finding = (
+    error_count > 0
+    or definite_bytes > 0
+    or indirect_bytes > 0
+    or possible_bytes > 0
+)
 ```
 
 ## Perception Fixture LiDAR Geometry Contracts

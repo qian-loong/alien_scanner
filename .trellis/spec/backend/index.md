@@ -22,6 +22,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Perception Ray Evidence Contract](./perception-ray-evidence-contract.md) | LiDAR hit/free-ray capability, validation, and cross-layer propagation | Active |
 | [Local Observation Map Contract](./local-observation-map-contract.md) | C2 pose/health gates, epoch/revision semantics, and revision-locked reads | Active |
 | [Map State Update Contract](./map-state-update-contract.md) | C3 canonical keyframe/delta chains, atomic apply, bounded async production, and resync | Active |
+| [Swarm Data Plane Contract](./swarm-data-plane-contract.md) | C4 routed envelope, RMW/DDS boundary, admission, resync barrier, aggregate atomicity, and trust rejection | Active |
 | [Performance Measurement Boundaries](./performance-measurement-boundaries.md) | 本机（WSL2/LinuxKit）可测与不可测的性能指标、分辨率下限与措辞纪律 | Active |
 
 ---

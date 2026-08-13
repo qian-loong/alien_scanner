@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>swarm_data_plane</name>
+  <version>0.1.0</version>
+  <description>ROS-free admission core and ROS adapters for the swarm communication data plane</description>
+  <maintainer email="dev@alien-scanner.com">Alien Scanner Team</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>perception_map_update</depend>
+  <depend>perception_interfaces</depend>
+  <depend>swarm_data_interfaces</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>octomap_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>visualization_msgs</depend>
+  <depend>openssl</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>cave_world</exec_depend>
+  <exec_depend>drone_scanner</exec_depend>
+  <exec_depend>octomap_rviz_plugins</exec_depend>
+  <exec_depend>perception_fixtures</exec_depend>
+  <exec_depend>perception_input_node</exec_depend>
+  <exec_depend>perception_local_map</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>launch_testing_ament_cmake</test_depend>
+  <test_depend>rclpy</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,0 +1,2 @@
+swarm_data_interfaces/RoutedMapUpdate aggregate_update
+swarm_data_interfaces/AggregateManifest manifest

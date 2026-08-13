@@ -437,6 +437,64 @@ class AnalyzePerceptionProfileTest(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("missing Memcheck sections", result.stderr)
 
+    def test_memcheck_accepts_all_freed_and_rejects_possible_leak(self) -> None:
+        log = self.root / "memcheck.log"
+        summary = self.root / "memcheck-summary.txt"
+        quality = self.root / "memcheck-quality.txt"
+        log.write_text(
+            "==42== Command: /target\n"
+            "==42== HEAP SUMMARY:\n"
+            "==42== in use at exit: 0 bytes in 0 blocks\n"
+            "==42== total heap usage: 1 allocs, 1 frees, 1 bytes allocated\n"
+            "==42== All heap blocks were freed -- no leaks are possible\n"
+            "==42== ERROR SUMMARY: 0 errors from 0 contexts\n",
+            encoding="utf-8",
+        )
+        result = self.run_report_parser(
+            "memcheck", log, summary, quality, "/target"
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        values = REPORT_PARSERS.parse_memcheck_report(
+            log, summary, quality, "/target"
+        )
+        self.assertEqual("true", values["gate_pass"])
+        self.assertEqual("true", values["all_heap_blocks_freed"])
+
+        log.write_text(
+            "==42== Command: /target\n"
+            "==42== HEAP SUMMARY:\n"
+            "==42== in use at exit: 8 bytes in 1 blocks\n"
+            "==42== total heap usage: 1 allocs, 0 frees, 8 bytes allocated\n"
+            "==42== LEAK SUMMARY:\n"
+            "==42== definitely lost: 0 bytes in 0 blocks\n"
+            "==42== indirectly lost: 0 bytes in 0 blocks\n"
+            "==42== possibly lost: 8 bytes in 1 blocks\n"
+            "==42== still reachable: 0 bytes in 0 blocks\n"
+            "==42== ERROR SUMMARY: 0 errors from 0 contexts\n",
+            encoding="utf-8",
+        )
+        values = REPORT_PARSERS.parse_memcheck_report(
+            log, summary, quality, "/target"
+        )
+        self.assertEqual("false", values["gate_pass"])
+        self.assertEqual("true", values["finding"])
+
+        log.write_text(
+            "==42== Command: /target\n"
+            "==42== Conditional jump or move depends on uninitialised value(s)\n"
+            "==42== HEAP SUMMARY:\n"
+            "==42== in use at exit: 0 bytes in 0 blocks\n"
+            "==42== total heap usage: 1 allocs, 1 frees, 1 bytes allocated\n"
+            "==42== All heap blocks were freed -- no leaks are possible\n"
+            "==42== ERROR SUMMARY: 1 errors from 1 contexts\n",
+            encoding="utf-8",
+        )
+        values = REPORT_PARSERS.parse_memcheck_report(
+            log, summary, quality, "/target"
+        )
+        self.assertEqual("true", values["uninitialized_access"])
+        self.assertEqual("false", values["gate_pass"])
+
     def test_common_sampler_and_manifest_primitives_are_importable(self) -> None:
         run_dir = self.make_run("run-a")
         manifest_path = run_dir / "run-manifest.txt"

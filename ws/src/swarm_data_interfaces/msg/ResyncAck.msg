@@ -1,0 +1,12 @@
+uint16 protocol_version
+bool accepted
+string<=128 correlation_id
+string<=128 target_producer_id
+uint64 target_producer_session_boot_time_ns
+uint32 target_producer_session_random_suffix
+string<=128 current_vehicle_id
+uint64 current_mapper_session_boot_time_ns
+uint32 current_mapper_session_random_suffix
+uint64 current_map_epoch
+uint64 current_revision
+string<=256 diagnostic
