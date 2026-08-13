@@ -11,8 +11,8 @@
 - 任务状态：工程与验收均已完成，用户已授权定向提交与归档。
 - 冻结 C3 功能实现未改动；本轮收口提交包含 profiling sink/runner/analyzer、测试、
   长期 spec、用户文档和可审计验证摘要。
-- 大体积原始 profiling run 仅本地保留，不纳入 Git 历史；提交后归档本 C3 子任务，
-  父级架构任务继续进入 C4。
+- 大体积原始 profiling run 仅本地保留，不纳入 Git 历史；当前统一位于
+  `profiling-archive/c3-map-state-updates-20260808/raw/`。
 
 ## 被测边界
 
@@ -31,11 +31,16 @@ C3 map-update core
 
 ## 已完成证据
 
-证据目录：
+Git 可审计摘要目录与本地 raw 目录：
 
 ```text
-.trellis/tasks/08-03-c3-map-state-updates/validation/final-20260806-7bb7664/
+.trellis/tasks/archive/2026-08/08-03-c3-map-state-updates/validation/
+profiling-archive/c3-map-state-updates-20260808/raw/final-20260806-7bb7664/
 ```
+
+raw 内的绝对路径仍指向采集时的
+`.trellis/tasks/08-03-c3-map-state-updates/validation/`，作为历史 provenance 保持不变；
+`validation/relocation-provenance.txt` 记录当前路径映射和完整性摘要。
 
 ### ASan/LSan
 
@@ -69,9 +74,9 @@ C3 map-update core
 300 秒：
 
 ```text
-validation/final-bounded-20260808-disabled-run1..3
-validation/final-bounded-20260808-enabled-run1..3
-validation/final-bounded-20260808-keyframe-only-run1..3
+profiling-archive/c3-map-state-updates-20260808/raw/final-bounded-20260808-disabled-run1..3
+profiling-archive/c3-map-state-updates-20260808/raw/final-bounded-20260808-enabled-run1..3
+profiling-archive/c3-map-state-updates-20260808/raw/final-bounded-20260808-keyframe-only-run1..3
 ```
 
 9 轮均正常结束并通过 raw analyzer、角色/计数/资源门。每轮包含 3,001 observations、
@@ -115,5 +120,6 @@ delta；materialize P95 约 54 ms，diff P95 约 2.6-2.8 ms。keyframe-only 每�
 
 最终 `trellis-check`、验证命令和 spec 更新均已完成。收口只提交本记录列出的 C3
 profiling、文档、spec、父/子任务状态和小型验证摘要；不清理或回退父任务以外的脏改动，
-不纳入 `.agents/.claude/.codex/.cursor`、Playwright 临时文件、旧 `profiling-archive`
-或 task-local 大体积 raw run。C3 归档后下一关键路径为 C4 通信数据面。
+不纳入 `.agents/.claude/.codex/.cursor`、Playwright 临时文件、其他 `profiling-archive`
+或构建目录。C3 raw 后续只在上述本地 archive 维护；任务 validation 仅保留 Git 摘要与
+迁移 provenance。

@@ -61,3 +61,79 @@
 
 需要 IPC / cache 分析或 <10% 效应判定时，唯一出路是**换有 PMU 的原生 Linux
 专用机**。不要在本环境继续投入时间。
+
+## Profiling 证据保留与迁移契约
+
+### 1. 适用范围
+
+当 task-local validation 同时包含 Git 可审计摘要和不应进入仓库的大体积 raw 时，或已归档
+任务需要把本地 raw 移到 `profiling-archive/` 时，必须使用本节契约。
+
+### 2. 路径与清单签名
+
+- Git 摘要根：`.trellis/tasks/archive/<month>/<task>/validation/`。
+- 本地 raw 根：`profiling-archive/<task-and-capture-date>/raw/`。
+- raw 选择集合：从源 validation 根执行
+  `git ls-files --others --exclude-standard -- <source-root>`，不得靠扩展名或目录名猜测。
+- 树摘要行：`<lowercase sha256><two spaces><forward-slash relative path>\n`；按整行 ordinal
+  排序、UTF-8 无 BOM 拼接后再计算 SHA-256。
+
+### 3. 契约
+
+- 任务目录只保留 README、aggregate、质量门和 provenance 等小型可审计摘要；完整 raw 保留
+  在本地 archive，`raw/` 必须由 `/profiling-archive/*/raw/` 忽略。
+- 移动前后必须分别计算文件数、总字节数和树摘要，三者全部相等才可声明迁移完成。
+- 逐文件保持相对路径，拒绝目标覆盖，并验证解析后的源/目标路径仍位于各自固定根内。
+- 不改写 aggregate、run manifest、`sha256sum.txt` 或 raw 中的采集期绝对路径；新增
+  `relocation-provenance.txt` 映射 capture root、当前 raw root 和 Git summary root。
+- 迁移后的 README/provenance 记录迁移日期、三项完整性指标、清单格式、路径保留声明和
+  raw 未修改声明。
+- 提交前必须证明 raw 的 tracked 数为 0，且 staged 路径不包含任何 `raw/` 或无关未跟踪文件。
+
+### 4. 验证与错误矩阵
+
+| 条件 | 必须结果 |
+| --- | --- |
+| 目标 raw 根已存在且非空 | 停止，不覆盖也不合并目录 |
+| raw 数量、总字节数或树摘要任一不一致 | 迁移失败；按冻结清单回滚，不删除异常文件 |
+| 源集合包含 tracked 摘要 | 停止；修正为 `git ls-files --others --exclude-standard` 的结果 |
+| 目标文件未命中 ignore 规则或被 Git 跟踪 | 停止提交并修复布局/规则 |
+| raw 内仍记录旧 task 绝对路径 | 保留原值；通过 relocation provenance 解释当前位置 |
+| Windows PowerShell 的 `check-ignore --stdin` 首行受 BOM 影响 | 使用占位首行吸收 BOM，或逐条/无 BOM 输入复核；不得据此误判规则缺口 |
+| 归档脚本把其他未跟踪 raw 纳入自动提交 | 立即从索引移除并核对文件仍在磁盘，修正提交后再继续 |
+
+### 5. Good / Base / Bad
+
+- Good：冻结 Git 未跟踪集合，迁移后从目标文件系统独立复算三项指标，并提交 README 与
+  relocation provenance。
+- Base：新的 profiling run 从一开始就直接写入被忽略的 archive raw 根，同时把摘要复制到
+  task validation 并做哈希验证。
+- Bad：整体移动 validation 目录、重写 JSON 中旧路径、只比较文件数，或使用 `git add -A`
+  把邻近未跟踪证据一并提交。
+
+### 6. 必需检查
+
+- 比较迁移前后 raw file count、total bytes、tree manifest SHA-256。
+- 比较迁移前后既有 tracked 摘要的 blob/hash，确认内容身份未变化。
+- 执行 `git check-ignore` 覆盖每个目标 raw，并执行
+  `git ls-files -- <archive-raw-root>` 断言输出为空。
+- 执行 `git diff --check`，逐项审查 `git status --short`、`git diff --name-only` 和最终 staged
+  路径；归档/自动提交后再次检查，不能假定脚本只提交当前任务目录。
+
+### 7. Wrong vs Correct
+
+Wrong：
+
+```powershell
+Move-Item validation profiling-archive/c3/raw
+git add -A
+```
+
+Correct：
+
+```powershell
+$raw = @(git ls-files --others --exclude-standard -- $sourceRoot)
+# 冻结 count/bytes/tree hash，逐文件拒绝覆盖地移动并保持相对路径。
+# 从目标根独立复算三项指标后，只暂存 README、摘要和 relocation provenance。
+git ls-files -- $archiveRawRoot  # 必须为空
+```

@@ -1,0 +1,12 @@
+schema=alien-scanner/c3-profile-evidence-relocation/v1
+relocated_on=2026-08-13
+capture_repository_root=.trellis/tasks/08-03-c3-map-state-updates/validation
+local_raw_root=profiling-archive/c3-map-state-updates-20260808/raw
+git_summary_root=.trellis/tasks/archive/2026-08/08-03-c3-map-state-updates/validation
+raw_file_count=872
+raw_total_bytes=123475804
+raw_tree_manifest_sha256=a6db5afccd64419d7e62a49522e8cccc0c61736e35667b9a124b06eb0149fce2
+raw_tree_manifest_format=sorted lowercase-sha256 two-spaces forward-slash-relative-path newline
+capture_paths_preserved=true
+raw_files_modified=false
+git_summary_files_preserved=true

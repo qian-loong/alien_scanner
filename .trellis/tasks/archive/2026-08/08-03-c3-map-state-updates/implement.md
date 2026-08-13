@@ -308,7 +308,10 @@ ws/src/alien_perception/perception_map_update/test/test_map_update_rejection.py
 300 秒。9 轮均正常结束并通过 raw analyzer；enabled 每轮发布约 3,803-3,805 个更新并
 完成 drain，keyframe-only 每轮发布约 3,804-3,805 个 keyframe 并完成 drain。三组内存
 aggregate 均未触发持续增长门。ASan/LSan、Memcheck 和 1,812,520-cell capacity harness
-同时通过；完整数值、原始证据和后处理来源见 `validation/README.md`。
+同时通过；完整数值、原始证据和后处理来源见 `validation/README.md`。任务归档后的
+Git 摘要仍在 `validation/`，872 个本地 raw 文件已于 2026-08-13 完整迁移到
+`profiling-archive/c3-map-state-updates-20260808/raw/`；历史采集路径不改写，映射与树摘要见
+`validation/relocation-provenance.txt`。
 
 ### 风险与回滚
 

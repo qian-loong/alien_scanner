@@ -5,9 +5,11 @@ Generated build/install trees remain outside the repository; only command output
 needed to audit the result are retained here.
 
 Repository retention is intentionally split: Git tracks this README, provenance, and aggregate
-JSON. Raw logs, including sanitizer and capacity reports, remain local task evidence and are not
-added to repository history. Their names, source identities, and hashes remain recorded below and
-in `analysis-provenance.txt`.
+JSON. Raw logs, including sanitizer and capacity reports, remain local evidence under
+`profiling-archive/c3-map-state-updates-20260808/raw/` and are not added to repository history.
+Their capture-time names, source identities, and hashes remain recorded below and in
+`analysis-provenance.txt`; `relocation-provenance.txt` maps the historical task root to the current
+local raw root.
 
 The first full-dependency ASan build (`asan-build.log`) stopped when Docker Desktop became
 unresponsive. It is retained as environment-failure evidence and is not a source failure. The
@@ -135,7 +137,8 @@ cost of the current full-snapshot comparison path. Keyframe-only versus enabled
 is only about a 15% difference and is reported without a directional
 performance conclusion.
 
-The raw directories are named
+The raw directories are now retained below
+`profiling-archive/c3-map-state-updates-20260808/raw/` and are named
 `final-bounded-20260808-{disabled,enabled,keyframe-only}-run{1,2,3}`. Their
 capture-time `analysis-summary.json` files and the original `*-aggregate.json`
 files were generated with the source state identified by
@@ -146,6 +149,11 @@ analysis module SHA-256 is
 `66e6ff4f0eeeb862ddf6fc82fea3e3c3eb5387ac629825afed56ae6beb671cae`;
 all hashes and artifact relationships are recorded in
 `analysis-provenance.txt`.
+
+The raw files still contain absolute paths from the capture-time root
+`.trellis/tasks/08-03-c3-map-state-updates/validation/`. Those paths are immutable provenance and
+were not rewritten during relocation. Use `relocation-provenance.txt` to resolve them to the
+current local archive.
 
 Short expanding smoke runs passed for disabled and keyframe-only modes. The
 first enabled smoke recorded five revision-skew failures and is retained as

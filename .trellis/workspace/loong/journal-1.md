@@ -278,3 +278,36 @@ docs/perception-real-chain-retest.md.
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Relocate C3 profiling evidence
+
+**Date**: 2026-08-13
+**Task**: Relocate C3 profiling evidence
+**Branch**: `chore/profiling-evidence-layout`
+
+### Summary
+
+将 C3 872 个 profiling raw 迁移到 profiling-archive，保留 8 个摘要与历史路径，新增 relocation provenance、证据布局规范和 QA；已验证 872/872 ignore、文件数/字节/树摘要守恒，待 squash 合并到 main。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `26636e4` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
