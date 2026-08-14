@@ -85,6 +85,24 @@ namespace PerceptionMapUpdate {
             Encoding::write_u8(sink, static_cast<std::uint8_t>(HashAlgorithm::Sha256));
         }
 
+        template<typename ForEach>
+        Hash256 content_hash_impl(
+                const SourceIdentity & source,
+                const Hash256 & geometry_fingerprint,
+                std::size_t cell_count,
+                const ForEach & for_each)
+        {
+            DigestSink sink;
+            write_domain(sink, "alien-scanner/map-content/v1");
+            Encoding::write_identity(sink, source);
+            Encoding::write_hash(sink, geometry_fingerprint);
+            Encoding::write_u64(sink, static_cast<std::uint64_t>(cell_count));
+            for_each([&sink](const CanonicalCell & cell) {
+                Encoding::write_cell(sink, cell);
+            });
+            return sink.finish();
+        }
+
     }// namespace
 
     Hash256 ContentHasher::geometry_fingerprint(const MapGeometry & geometry)
@@ -100,15 +118,27 @@ namespace PerceptionMapUpdate {
             const Hash256 & geometry_fingerprint,
             const std::vector<CanonicalCell> & cells)
     {
-        DigestSink sink;
-        write_domain(sink, "alien-scanner/map-content/v1");
-        Encoding::write_identity(sink, source);
-        Encoding::write_hash(sink, geometry_fingerprint);
-        Encoding::write_u64(sink, static_cast<std::uint64_t>(cells.size()));
-        for(const auto & cell : cells) {
-            Encoding::write_cell(sink, cell);
-        }
-        return sink.finish();
+        return content_hash_impl(
+                source,
+                geometry_fingerprint,
+                cells.size(),
+                [&cells](const auto & visitor) {
+                    for(const auto & cell : cells) {
+                        visitor(cell);
+                    }
+                });
+    }
+
+    Hash256 ContentHasher::content_hash(
+            const SourceIdentity & source,
+            const Hash256 & geometry_fingerprint,
+            const CanonicalCellView & cells)
+    {
+        return content_hash_impl(
+                source,
+                geometry_fingerprint,
+                cells.size(),
+                [&cells](const auto & visitor) { cells.for_each(visitor); });
     }
 
     Hash256 ContentHasher::update_hash(const MapUpdate & update)

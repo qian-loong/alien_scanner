@@ -229,12 +229,31 @@ namespace {
         }
     }
 
+    template<typename Visitor>
+    void visit_cells(
+            const std::vector<CanonicalCell> & cells,
+            const Visitor & visitor)
+    {
+        for(const auto & cell : cells) {
+            visitor(cell);
+        }
+    }
+
+    template<typename Visitor>
+    void visit_cells(
+            const PerceptionMapUpdate::CanonicalCellView & cells,
+            const Visitor & visitor)
+    {
+        cells.for_each(visitor);
+    }
+
+    template<typename Cells>
     visualization_msgs::msg::Marker occupied_map_marker(
             const std_msgs::msg::Header & header,
             const std::string & marker_namespace,
             std::int32_t marker_id,
             const MapGeometry & geometry,
-            const std::vector<CanonicalCell> & cells,
+            const Cells & cells,
             std::size_t max_voxels,
             float red,
             float green,
@@ -244,25 +263,25 @@ namespace {
                 header, marker_namespace, marker_id, geometry, red, green, blue);
         marker.color.a = 0.72F;
         std::size_t occupied_count = 0U;
-        for(const auto & cell : cells) {
+        visit_cells(cells, [&occupied_count](const CanonicalCell & cell) {
             if(cell.state == PerceptionMapUpdate::CellState::Occupied) {
                 ++occupied_count;
             }
-        }
+        });
         const std::size_t stride = occupied_count > max_voxels
                 ? (occupied_count + max_voxels - 1U) / max_voxels
                 : 1U;
         marker.points.reserve(std::min(occupied_count, max_voxels));
         std::size_t occupied_index = 0U;
-        for(const auto & cell : cells) {
+        visit_cells(cells, [&](const CanonicalCell & cell) {
             if(cell.state != PerceptionMapUpdate::CellState::Occupied) {
-                continue;
+                return;
             }
             if(occupied_index % stride == 0U && marker.points.size() < max_voxels) {
                 marker.points.push_back(voxel_center(cell.index, geometry));
             }
             ++occupied_index;
-        }
+        });
         return marker;
     }
 
@@ -279,14 +298,14 @@ namespace {
         double minimum_y = first.y;
         double maximum_y = first.y;
         double maximum_z = first.z;
-        for(const auto & cell : map.cells) {
+        map.cells.for_each([&](const CanonicalCell & cell) {
             const auto point = voxel_center(cell.index, map.geometry);
             minimum_x = std::min(minimum_x, point.x);
             maximum_x = std::max(maximum_x, point.x);
             minimum_y = std::min(minimum_y, point.y);
             maximum_y = std::max(maximum_y, point.y);
             maximum_z = std::max(maximum_z, point.z);
-        }
+        });
         position.x = (minimum_x + maximum_x) * 0.5;
         position.y = (minimum_y + maximum_y) * 0.5;
         position.z = maximum_z + 1.5;
@@ -641,12 +660,14 @@ private:
             epoch_reset_run = MapUpdateAcceptanceScenarios::epoch_reset(
                     run.acceptance_snapshots);
         }
+        PerceptionMapUpdate::CanonicalCellView oracle_cells;
+        oracle_cells = run.final_oracle->cells;
         const ReconstructedMap oracle_view {
                 run.final_oracle->source,
                 run.final_oracle->geometry,
                 run.final_oracle->revision,
                 run.final_oracle->content_hash,
-                run.final_oracle->cells};
+                std::move(oracle_cells)};
 
         octomap_msgs::msg::Octomap oracle_message;
         octomap_msgs::msg::Octomap reconstructed_message;

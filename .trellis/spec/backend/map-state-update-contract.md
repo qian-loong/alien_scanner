@@ -24,6 +24,20 @@ MapUpdateProducer::baseline() const noexcept;
 bool MapUpdateApplier::admit_source(const SourceIdentity & source);
 ApplyUpdateResult MapUpdateApplier::apply(const MapUpdate & update);
 
+struct CellStorageConfig {
+    CellStorageMode mode = CellStorageMode::Vector;
+    std::uint32_t chunk_edge = 16U;
+    std::size_t bucket_count = 256U;
+};
+MapUpdateApplier::MapUpdateApplier(
+    MapUpdateLimits limits = {}, CellStorageConfig storage = {});
+CanonicalCellCursor CanonicalCellView::cursor() const;
+std::vector<CanonicalCell> CanonicalCellView::materialize() const;
+CellStoreResult CellSnapshotStore::estimate_apply_upper_bound(
+    const std::vector<DeltaOperation> & operations) const noexcept;
+CellStoreResult CellSnapshotStore::apply(
+    const std::vector<DeltaOperation> & operations);
+
 ResyncResponse ResyncRequestLedger::accept(
     const ResyncRequest & request,
     const SourceIdentity & current_source,
@@ -52,6 +66,28 @@ diagnostic; the keyframe remains an asynchronous `MapUpdate` publication.
 - Canonical state is a strictly sorted sparse vector of known `Free` or
   `Occupied` cells. Missing cells are `Unknown`; a delta uses
   `RemoveToUnknown` to delete a known cell.
+- `ReconstructedMap::cells` is a storage-independent `CanonicalCellView`, not
+  an owned vector contract. Production consumers stream through `cursor()` or
+  `for_each()`; `materialize()` is reserved for explicit compatibility, test,
+  or serialization boundaries and must not be cached as a second authoritative
+  map.
+- `Vector` and `Chunked` storage modes implement the same apply state machine.
+  `Vector` remains the production default because the C4.1 Gate B was no-go.
+  Edge 16 with 256 deterministic buckets is the retained research candidate,
+  not a claim that chunked storage is currently faster or production-enabled.
+- A chunked committed snapshot, its buckets, and chunks are immutable. Delta
+  apply shallow-copies the fixed directory and clones only touched buckets and
+  chunks; unchanged chunks retain shared object identity. Revision-only delta
+  shares every chunk. Candidate construction must not allocate a complete
+  canonical cell vector.
+- Chunk coordinates use mathematical floor division for negative voxel indices.
+  A chunked canonical cursor performs a deterministic global `(x,y,z)` merge;
+  bucket order, chunk-coordinate order, and local chunk order are not protocol
+  v1 canonical order by themselves.
+- Protocol v1 `content_hash` remains flat SHA-256 over the complete canonical
+  stream for both storage modes. Chunked COW reduces candidate copying but does
+  not remove the `O(N)` receiver hash traversal; Merkle identity is a separate
+  wire/hash-version task.
 - Protocol v1 orders a chain by `(vehicle_id, mapper_session, map_epoch,
   revision)`. ROS `header.stamp`, correlation IDs, and transport arrival time
   never participate in ordering or hashes.
@@ -86,6 +122,11 @@ diagnostic; the keyframe remains an asynchronous `MapUpdate` publication.
   count, operation count, retained snapshots, peak apply memory, revision span,
   delta chain, and resync ledger are admitted against `MapUpdateLimits` before
   allocation or mutation. Rejection is atomic and does not refresh freshness.
+- Chunked peak admission includes the committed live snapshot, fixed candidate
+  directory, copied bucket entries, cloned/new chunk payload, decoded payload
+  and operations, and canonical-cursor scratch. The store exposes checked upper
+  bounds before mutation and actual owned/shared metrics after apply; sharing
+  never removes the still-live committed map from the capacity calculation.
 - `Remove` is a terminal tombstone for its admitted source chain. Malformed,
   stale, or conflicting same-chain updates cannot change `Removed` into
   `ResyncRequired`; only explicit admission of a newer source chain can build a
@@ -158,6 +199,10 @@ diagnostic; the keyframe remains an asynchronous `MapUpdate` publication.
 | Same identity/revision with a different update hash | Return `RejectedConflict`, retain the last map, require resync unless already removed |
 | Delta base is stale/future or base hash differs | Reject atomically, retain the last valid revision, require resync unless already removed |
 | Unknown protocol, encoding, hash, kind, operation, cell, or resync-reason enum | Reject before mutation; an invalid resync reason consumes no ledger entry |
+| Unknown `CellStorageMode`, zero chunk edge, or zero bucket count | Throw `std::invalid_argument` during store/applier construction before any source is admitted |
+| Negative voxel index lies on or beside a chunk boundary | Use floor division and produce a local coordinate in `[0, chunk_edge)`; never use C++ truncation toward zero |
+| Chunked estimate or apply sees unsorted/duplicate/invalid operations or checked-size overflow | Return a failed `CellStoreResult`; keep the committed snapshot and sharing identities unchanged |
+| Candidate count/hash/resource check fails after chunk construction | Discard the candidate atomically; retain the last legal revision, cells, hash, and freshness |
 | Declared count/bytes disagree with payload or exceed a configured limit | Reject before decode allocation or candidate-state mutation |
 | Shared snapshot passed to `prepare()` is null | Return `RejectedInvalidSnapshot`; do not create an update or change the baseline |
 | C2 receipt is superseded | Fall forward to the current exact transaction or discard; never combine old metadata with current cells |
@@ -185,6 +230,12 @@ diagnostic; the keyframe remains an asynchronous `MapUpdate` publication.
   refer to the same object.
 - Base: delta production is disabled. The same envelope, resource admission,
   atomic keyframe replacement, and resync path remain valid.
+- Base: `MapUpdateApplier(limits)` uses `Vector`; callers opt into chunked
+  storage only through an explicit `CellStorageConfig` for conformance or
+  profiling.
+- Good: a chunked delta changes two chunks, preserves the pointer identity of
+  every untouched chunk, hashes the cursor stream to the same v1 digest as a
+  vector applier, and commits only after all checks pass.
 - Good: replay runs once, caches the final MarkerArrays, and republishes only
   those arrays at 1 Hz; an RViz display toggled back on recovers within one
   period without changing the oracle diagnostic.
@@ -203,6 +254,9 @@ diagnostic; the keyframe remains an asynchronous `MapUpdate` publication.
   periodically republishing production `MapUpdate` messages to refresh RViz.
 - Bad: retaining every replay snapshot for a visual storyboard, or hand-coding
   gap/epoch state transitions in the ROS visualization node.
+- Bad: iterating buckets directly as canonical order, or calling
+  `materialize()` in every callback and retaining that vector beside the
+  authoritative store.
 
 ## 6. Tests Required
 
@@ -214,6 +268,15 @@ diagnostic; the keyframe remains an asynchronous `MapUpdate` publication.
   duplicate, stale, gap, hash conflict, source admission, tombstone, unknown
   enums, all resource limits, stale publish commit, null shared input, shared
   target/baseline object identity, and bounded resync FIFO.
+- Storage tests cover negative floor division, chunk boundaries, invalid
+  layouts, immutable untouched-chunk identity, touched bucket/chunk accounting,
+  cursor global order, flat-hash golden equivalence, and checked peak-admission
+  bounds. Vector/chunked conformance covers every `ApplyUpdateStatus` and every
+  three-dimensional replay checkpoint.
+- Layout estimator tests compare predicted metrics with a real
+  `CellSnapshotStore::apply()` for every row. A storage A/B uses one
+  RelWithDebInfo receiver/runner identity and keeps flat SHA-256, wire input,
+  workload, and sampling rules fixed.
 - Backend conformance tests materialize the same exact C2 transaction through
   both registered local-map backends and assert identical canonical snapshots.
 - Async producer tests assert one pending/one in-flight behavior, latest-wins
@@ -283,4 +346,28 @@ timer = create_wall_timer(period, [this] { publish_cached_marker_arrays(); });
 if (state_ != ReceiverState::Removed && require_resync) {
     state_ = ReceiverState::ResyncRequired;
 }
+```
+
+Wrong:
+
+```cpp
+// Recreates and retains a second complete map in a hot consumer.
+cached_cells_ = reconstructed.cells.materialize();
+for (const auto & bucket : chunked_snapshot.buckets) {
+    hash_bucket_order(bucket); // Bucket order is not canonical v1 order.
+}
+```
+
+Correct:
+
+```cpp
+auto cursor = reconstructed.cells.cursor();
+while (!cursor.done()) {
+    consume_canonical_cell(cursor.value());
+    cursor.advance();
+}
+
+CellStorageConfig research_storage{
+    CellStorageMode::Chunked, 16U, 256U};
+MapUpdateApplier research_applier(limits, research_storage);
 ```

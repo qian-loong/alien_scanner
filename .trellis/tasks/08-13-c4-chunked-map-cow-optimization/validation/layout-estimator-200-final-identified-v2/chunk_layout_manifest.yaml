@@ -1,0 +1,30 @@
+schema: alien-scanner/chunk-layout-estimator/v1
+bucket_count: 256
+sequence_count: 200
+git_commit: d0403184b1f66d621b6951b3ce2980f6ef3aeebd
+git_tree_state: dirty
+executable_sha256: 6bbf9299decb95141f8cdb63643d00a2bec2bad8cdfa722bdcacb9a47539b3fc
+abi_sizes_bytes:
+  canonical_cell: 32
+  chunk_coordinate: 24
+  shared_pointer: 16
+  cell_vector: 24
+candidate_edges: [8, 16, 32]
+selected_edge: 16
+actual_metric_conformance: passed
+selection_rule: representative 3D copied_cells P95 improves >=20%; replay and artificial metadata P95 do not worsen >20%; otherwise 16
+candidate_summary:
+  - edge: 8
+    replay_copied_cells_p95: 3236
+    replay_metadata_bytes_p95: 15328
+    worst_case_metadata_bytes_p95: 57344
+  - edge: 16
+    replay_copied_cells_p95: 7326
+    replay_metadata_bytes_p95: 5760
+    worst_case_metadata_bytes_p95: 57344
+  - edge: 32
+    replay_copied_cells_p95: 13110
+    replay_metadata_bytes_p95: 4928
+    worst_case_metadata_bytes_p95: 57344
+row_count: 615
+input_workloads: [c4-1d-bounded, c4-1d-expanding, production-3d-replay, artificial-spread-worst-case]

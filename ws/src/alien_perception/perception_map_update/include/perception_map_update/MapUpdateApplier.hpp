@@ -1,6 +1,7 @@
 #ifndef PERCEPTION_MAP_UPDATE_MAP_UPDATE_APPLIER_HPP
 #define PERCEPTION_MAP_UPDATE_MAP_UPDATE_APPLIER_HPP
 
+#include "perception_map_update/CellSnapshotStore.hpp"
 #include "perception_map_update/MapUpdateLimits.hpp"
 #include "perception_map_update/MapUpdateTypes.hpp"
 
@@ -37,18 +38,27 @@ namespace PerceptionMapUpdate {
         std::string diagnostic;
     };
 
+    struct ApplyUpdateTiming {
+        std::uint64_t payload_decode_duration_ns = 0U;
+        std::uint64_t candidate_build_duration_ns = 0U;
+        std::uint64_t canonical_hash_duration_ns = 0U;
+        std::uint64_t commit_duration_ns = 0U;
+    };
+
     struct ReconstructedMap {
         SourceIdentity              source;
         MapGeometry                geometry;
         std::uint64_t              revision = 0U;
         Hash256                    content_hash {};
-        std::vector<CanonicalCell> cells;
+        CanonicalCellView          cells;
     };
 
     class MapUpdateApplier
     {
     public:
-        explicit MapUpdateApplier(MapUpdateLimits limits = {});
+        explicit MapUpdateApplier(
+                MapUpdateLimits limits = {},
+                CellStorageConfig storage = {});
 
         bool admit_source(const SourceIdentity & source);
         bool require_resync() noexcept;
@@ -57,6 +67,9 @@ namespace PerceptionMapUpdate {
         ReceiverState state() const noexcept;
         const std::optional<SourceIdentity> & expected_source() const noexcept;
         const std::optional<ReconstructedMap> & reconstructed_map() const noexcept;
+        const CellStorageMetrics & storage_metrics() const noexcept;
+        const ApplyUpdateTiming & last_apply_timing() const noexcept;
+        const void * chunk_identity(const VoxelIndex & index) const noexcept;
 
     private:
         ValidationResult validate_envelope(const MapUpdate & update) const;
@@ -74,6 +87,8 @@ namespace PerceptionMapUpdate {
         ReceiverState state_ = ReceiverState::Empty;
         std::optional<SourceIdentity> expected_source_;
         std::optional<ReconstructedMap> reconstructed_map_;
+        CellSnapshotStore cell_store_;
+        ApplyUpdateTiming last_apply_timing_;
         std::optional<Hash256> last_occupancy_update_hash_;
         std::vector<SourceIdentity> retired_sources_;
     };

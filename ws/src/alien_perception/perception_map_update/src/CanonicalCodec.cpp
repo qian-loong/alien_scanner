@@ -125,6 +125,34 @@ namespace PerceptionMapUpdate {
             return {true, {}};
         }
 
+        template<typename ForEach>
+        ValidationResult validate_cell_sequence(
+                std::size_t cell_count,
+                const MapUpdateLimits & limits,
+                const ForEach & for_each)
+        {
+            if(cell_count > limits.max_known_cells) {
+                return {false, "known cell count exceeds configured limit"};
+            }
+            std::optional<VoxelIndex> previous;
+            ValidationResult result {true, {}};
+            for_each([&](const CanonicalCell & cell) {
+                if(!result) {
+                    return;
+                }
+                if(cell.state != CellState::Free && cell.state != CellState::Occupied) {
+                    result = {false, "canonical cell has invalid state"};
+                    return;
+                }
+                if(previous.has_value() && !(previous.value() < cell.index)) {
+                    result = {false, "canonical cells are not strictly ordered"};
+                    return;
+                }
+                previous = cell.index;
+            });
+            return result;
+        }
+
         class Reader
         {
         public:
@@ -310,19 +338,24 @@ namespace PerceptionMapUpdate {
             const std::vector<CanonicalCell> & cells,
             const MapUpdateLimits & limits)
     {
-        if(cells.size() > limits.max_known_cells) {
-            return {false, "known cell count exceeds configured limit"};
-        }
-        for(std::size_t index = 0U; index < cells.size(); ++index) {
-            if(cells[index].state != CellState::Free
-               && cells[index].state != CellState::Occupied) {
-                return {false, "canonical cell has invalid state"};
-            }
-            if(index > 0U && !(cells[index - 1U].index < cells[index].index)) {
-                return {false, "canonical cells are not strictly ordered"};
-            }
-        }
-        return {true, {}};
+        return validate_cell_sequence(
+                cells.size(),
+                limits,
+                [&cells](const auto & visitor) {
+                    for(const auto & cell : cells) {
+                        visitor(cell);
+                    }
+                });
+    }
+
+    ValidationResult CanonicalCodec::validate_cells(
+            const CanonicalCellView & cells,
+            const MapUpdateLimits & limits)
+    {
+        return validate_cell_sequence(
+                cells.size(),
+                limits,
+                [&cells](const auto & visitor) { cells.for_each(visitor); });
     }
 
     ValidationResult CanonicalCodec::validate_operations(

@@ -3,7 +3,8 @@
 > 状态：父任务持续跟踪中。Phase 1 规划已经完成并通过评审；C1/C2 已完成
 > 并归档，C3 实现、本机质量门、冻结版本性能/内存专项和确定性 exact-revision replay/oracle 已完成。
 > 历史 Phase 3 bag 资产不可用；shared-view alignment 消费证据仍保持开放。
-> 下一关键路径为 C4 通信数据面。本文维护
+> C4 通信数据面及其质量门已完成；C4.1 分块与 COW 评估也已完成，Gate B 为 no-go，
+> 生产默认保持 Vector。当前关键路径为 C5 拓扑与角色。本文维护
 > 后续子任务顺序、验证门和回滚边界；Git 提交仍需用户明确授权。
 
 ## 1. 父任务规划步骤
@@ -59,8 +60,9 @@
 | C2 本机观测消费与局部地图 | 已完成 | 单一权威本机地图、pose/health fail-closed、revision-locked view 已归档 |
 | C1/C2 性能与内存复测 | 已完成 | 真实链路基线、sanitizer 路径覆盖和 30 分钟周期回放已归档 |
 | C3 地图状态与增量更新 | 本机验收完成 | snapshot/keyframe/delta、原子 apply、乱序拒绝、resync、确定性 exact-revision replay/oracle 和冻结版本性能/内存专项已完成；shared-view alignment 消费证据保持开放 |
-| C4 通信数据面 | 下一步 | 以 C3 `MapUpdate` 和 resync intent/correlation 为稳定输入，独立规划 routed envelope、队列、背压与链路恢复 |
-| C5-C8 | 待 C4 稳定 | 拓扑角色、多 Region、执行恢复和总集成按依赖推进 |
+| C4 通信数据面 | 已完成 | routed envelope、admission/resync、故障注入、信任拒绝、可视化与性能/内存质量门已归档 |
+| C4.1 接收地图分块与 COW | 已完成（no-go） | edge 16 为三档折中研究候选；R5 与短 A/B 未过门，默认仍为 Vector，保留 storage-independent view 与可选 COW 实现 |
+| C5-C8 | 下一步为 C5 | 拓扑角色、多 Region、执行恢复和总集成按依赖推进；C5 只依赖 canonical view，不绑定 vector/chunk 内部布局 |
 | C9a/C9b | 后续扩展 | HA 扩展不阻塞 C1-C8 核心路径 |
 
 ## 3. 后续子任务顺序
@@ -199,8 +201,9 @@
 
 ## 6. 当前执行边界
 
-- C3 语义和本机质量门已经稳定；下一步可独立规划 C4，但不得把 C4 通信
-  数据面实现回填进 C3。
+- C3/C4 语义和质量门已经稳定；C4.1 已完成且未切换生产默认。C5 必须消费
+  storage-independent canonical view，不得依赖 vector/chunk 内部布局，也不得借 C5
+  修改 C3/C4 wire、hash、revision、resync 或 trust 契约。
 - 历史 Phase 3 bag 资产不可用，但当前确定性 C2 exact-revision replay/oracle 已完成
   C3 功能验收；shared-view alignment 消费证据由具备聚合边界的后续任务验收。
 - 只按依赖创建近期子任务，不批量创建 C5-C9 空目录。

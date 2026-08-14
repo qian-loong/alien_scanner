@@ -38,7 +38,9 @@ C4 资源测量入口（仅 `BUILD_TESTING`）：
 
 ```text
 run_c4_resource_profile.py --source <elf> --receiver <elf>
-  [--workload-mode bounded|expanding|keyframe-replacement] ...
+  [--workload-mode bounded|expanding|keyframe-replacement]
+  [--storage-mode vector|chunked] [--chunk-edge 8|16|32]
+  [--chunk-bucket-count <positive-int>] ...
 run_c4_resource_matrix.py --runner <script> --source <elf> --receiver <elf>
   --output-dir <new-dir> --workspace-root <repo> --image-id sha256:<64-hex>
   [--scenario <name>]... [--formal]
@@ -79,10 +81,11 @@ run_c4_resource_matrix.py --runner <script> --source <elf> --receiver <elf>
 - profile source/receiver、runner 和 smoke target 只能位于 `BUILD_TESTING`。正式 bounded
   矩阵固定为每场景 3 个独立、至少 300 秒的 plain receiver 样本；每轮必须记录唯一
   PID/starttime、统一 ELF SHA-256/build-id、完整业务守恒和每秒角色/内存采样。
-- 当前 vector applier 对含 `N` 个 cell 的完整地图应用 `K` 个 delta operation 时，成本边界
-  为时间 `O(N + K)`、瞬时旧/候选地图约 `O(2N + K)`，稳态每来源至少 `O(N)`。C4 基线已
-  证明小 delta 成本随 `N` 明显增长；在 C5 正式聚合器绑定该表示前，必须通过独立任务评估
-  分块不可变快照与 COW，并保持 wire、canonical hash、revision 和原子 apply 语义不变。
+- C4.1 已在不改变 wire、flat canonical SHA-256、revision 和原子 apply 的前提下评估
+  `8/16/32` 分块不可变快照与 COW。edge 16 是三档中的折中研究候选，但成熟三维 replay
+  的 copied-cell P95 未达到 `<5%`，短 A/B 的端到端 apply/PSS 也未优于 vector，因此 Gate B
+  为 no-go，生产默认保持 `Vector`。C5 消费 `CanonicalCellView` 的有序 cursor，不得重新
+  绑定 `std::vector<CanonicalCell>` 所有权或依赖 chunk/bucket 内部布局。
 
 ## 4. Validation & Error Matrix
 
@@ -103,6 +106,8 @@ run_c4_resource_matrix.py --runner <script> --source <elf> --receiver <elf>
 | formal run 少于 300 秒、不是 bounded/plain，或 matrix 不是恰好三轮 | 在启动 ROS 进程前拒绝 |
 | matrix 混用 ELF/build-id、重复 PID/starttime、业务不守恒或采样不完整 | 保留原始目录并标记无效，不纳入基线 |
 | 固定地图下任一正式样本 PSS/USS 斜率达到 `1024 KiB/min` | 不得下“无持续增长”结论，先定位无界状态 |
+| storage A/B 混用 receiver/runner ELF、wire/hash 版本、workload 或采样窗口 | 证据不可归因，标记无效并重跑同身份对照 |
+| edge 16 被配置为 chunked，但 Gate B 没有新的通过证据 | 允许作为测试/研究配置；不得据此修改生产默认 |
 
 ## 5. Good / Base / Bad Cases
 
@@ -138,6 +143,9 @@ run_c4_resource_matrix.py --runner <script> --source <elf> --receiver <elf>
   完成约 8 m 路径、B 完成约 3.5 m 路径，accepted OctoMap 非空且进程正常退出。
 - C4 resource smoke：bounded、expanding、keyframe replacement 都必须产生有效报告并断言
   source/revision/hash/cell/bytes 守恒、无 rejection/duplicate/endpoint anomaly、进程正常退出。
+- C4.1 storage conformance：vector 与 `8/16/32` chunked 短 A/B 使用相同 receiver/runner
+  身份和 flat SHA-256；断言每组消息、revision、hash、cell count 守恒，并把
+  candidate/hash/commit、copied cells/bucket entries 与 PSS/USS 分开报告。
 - 生产隔离：用全新 `BUILD_TESTING=OFF` CMake 目录构建，并断言 target 列表中不存在
   `c4_resource_profile_*`；formal runner/matrix 的窗口和轮数错误必须在启动进程前拒绝。
 - 正式矩阵复核：从 raw `analysis-summary.json` 重算 18 个样本的身份唯一性、ELF 一致性、

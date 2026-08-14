@@ -1,6 +1,7 @@
 #ifndef PERCEPTION_MAP_UPDATE_CANONICAL_CODEC_HPP
 #define PERCEPTION_MAP_UPDATE_CANONICAL_CODEC_HPP
 
+#include "perception_map_update/CellSnapshotStore.hpp"
 #include "perception_map_update/MapUpdateLimits.hpp"
 #include "perception_map_update/MapUpdateTypes.hpp"
 
@@ -46,6 +47,9 @@ namespace PerceptionMapUpdate {
                 const MapUpdateLimits & limits);
         static ValidationResult validate_cells(
                 const std::vector<CanonicalCell> & cells,
+                const MapUpdateLimits & limits);
+        static ValidationResult validate_cells(
+                const CanonicalCellView & cells,
                 const MapUpdateLimits & limits);
         static ValidationResult validate_operations(
                 const std::vector<DeltaOperation> & operations,

@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -44,9 +45,16 @@ namespace PerceptionProfiling {
     };
 
     struct MapUpdateReplayOptions {
+        using SnapshotTransitionObserver = std::function<void(
+                const PerceptionMapUpdate::CanonicalSnapshot * base,
+                const PerceptionMapUpdate::CanonicalSnapshot & target,
+                const std::vector<PerceptionMapUpdate::DeltaOperation> & operations,
+                const PerceptionMapUpdate::MapUpdate & update)>;
+
         std::uint64_t sequence_count = 60U;
         std::size_t max_difference_samples = 4096U;
         PerceptionMapUpdate::MapUpdateLimits limits;
+        SnapshotTransitionObserver snapshot_transition_observer;
     };
 
     struct MapUpdateReplayRun {

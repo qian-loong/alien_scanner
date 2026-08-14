@@ -24,7 +24,11 @@ namespace PerceptionMapUpdate {
         }
         try {
             octomap::OcTree tree(map.geometry.resolution_m);
-            for(const auto & cell : map.cells) {
+            bool cells_valid = true;
+            map.cells.for_each([&](const CanonicalCell & cell) {
+                if(!cells_valid) {
+                    return;
+                }
                 const double x = map.geometry.lattice_origin.x
                                  + (static_cast<double>(cell.index.x) + 0.5)
                                            * map.geometry.resolution_m;
@@ -36,7 +40,8 @@ namespace PerceptionMapUpdate {
                                            * map.geometry.resolution_m;
                 if(!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
                     diagnostic = "reconstructed voxel center is not finite";
-                    return false;
+                    cells_valid = false;
+                    return;
                 }
                 const octomap::point3d point(
                         static_cast<float>(x),
@@ -45,10 +50,14 @@ namespace PerceptionMapUpdate {
                 octomap::OcTreeKey key;
                 if(!tree.coordToKeyChecked(point, key)) {
                     diagnostic = "reconstructed voxel is outside OctoMap key range";
-                    return false;
+                    cells_valid = false;
+                    return;
                 }
                 tree.updateNode(
                         key, cell.state == CellState::Occupied, true);
+            });
+            if(!cells_valid) {
+                return false;
             }
             tree.updateInnerOccupancy();
             if(!octomap_msgs::binaryMapToMsg(tree, message)) {

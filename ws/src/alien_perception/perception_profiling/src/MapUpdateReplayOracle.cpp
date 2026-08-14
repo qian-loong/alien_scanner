@@ -4,6 +4,7 @@
 
 #include "perception_local_map/CanonicalSnapshotAdapter.hpp"
 #include "perception_map_update/MapUpdateProducer.hpp"
+#include "perception_map_update/SnapshotDiffer.hpp"
 
 #include <memory>
 #include <sstream>
@@ -148,6 +149,16 @@ namespace PerceptionProfiling {
 
             auto target = std::make_shared<const PerceptionMapUpdate::CanonicalSnapshot>(
                     std::move(*materialized.snapshot));
+            std::vector<PerceptionMapUpdate::DeltaOperation> transition_operations;
+            if(options.snapshot_transition_observer && final_oracle) {
+                const auto diff = PerceptionMapUpdate::SnapshotDiffer::compare(
+                        *final_oracle, *target, options.limits);
+                if(!diff.success) {
+                    throw std::runtime_error(
+                            "replay transition diff failed: " + diff.diagnostic);
+                }
+                transition_operations = diff.operations;
+            }
             auto prepared = producer.prepare(target);
             if(!prepared.update.has_value()
                || (prepared.status != PerceptionMapUpdate::ProduceStatus::ProducedKeyframe
@@ -155,6 +166,13 @@ namespace PerceptionProfiling {
                               != PerceptionMapUpdate::ProduceStatus::ProducedDelta)) {
                 throw std::runtime_error(
                         "replay producer rejected exact snapshot: " + prepared.diagnostic);
+            }
+            if(options.snapshot_transition_observer) {
+                options.snapshot_transition_observer(
+                        final_oracle.get(),
+                        *target,
+                        transition_operations,
+                        *prepared.update);
             }
             if(!applier.expected_source().has_value()
                && !applier.admit_source(target->source)) {
@@ -255,13 +273,13 @@ namespace PerceptionProfiling {
         const bool hash_matches = oracle.content_hash == reconstructed.content_hash;
 
         std::size_t oracle_index = 0U;
-        std::size_t reconstructed_index = 0U;
+        auto reconstructed_cursor = reconstructed.cells.cursor();
         while(oracle_index < oracle.cells.size()
-              || reconstructed_index < reconstructed.cells.size()) {
-            if(reconstructed_index == reconstructed.cells.size()
+              || !reconstructed_cursor.done()) {
+            if(reconstructed_cursor.done()
                || (oracle_index < oracle.cells.size()
-                   && oracle.cells[oracle_index].index
-                              < reconstructed.cells[reconstructed_index].index)) {
+                    && oracle.cells[oracle_index].index
+                               < reconstructed_cursor.value().index)) {
                 ++comparison.missing_cell_count;
                 if(comparison.missing_cell_samples.size() < max_difference_samples) {
                     comparison.missing_cell_samples.push_back(oracle.cells[oracle_index]);
@@ -270,18 +288,18 @@ namespace PerceptionProfiling {
                 continue;
             }
             if(oracle_index == oracle.cells.size()
-               || reconstructed.cells[reconstructed_index].index
+               || reconstructed_cursor.value().index
                           < oracle.cells[oracle_index].index) {
                 ++comparison.unexpected_cell_count;
                 if(comparison.unexpected_cell_samples.size() < max_difference_samples) {
                     comparison.unexpected_cell_samples.push_back(
-                            reconstructed.cells[reconstructed_index]);
+                            reconstructed_cursor.value());
                 }
-                ++reconstructed_index;
+                reconstructed_cursor.advance();
                 continue;
             }
             if(oracle.cells[oracle_index].state
-               != reconstructed.cells[reconstructed_index].state) {
+               != reconstructed_cursor.value().state) {
                 ++comparison.state_mismatch_count;
                 if(comparison.state_mismatch_samples.size() < max_difference_samples) {
                     comparison.state_mismatch_samples.push_back(
@@ -289,7 +307,7 @@ namespace PerceptionProfiling {
                 }
             }
             ++oracle_index;
-            ++reconstructed_index;
+            reconstructed_cursor.advance();
         }
 
         comparison.diagnostic = comparison_diagnostic(

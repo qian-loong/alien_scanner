@@ -52,6 +52,7 @@ set(PERCEPTION_PROFILING_CORE_HEADERS
   include/perception_profiling/MapUpdateReplayOracle.hpp
   include/perception_profiling/MapUpdateAcceptanceScenarios.hpp
   include/perception_profiling/ProfileDataSink.hpp
+  include/perception_profiling/ChunkLayoutEstimator.hpp
 )
 
 add_library(perception_profiling_core STATIC
@@ -61,6 +62,7 @@ add_library(perception_profiling_core STATIC
   src/MapUpdateReplayOracle.cpp
   src/MapUpdateAcceptanceScenarios.cpp
   src/ProfileDataSink.cpp
+  src/ChunkLayoutEstimator.cpp
 )
 target_sources(perception_profiling_core PRIVATE ${PERCEPTION_PROFILING_CORE_HEADERS})
 add_library(${PROJECT_NAME}::core ALIAS perception_profiling_core)
@@ -113,6 +115,10 @@ add_executable(perception_profile_oracle src/ProfileOracleMain.cpp)
 target_link_libraries(perception_profile_oracle
   perception_profiling_core yaml-cpp::yaml-cpp)
 
+add_executable(perception_chunk_layout_estimator src/ChunkLayoutEstimatorMain.cpp)
+target_link_libraries(perception_chunk_layout_estimator
+  perception_profiling_core yaml-cpp::yaml-cpp)
+
 add_executable(
   map_update_replay_visualization_node
   src/MapUpdateReplayVisualizationNode.cpp
@@ -137,6 +143,7 @@ install(TARGETS
   perception_profile_fixture
   perception_profile_sink
   perception_profile_oracle
+  perception_chunk_layout_estimator
   map_update_replay_visualization_node
   DESTINATION lib/${PROJECT_NAME}
 )

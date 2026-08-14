@@ -1,6 +1,7 @@
 #ifndef PERCEPTION_MAP_UPDATE_CONTENT_HASHER_HPP
 #define PERCEPTION_MAP_UPDATE_CONTENT_HASHER_HPP
 
+#include "perception_map_update/CellSnapshotStore.hpp"
 #include "perception_map_update/MapUpdateTypes.hpp"
 
 namespace PerceptionMapUpdate {
@@ -13,6 +14,10 @@ namespace PerceptionMapUpdate {
                 const SourceIdentity & source,
                 const Hash256 & geometry_fingerprint,
                 const std::vector<CanonicalCell> & cells);
+        static Hash256 content_hash(
+                const SourceIdentity & source,
+                const Hash256 & geometry_fingerprint,
+                const CanonicalCellView & cells);
         static Hash256 update_hash(const MapUpdate & update);
     };
 

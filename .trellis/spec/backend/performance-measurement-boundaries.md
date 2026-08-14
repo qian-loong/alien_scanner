@@ -137,3 +137,86 @@ $raw = @(git ls-files --others --exclude-standard -- $sourceRoot)
 # 从目标根独立复算三项指标后，只暂存 README、摘要和 relocation provenance。
 git ls-files -- $archiveRawRoot  # 必须为空
 ```
+
+## 存储布局 A/B 归因契约
+
+### 1. 适用范围
+
+当接收端在不改变 wire/content identity 的前提下比较 vector、chunked COW 或其他地图
+存储布局时，使用本节。该对照只能衡量存储复制、索引、分配和遍历方式，不能把未来
+Merkle/hash 改造的收益提前归入布局优化。
+
+### 2. 命令与身份签名
+
+```text
+run_c4_resource_profile.py --source <absolute-elf> --receiver <absolute-elf>
+  --storage-mode vector|chunked --chunk-edge 8|16|32
+  --chunk-bucket-count <positive-int> --output-dir <new-dir> ...
+perception_chunk_layout_estimator <sequence-count> <new-output-dir>
+```
+
+报告至少保存 receiver、source、runner 和 estimator 的 SHA-256，以及 build type、git
+revision/tree state、workload 参数、ROS domain、PID/starttime 和每个摘要文件的 SHA-256。
+
+### 3. 契约
+
+- 归因基线固定为 `vector + flat SHA-256`，候选为
+  `chunked COW + 同一 flat SHA-256`；两组必须使用同一 receiver/runner 二进制身份、
+  wire 输入、构建类型、地图规模、operation 数、频率、warmup 和采样窗口。
+- 阶段指标至少拆分 payload decode、candidate build、canonical hash、commit 和 callback；
+  同时记录 copied cells、touched/shared chunks、copied bucket entries、candidate owned bytes、
+  PSS/USS 与业务守恒。只报总 apply 不能证明 COW 优化了哪一阶段。
+- edge 选择先用代表性三维 replay 的复制量与元数据，再看人工分散最坏场景，最后看一维
+  兼容 workload。一维 `(x,0,0)` 连续更新会系统性偏向较大块，不能独立决定边长。
+- 估算器必须让每行 workload 通过真实 `CellSnapshotStore::apply()` 做 actual-metric
+  conformance；预测值不一致时不得继续用该报告选型。
+- copied cells、candidate bytes、业务计数和页面内存用于确定性/容量结论；跨 run CPU 与
+  延迟绝对值继续遵守本文件约 +/-30% 噪声边界。短 A/B 是筛选证据，不替代正式矩阵。
+- 决策门失败时保留候选实现和原始证据，但生产默认不切换，也不得把停止投入的正式
+  矩阵、Heaptrack、Sanitizer 或 Memcheck 写成“通过”。
+
+### 4. 验证与错误矩阵
+
+| 条件 | 必须结果 |
+| --- | --- |
+| 任一组 receiver/runner SHA、build type、wire/hash 或 workload 不同 | 停止比较，证据不可归因 |
+| 报告 `valid=false`、消息/revision/hash/cell 不守恒或存在 reject/backlog | 不纳入 A/B |
+| estimator 预测指标与实际 store apply 不一致 | 修复估算/观测定义并重新生成全部候选 |
+| 只有一维 workload 支持某个 edge | 不能选型；补三维 replay 与人工分散场景 |
+| flat hash 仍占主要时间且总 apply 未改善 | 如实判为布局端到端 no-go；Merkle 另建任务 |
+| Gate 失败后未运行正式内存工具 | 明确标记未执行，不得标记通过或无泄漏 |
+
+### 5. Good / Base / Bad
+
+- Good：同一二进制连续跑 vector 与 `8/16/32`，逐组校验守恒，报告候选构建下降但 flat
+  hash 上升，并据既定门给出 no-go。
+- Base：短 A/B 只用于筛掉无收益候选；只有通过筛选后才投入 3 x 300 秒正式矩阵。
+- Bad：拿历史 vector 数字与新 chunked 构建比较，或把 edge 8 的最低 copied cells 单独
+  写成“最优”而忽略其 bucket/chunk 元数据。
+
+### 6. 必需检查
+
+- 对布局 estimator 的负坐标、块边界、revision-only、三维 replay 和分散最坏场景做
+  确定性测试，并逐行对比实际 store metrics。
+- 对所有 storage 运行相同业务守恒检查，并验证 `analysis-summary.json` 的身份与 SHA。
+- 从 raw 重新计算阶段 mean、copied cells/delta、candidate bytes 和 PSS/USS；报告不得只
+  复制终端文本。
+- Gate 结论同时列出通过项、失败项和未执行项，生产默认只在明确通过证据后修改。
+
+### 7. Wrong vs Correct
+
+Wrong：
+
+```text
+历史 vector + 新 chunked/Merkle -> “COW 节省了全部时间”
+edge 8 copied cells 最少 -> “edge 8 最优”
+未运行 ASan/Memcheck -> “内存门通过”
+```
+
+Correct：
+
+```text
+同一 build：vector + flat SHA-256 -> chunked + flat SHA-256
+复制量 + 元数据 + 三维/最坏场景 -> edge 折中候选
+Gate no-go -> 默认仍为 Vector，正式工具明确记为未执行
+```

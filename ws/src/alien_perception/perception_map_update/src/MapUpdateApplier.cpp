@@ -4,6 +4,7 @@
 #include "perception_map_update/ContentHasher.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <limits>
 #include <new>
 #include <utility>
@@ -11,6 +12,16 @@
 namespace PerceptionMapUpdate {
 
     namespace {
+
+        using SteadyClock = std::chrono::steady_clock;
+
+        std::uint64_t elapsed_ns(SteadyClock::time_point start) noexcept
+        {
+            return static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            SteadyClock::now() - start)
+                            .count());
+        }
 
         bool checked_add(std::size_t left, std::size_t right, std::size_t & result)
         {
@@ -31,81 +42,30 @@ namespace PerceptionMapUpdate {
         }
 
         bool estimate_peak_bytes(
-                std::size_t current_cells,
-                std::size_t candidate_cells,
+                std::size_t committed_live_bytes,
+                const CellStorageMetrics & candidate,
                 std::size_t operation_count,
                 std::size_t payload_bytes,
                 std::size_t & result)
         {
-            std::size_t current = 0U;
-            std::size_t candidate = 0U;
             std::size_t operations = 0U;
             std::size_t total = 0U;
-            return checked_bytes(current_cells, sizeof(CanonicalCell), current)
-                   && checked_bytes(candidate_cells, sizeof(CanonicalCell), candidate)
-                   && checked_bytes(operation_count, sizeof(DeltaOperation), operations)
-                   && checked_add(current, candidate, total)
+            return checked_bytes(operation_count, sizeof(DeltaOperation), operations)
+                   && checked_add(committed_live_bytes, candidate.candidate_owned_bytes, total)
                    && checked_add(total, operations, total)
-                   && checked_add(total, payload_bytes, result);
-        }
-
-        CellState state_for(DeltaOperationKind kind)
-        {
-            return kind == DeltaOperationKind::UpsertFree ? CellState::Free
-                                                          : CellState::Occupied;
-        }
-
-        struct DeltaMergePlan {
-            bool valid = false;
-            std::size_t candidate_count = 0U;
-            std::string diagnostic;
-        };
-
-        DeltaMergePlan plan_delta_merge(
-                const std::vector<CanonicalCell> & current,
-                const std::vector<DeltaOperation> & operations)
-        {
-            std::size_t additions = 0U;
-            std::size_t removals = 0U;
-            std::size_t cell_index = 0U;
-            std::size_t operation_index = 0U;
-            while(cell_index < current.size() || operation_index < operations.size()) {
-                if(operation_index == operations.size()) {
-                    break;
-                }
-                const auto & operation = operations[operation_index];
-                if(cell_index == current.size()
-                   || operation.index < current[cell_index].index) {
-                    if(operation.kind == DeltaOperationKind::RemoveToUnknown) {
-                        return {false, 0U, "delta removes an unknown cell"};
-                    }
-                    ++additions;
-                    ++operation_index;
-                    continue;
-                }
-                const auto & cell = current[cell_index];
-                if(cell.index < operation.index) {
-                    ++cell_index;
-                    continue;
-                }
-                if(operation.kind == DeltaOperationKind::RemoveToUnknown) {
-                    ++removals;
-                } else if(state_for(operation.kind) == cell.state) {
-                    return {false, 0U, "delta contains a redundant upsert"};
-                }
-                ++cell_index;
-                ++operation_index;
-            }
-            std::size_t expanded = 0U;
-            if(!checked_add(current.size(), additions, expanded) || removals > expanded) {
-                return {false, 0U, "delta result cell count overflows size_t"};
-            }
-            return {true, expanded - removals, {}};
+                   && checked_add(total, payload_bytes, total)
+                   && checked_add(total, candidate.traversal_scratch_bytes, result);
         }
 
     }// namespace
 
-    MapUpdateApplier::MapUpdateApplier(MapUpdateLimits limits) : limits_(std::move(limits)) {}
+    MapUpdateApplier::MapUpdateApplier(
+            MapUpdateLimits limits,
+            CellStorageConfig storage)
+        : limits_(std::move(limits))
+        , cell_store_(storage)
+    {
+    }
 
     bool MapUpdateApplier::is_retired(const SourceIdentity & source) const
     {
@@ -228,6 +188,7 @@ namespace PerceptionMapUpdate {
 
     ApplyUpdateResult MapUpdateApplier::apply(const MapUpdate & update)
     {
+        last_apply_timing_ = {};
         const auto identity = CanonicalCodec::validate_identity(update.source, limits_);
         if(!identity || !expected_source_.has_value() || update.source != *expected_source_
            || is_retired(update.source)) {
@@ -306,23 +267,9 @@ namespace PerceptionMapUpdate {
                     "keyframe declared cell count exceeds receiver limit",
                     true);
         }
-        const std::size_t current_count = reconstructed_map_.has_value()
-                                                  ? reconstructed_map_->cells.size()
-                                                  : 0U;
-        std::size_t peak = 0U;
-        if(!estimate_peak_bytes(
-                   current_count,
-                   static_cast<std::size_t>(update.known_cell_count),
-                   0U,
-                   update.payload.size(),
-                   peak)
-           || peak > limits_.max_peak_apply_bytes) {
-            return reject_for_current_chain(
-                    ApplyUpdateStatus::RejectedResourceLimit,
-                    "keyframe peak apply memory exceeds configured limit",
-                    true);
-        }
+        const auto decode_start = SteadyClock::now();
         auto decoded = CanonicalCodec::decode_keyframe_payload(update.payload, limits_);
+        last_apply_timing_.payload_decode_duration_ns = elapsed_ns(decode_start);
         if(!decoded.success) {
             return reject_for_current_chain(
                     ApplyUpdateStatus::RejectedInvalid, decoded.diagnostic, true);
@@ -333,23 +280,70 @@ namespace PerceptionMapUpdate {
                     "keyframe cell count mismatches envelope",
                     true);
         }
+        const auto candidate_start = SteadyClock::now();
+        const auto preflight = cell_store_.estimate_replace_upper_bound(
+                decoded.cells.size());
+        std::size_t preflight_peak = 0U;
+        if(!preflight.success
+           || !estimate_peak_bytes(
+                   cell_store_.metrics().committed_live_bytes,
+                   preflight.metrics,
+                   0U,
+                   update.payload.size(),
+                   preflight_peak)
+           || preflight_peak > limits_.max_peak_apply_bytes) {
+            return reject_for_current_chain(
+                    ApplyUpdateStatus::RejectedResourceLimit,
+                    preflight.success
+                            ? "keyframe peak apply memory exceeds configured limit"
+                            : preflight.diagnostic,
+                    true);
+        }
+        CellSnapshotStore candidate_store = cell_store_;
+        const auto stored = candidate_store.replace(std::move(decoded.cells));
+        if(!stored.success) {
+            return reject_for_current_chain(
+                    ApplyUpdateStatus::RejectedResourceLimit,
+                    stored.diagnostic,
+                    true);
+        }
+        const auto candidate_cells = candidate_store.view();
+        std::size_t peak = 0U;
+        if(!estimate_peak_bytes(
+                   cell_store_.metrics().committed_live_bytes,
+                   stored.metrics,
+                   0U,
+                   update.payload.size(),
+                   peak)
+           || peak > limits_.max_peak_apply_bytes) {
+            return reject_for_current_chain(
+                    ApplyUpdateStatus::RejectedResourceLimit,
+                    "keyframe peak apply memory exceeds configured limit",
+                    true);
+        }
+        last_apply_timing_.candidate_build_duration_ns = elapsed_ns(candidate_start);
+        const auto hash_start = SteadyClock::now();
         const auto content = ContentHasher::content_hash(
-                update.source, update.geometry_fingerprint, decoded.cells);
+                update.source, update.geometry_fingerprint, candidate_cells);
+        last_apply_timing_.canonical_hash_duration_ns = elapsed_ns(hash_start);
         if(content != update.content_hash) {
             return reject_for_current_chain(
                     ApplyUpdateStatus::RejectedConflict,
                     "keyframe reconstructed content hash mismatch",
                     true);
         }
+        const auto commit_start = SteadyClock::now();
+        cell_store_ = std::move(candidate_store);
         ReconstructedMap candidate {
                 update.source,
                 update.geometry,
                 update.new_revision,
                 content,
-                std::move(decoded.cells)};
+                cell_store_.view()};
         reconstructed_map_ = std::move(candidate);
         last_occupancy_update_hash_ = update.update_hash;
         state_ = ReceiverState::Ready;
+        last_apply_timing_.commit_duration_ns = elapsed_ns(commit_start);
         return {ApplyUpdateStatus::AppliedKeyframe, true, {}};
     }
 
@@ -402,20 +396,9 @@ namespace PerceptionMapUpdate {
                     "delta declared counts exceed configured limits",
                     true);
         }
-        std::size_t minimum_peak = 0U;
-        if(!estimate_peak_bytes(
-                   current.cells.size(),
-                   0U,
-                   static_cast<std::size_t>(update.operation_count),
-                   update.payload.size(),
-                   minimum_peak)
-           || minimum_peak > limits_.max_peak_apply_bytes) {
-            return reject_for_current_chain(
-                    ApplyUpdateStatus::RejectedResourceLimit,
-                    "delta decode memory exceeds configured peak limit",
-                    true);
-        }
+        const auto decode_start = SteadyClock::now();
         const auto decoded = CanonicalCodec::decode_delta_payload(update.payload, limits_);
+        last_apply_timing_.payload_decode_duration_ns = elapsed_ns(decode_start);
         if(!decoded.success) {
             return reject_for_current_chain(
                     ApplyUpdateStatus::RejectedInvalid, decoded.diagnostic, true);
@@ -427,15 +410,36 @@ namespace PerceptionMapUpdate {
                     true);
         }
 
-        const auto plan = plan_delta_merge(current.cells, decoded.operations);
-        if(!plan.valid) {
+        const auto candidate_start = SteadyClock::now();
+        const auto preflight = cell_store_.estimate_apply_upper_bound(
+                decoded.operations);
+        std::size_t preflight_peak = 0U;
+        if(!preflight.success
+           || !estimate_peak_bytes(
+                   cell_store_.metrics().committed_live_bytes,
+                   preflight.metrics,
+                   decoded.operations.size(),
+                   update.payload.size(),
+                   preflight_peak)
+           || preflight_peak > limits_.max_peak_apply_bytes) {
             return reject_for_current_chain(
-                    ApplyUpdateStatus::RejectedInvalid,
-                    plan.diagnostic,
+                    ApplyUpdateStatus::RejectedResourceLimit,
+                    preflight.success
+                            ? "delta peak apply memory exceeds configured limit"
+                            : preflight.diagnostic,
                     true);
         }
-        if(plan.candidate_count > limits_.max_receiver_cells
-           || plan.candidate_count != update.known_cell_count) {
+
+        CellSnapshotStore candidate_store = cell_store_;
+        const auto stored = candidate_store.apply(decoded.operations);
+        if(!stored.success) {
+            return reject_for_current_chain(
+                    ApplyUpdateStatus::RejectedInvalid,
+                    stored.diagnostic,
+                    true);
+        }
+        if(candidate_store.size() > limits_.max_receiver_cells
+           || candidate_store.size() != update.known_cell_count) {
             return reject_for_current_chain(
                     ApplyUpdateStatus::RejectedResourceLimit,
                     "delta result count mismatches envelope or receiver limit",
@@ -443,8 +447,8 @@ namespace PerceptionMapUpdate {
         }
         std::size_t peak = 0U;
         if(!estimate_peak_bytes(
-                   current.cells.size(),
-                   plan.candidate_count,
+                   cell_store_.metrics().committed_live_bytes,
+                   stored.metrics,
                    decoded.operations.size(),
                    update.payload.size(),
                    peak)
@@ -455,65 +459,25 @@ namespace PerceptionMapUpdate {
                     true);
         }
 
-        std::vector<CanonicalCell> candidate;
-        try {
-            candidate.reserve(plan.candidate_count);
-        }
-        catch(const std::bad_alloc &) {
-            return reject_for_current_chain(
-                    ApplyUpdateStatus::RejectedResourceLimit,
-                    "delta candidate allocation failed",
-                    true);
-        }
-        std::size_t cell_index = 0U;
-        std::size_t operation_index = 0U;
-        while(cell_index < current.cells.size() || operation_index < decoded.operations.size()) {
-            if(operation_index == decoded.operations.size()) {
-                candidate.insert(
-                        candidate.end(), current.cells.begin() + cell_index, current.cells.end());
-                break;
-            }
-            const auto & operation = decoded.operations[operation_index];
-            if(cell_index == current.cells.size()
-               || operation.index < current.cells[cell_index].index) {
-                candidate.push_back({operation.index, state_for(operation.kind)});
-                ++operation_index;
-                continue;
-            }
-            const auto & cell = current.cells[cell_index];
-            if(cell.index < operation.index) {
-                candidate.push_back(cell);
-                ++cell_index;
-                continue;
-            }
-            if(operation.kind == DeltaOperationKind::RemoveToUnknown) {
-                ++cell_index;
-                ++operation_index;
-                continue;
-            }
-            const auto new_state = state_for(operation.kind);
-            candidate.push_back({operation.index, new_state});
-            ++cell_index;
-            ++operation_index;
-        }
-        if(candidate.size() != plan.candidate_count) {
-            return reject_for_current_chain(
-                    ApplyUpdateStatus::RejectedInvalid,
-                    "delta merge result differs from its validated plan",
-                    true);
-        }
+        const auto candidate_cells = candidate_store.view();
+        last_apply_timing_.candidate_build_duration_ns = elapsed_ns(candidate_start);
+        const auto hash_start = SteadyClock::now();
         const auto content = ContentHasher::content_hash(
-                update.source, update.geometry_fingerprint, candidate);
+                update.source, update.geometry_fingerprint, candidate_cells);
+        last_apply_timing_.canonical_hash_duration_ns = elapsed_ns(hash_start);
         if(content != update.content_hash) {
             return reject_for_current_chain(
                     ApplyUpdateStatus::RejectedConflict,
                     "delta reconstructed content hash mismatch",
                     true);
         }
+        const auto commit_start = SteadyClock::now();
+        cell_store_ = std::move(candidate_store);
         reconstructed_map_->revision = update.new_revision;
         reconstructed_map_->content_hash = content;
-        reconstructed_map_->cells.swap(candidate);
+        reconstructed_map_->cells = cell_store_.view();
         last_occupancy_update_hash_ = update.update_hash;
+        last_apply_timing_.commit_duration_ns = elapsed_ns(commit_start);
         return {ApplyUpdateStatus::AppliedDelta, true, {}};
     }
 
@@ -550,9 +514,20 @@ namespace PerceptionMapUpdate {
                     "remove tombstone fields are inconsistent",
                     reconstructed_map_.has_value());
         }
+        CellSnapshotStore candidate_store = cell_store_;
+        try {
+            candidate_store.clear();
+        }
+        catch(const std::bad_alloc &) {
+            return reject_for_current_chain(
+                    ApplyUpdateStatus::RejectedResourceLimit,
+                    "remove tombstone storage allocation failed",
+                    true);
+        }
+        cell_store_ = std::move(candidate_store);
         reconstructed_map_->revision = update.new_revision;
         reconstructed_map_->content_hash = {};
-        reconstructed_map_->cells.clear();
+        reconstructed_map_->cells = cell_store_.view();
         last_occupancy_update_hash_ = update.update_hash;
         state_ = ReceiverState::Removed;
         return {ApplyUpdateStatus::AppliedRemove, true, {}};
@@ -571,6 +546,21 @@ namespace PerceptionMapUpdate {
     const std::optional<ReconstructedMap> & MapUpdateApplier::reconstructed_map() const noexcept
     {
         return reconstructed_map_;
+    }
+
+    const CellStorageMetrics & MapUpdateApplier::storage_metrics() const noexcept
+    {
+        return cell_store_.metrics();
+    }
+
+    const ApplyUpdateTiming & MapUpdateApplier::last_apply_timing() const noexcept
+    {
+        return last_apply_timing_;
+    }
+
+    const void * MapUpdateApplier::chunk_identity(const VoxelIndex & index) const noexcept
+    {
+        return cell_store_.chunk_identity(index);
     }
 
 }// namespace PerceptionMapUpdate

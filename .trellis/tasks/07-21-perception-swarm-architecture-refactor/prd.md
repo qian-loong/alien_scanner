@@ -2,9 +2,10 @@
 
 > 状态：父任务持续跟踪中。架构规划基线已确认，C1/C2 已完成并归档；C3
 > 地图状态与增量更新的实现、本机质量门、冻结版本性能/内存专项和确定性
-> exact-revision replay/oracle 已完成。历史 Phase 3 bag 资产不可用；唯一保留的 C3 跨阶段证据缺口是
-> shared-view alignment 消费验收。下一关键路径是 C4
-> 通信数据面。本文继续定义父任务的跨模块目标、约束和最终验收标准。
+> exact-revision replay/oracle 已完成；C4 通信数据面及其性能/内存质量门也已完成。
+> C4.1 分块与 COW 评估已完成，Gate B 为 no-go，生产默认保持 Vector。历史 Phase 3
+> bag 资产不可用；唯一保留的 C3 跨阶段证据缺口是 shared-view alignment 消费验收。
+> 当前关键路径为 C5 拓扑与角色。本文继续定义父任务的跨模块目标、约束和最终验收标准。
 
 ## 1. 目标
 

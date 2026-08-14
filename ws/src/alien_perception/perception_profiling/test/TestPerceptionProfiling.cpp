@@ -1,9 +1,11 @@
 #include "perception_profiling/ProfileDataSink.hpp"
 #include "perception_profiling/ProfileMapHarness.hpp"
 #include "perception_profiling/MapUpdateAcceptanceScenarios.hpp"
+#include "perception_profiling/ChunkLayoutEstimator.hpp"
 #include "perception_profiling/MapUpdateReplayOracle.hpp"
 #include "perception_profiling/ProfileOracle.hpp"
 #include "perception_profiling/ProfileScenario.hpp"
+#include "perception_map_update/CellSnapshotStore.hpp"
 
 #include <gtest/gtest.h>
 
@@ -11,8 +13,90 @@
 #include <filesystem>
 #include <limits>
 #include <string>
+#include <vector>
 
 namespace PerceptionProfiling::Test {
+    namespace {
+
+        PerceptionMapUpdate::CanonicalCell layout_cell(
+                std::int64_t x,
+                std::int64_t y,
+                std::int64_t z,
+                PerceptionMapUpdate::CellState state =
+                        PerceptionMapUpdate::CellState::Free)
+        {
+            return {{x, y, z}, state};
+        }
+
+    }// namespace
+
+    TEST(ChunkLayoutEstimator, ComputesExactCopyAndOccupancyMetrics)
+    {
+        const std::vector<PerceptionMapUpdate::CanonicalCell> cells {
+                layout_cell(-1, 0, 0),
+                layout_cell(0, 0, 0),
+                layout_cell(1, 0, 0),
+                layout_cell(8, 0, 0),
+                layout_cell(9, 0, 0)};
+        const std::vector<PerceptionMapUpdate::DeltaOperation> operations {
+                {{-1, 0, 0}, PerceptionMapUpdate::DeltaOperationKind::RemoveToUnknown},
+                {{1, 0, 0}, PerceptionMapUpdate::DeltaOperationKind::UpsertOccupied},
+                {{16, 0, 0}, PerceptionMapUpdate::DeltaOperationKind::UpsertFree}};
+
+        const auto estimate = ChunkLayoutEstimator::estimate(
+                "unit", "fixed", cells, operations, 8U, 8U);
+        EXPECT_EQ(estimate.known_cells, 5U);
+        EXPECT_EQ(estimate.operation_count, 3U);
+        EXPECT_EQ(estimate.total_chunks, 3U);
+        EXPECT_EQ(estimate.touched_chunks, 3U);
+        EXPECT_EQ(estimate.touched_existing_chunks, 2U);
+        EXPECT_EQ(estimate.copied_cells, 3U);
+        EXPECT_DOUBLE_EQ(estimate.write_amplification, 1.0);
+        EXPECT_DOUBLE_EQ(estimate.shared_chunk_ratio, 1.0 / 3.0);
+        EXPECT_DOUBLE_EQ(estimate.sparse_fill_ratio, 5.0 / (3.0 * 512.0));
+        EXPECT_EQ(estimate.cells_per_chunk.minimum, 1U);
+        EXPECT_EQ(estimate.cells_per_chunk.p50, 2U);
+        EXPECT_EQ(estimate.cells_per_chunk.p95, 2U);
+        EXPECT_EQ(estimate.cells_per_chunk.maximum, 2U);
+        EXPECT_EQ(estimate.bucket_occupancy.minimum, 0U);
+        EXPECT_LE(estimate.bucket_occupancy.maximum, 3U);
+
+        PerceptionMapUpdate::CellSnapshotStore store(
+                {PerceptionMapUpdate::CellStorageMode::Chunked, 8U, 8U});
+        ASSERT_TRUE(store.replace(cells).success);
+        const auto base_metrics = store.metrics();
+        const auto applied = store.apply(operations);
+        ASSERT_TRUE(applied.success) << applied.diagnostic;
+        EXPECT_EQ(estimate.total_chunks, base_metrics.total_chunks);
+        EXPECT_EQ(estimate.touched_chunks, applied.metrics.touched_chunks);
+        EXPECT_EQ(estimate.copied_cells, applied.metrics.copied_cells);
+        EXPECT_EQ(
+                estimate.touched_existing_chunks,
+                base_metrics.total_chunks - applied.metrics.shared_chunks);
+    }
+
+    TEST(ChunkLayoutEstimator, RevisionOnlySharesEveryChunk)
+    {
+        const std::vector<PerceptionMapUpdate::CanonicalCell> cells {
+                layout_cell(-8, -8, -8), layout_cell(8, 8, 8)};
+        const auto estimate = ChunkLayoutEstimator::estimate(
+                "unit", "revision-only", cells, {}, 8U, 16U);
+        EXPECT_EQ(estimate.touched_chunks, 0U);
+        EXPECT_EQ(estimate.copied_cells, 0U);
+        EXPECT_DOUBLE_EQ(estimate.write_amplification, 0.0);
+        EXPECT_DOUBLE_EQ(estimate.shared_chunk_ratio, 1.0);
+    }
+
+    TEST(ChunkLayoutEstimator, RejectsInvalidLayoutParameters)
+    {
+        EXPECT_THROW(
+                ChunkLayoutEstimator::estimate("unit", "bad-edge", {}, {}, 0U, 1U),
+                std::invalid_argument);
+        EXPECT_THROW(
+                ChunkLayoutEstimator::estimate("unit", "bad-buckets", {}, {}, 8U, 0U),
+                std::invalid_argument);
+    }
+
     TEST(ProfileScenario, DeterministicUniqueSequenceAndBoundedMotionHaveNoJump)
     {
         const ProfileScenario first(ScenarioMode::Bounded);
@@ -192,7 +276,9 @@ namespace PerceptionProfiling::Test {
 
     TEST(MapUpdateReplayOracle, FixedInputRepeatsRevisionHashAndUpdateKind)
     {
-        const MapUpdateReplayOptions options {8U, 16U, {}};
+        MapUpdateReplayOptions options;
+        options.sequence_count = 8U;
+        options.max_difference_samples = 16U;
         const auto first = MapUpdateReplayOracle(
                                    ProfileScenario(ScenarioMode::Bounded))
                                    .run(options);
@@ -313,14 +399,16 @@ namespace PerceptionProfiling::Test {
         ASSERT_GE(run.final_reconstructed->cells.size(), 3U);
 
         auto changed = *run.final_reconstructed;
-        changed.cells[0].state = changed.cells[0].state
+        auto changed_cells = changed.cells.materialize();
+        changed_cells[0].state = changed_cells[0].state
                 == PerceptionMapUpdate::CellState::Free
                 ? PerceptionMapUpdate::CellState::Occupied
                 : PerceptionMapUpdate::CellState::Free;
-        changed.cells.erase(changed.cells.begin() + 1);
-        auto unexpected = changed.cells.back();
+        changed_cells.erase(changed_cells.begin() + 1);
+        auto unexpected = changed_cells.back();
         ++unexpected.index.z;
-        changed.cells.push_back(unexpected);
+        changed_cells.push_back(unexpected);
+        changed.cells = std::move(changed_cells);
 
         const auto comparison = MapUpdateReplayOracle::compare(
                 *run.final_oracle, changed, 1U);

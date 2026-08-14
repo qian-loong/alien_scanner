@@ -883,38 +883,39 @@ namespace SwarmDataPlane::Test {
             if(source_map.has_value() && receiver_map.has_value()
                && source_map->geometry == receiver_map->geometry) {
                 constexpr std::size_t kMaxDifferencePoints = 50'000U;
-                std::size_t source_index = 0U;
-                std::size_t receiver_index = 0U;
-                while(source_index < source_map->cells.size()
-                      || receiver_index < receiver_map->cells.size()) {
+                auto source_cursor = source_map->cells.cursor();
+                auto receiver_cursor = receiver_map->cells.cursor();
+                while(!source_cursor.done() || !receiver_cursor.done()) {
                     if(missing.points.size() + receiver_only.points.size()
                        >= kMaxDifferencePoints) {
                         break;
                     }
-                    if(receiver_index >= receiver_map->cells.size()
-                       || (source_index < source_map->cells.size()
-                           && source_map->cells[source_index].index
-                                      < receiver_map->cells[receiver_index].index)) {
+                    if(receiver_cursor.done()
+                       || (!source_cursor.done()
+                           && source_cursor.value().index
+                                      < receiver_cursor.value().index)) {
                         missing.points.push_back(
-                                voxel_center(*source_map, source_map->cells[source_index++]));
+                                voxel_center(*source_map, source_cursor.value()));
+                        source_cursor.advance();
                         continue;
                     }
-                    if(source_index >= source_map->cells.size()
-                       || receiver_map->cells[receiver_index].index
-                                  < source_map->cells[source_index].index) {
+                    if(source_cursor.done()
+                       || receiver_cursor.value().index
+                                  < source_cursor.value().index) {
                         receiver_only.points.push_back(voxel_center(
-                                *receiver_map, receiver_map->cells[receiver_index++]));
+                                *receiver_map, receiver_cursor.value()));
+                        receiver_cursor.advance();
                         continue;
                     }
-                    if(source_map->cells[source_index].state
-                       != receiver_map->cells[receiver_index].state) {
+                    if(source_cursor.value().state
+                       != receiver_cursor.value().state) {
                         missing.points.push_back(
-                                voxel_center(*source_map, source_map->cells[source_index]));
+                                voxel_center(*source_map, source_cursor.value()));
                         receiver_only.points.push_back(voxel_center(
-                                *receiver_map, receiver_map->cells[receiver_index]));
+                                *receiver_map, receiver_cursor.value()));
                     }
-                    ++source_index;
-                    ++receiver_index;
+                    source_cursor.advance();
+                    receiver_cursor.advance();
                 }
             }
             output.markers.push_back(std::move(missing));

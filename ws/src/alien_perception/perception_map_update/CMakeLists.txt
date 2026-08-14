@@ -27,6 +27,7 @@ find_package(diagnostic_msgs REQUIRED)
 
 set(PERCEPTION_MAP_UPDATE_CORE_HEADERS
   include/perception_map_update/CanonicalCodec.hpp
+  include/perception_map_update/CellSnapshotStore.hpp
   include/perception_map_update/ContentHasher.hpp
   include/perception_map_update/MapUpdateApplier.hpp
   include/perception_map_update/MapUpdateLimits.hpp
@@ -34,6 +35,7 @@ set(PERCEPTION_MAP_UPDATE_CORE_HEADERS
   include/perception_map_update/MapUpdateTypes.hpp
   include/perception_map_update/ResyncStateMachine.hpp
   include/perception_map_update/SnapshotDiffer.hpp
+  include/perception_map_update/SpatialChunkLayout.hpp
 )
 
 set(PERCEPTION_MAP_UPDATE_ROS_HEADERS
@@ -50,12 +52,14 @@ set(PERCEPTION_MAP_UPDATE_OCTOMAP_HEADERS
 
 add_library(perception_map_update_core STATIC
   src/CanonicalCodec.cpp
+  src/CellSnapshotStore.cpp
   src/ContentHasher.cpp
   src/MapUpdateApplier.cpp
   src/MapUpdateProducer.cpp
   src/MapUpdateTypes.cpp
   src/ResyncStateMachine.cpp
   src/SnapshotDiffer.cpp
+  src/SpatialChunkLayout.cpp
 )
 target_sources(perception_map_update_core PRIVATE ${PERCEPTION_MAP_UPDATE_CORE_HEADERS})
 add_library(${PROJECT_NAME}::core ALIAS perception_map_update_core)
@@ -178,6 +182,24 @@ if(BUILD_TESTING)
   ament_add_gtest(TestMapUpdateCore test/TestMapUpdateCore.cpp)
   if(TARGET TestMapUpdateCore)
     target_link_libraries(TestMapUpdateCore perception_map_update_core)
+  endif()
+  ament_add_gtest(TestSpatialChunkLayout test/TestSpatialChunkLayout.cpp)
+  if(TARGET TestSpatialChunkLayout)
+    target_link_libraries(TestSpatialChunkLayout perception_map_update_core)
+  endif()
+  ament_add_gtest(TestCellSnapshotStore test/TestCellSnapshotStore.cpp)
+  if(TARGET TestCellSnapshotStore)
+    target_link_libraries(TestCellSnapshotStore perception_map_update_core)
+  endif()
+  ament_add_gtest(
+    TestMapUpdateStorageConformance
+    test/TestMapUpdateStorageConformance.cpp
+  )
+  if(TARGET TestMapUpdateStorageConformance)
+    target_link_libraries(
+      TestMapUpdateStorageConformance
+      perception_map_update_core
+    )
   endif()
   ament_add_gtest(TestMapUpdateConversions test/TestMapUpdateConversions.cpp)
   if(TARGET TestMapUpdateConversions)

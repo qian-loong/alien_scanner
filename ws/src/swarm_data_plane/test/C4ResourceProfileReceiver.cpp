@@ -41,6 +41,18 @@ namespace SwarmDataPlane::Test {
             return static_cast<std::size_t>(value);
         }
 
+        PerceptionMapUpdate::CellStorageMode parse_storage_mode(
+                const std::string & value)
+        {
+            if(value == "vector") {
+                return PerceptionMapUpdate::CellStorageMode::Vector;
+            }
+            if(value == "chunked") {
+                return PerceptionMapUpdate::CellStorageMode::Chunked;
+            }
+            throw std::invalid_argument("storage_mode must be vector or chunked");
+        }
+
         void write_value(std::ofstream & output, const char * key, std::uint64_t value)
         {
             output << key << '\t' << value << '\n';
@@ -102,6 +114,11 @@ namespace SwarmDataPlane::Test {
         }
 
         struct SourceState {
+            explicit SourceState(PerceptionMapUpdate::CellStorageConfig storage)
+                : ingress({}, {}, storage)
+            {
+            }
+
             MapUpdateIngress ingress;
             std::uint64_t messages_received = 0U;
             std::uint64_t messages_applied = 0U;
@@ -128,6 +145,16 @@ namespace SwarmDataPlane::Test {
             summary_path_ = declare_parameter<std::string>("summary_path", "");
             per_source_path_ = declare_parameter<std::string>("per_source_path", "");
             ready_path_ = declare_parameter<std::string>("ready_path", "");
+            storage_mode_name_ = declare_parameter<std::string>(
+                    "storage_mode", "vector");
+            storage_config_.mode = parse_storage_mode(storage_mode_name_);
+            const auto chunk_edge = positive_size_parameter(*this, "chunk_edge", 16);
+            if(chunk_edge > std::numeric_limits<std::uint32_t>::max()) {
+                throw std::invalid_argument("chunk_edge exceeds uint32 range");
+            }
+            storage_config_.chunk_edge = static_cast<std::uint32_t>(chunk_edge);
+            storage_config_.bucket_count = positive_size_parameter(
+                    *this, "chunk_bucket_count", 256);
             const auto topic = declare_parameter<std::string>(
                     "input_topic", "/c4/profile/routed_updates");
             subscription_ = create_subscription<swarm_data_interfaces::msg::RoutedMapUpdate>(
@@ -167,7 +194,7 @@ namespace SwarmDataPlane::Test {
                     callback_latency_.observe(steady_now_ns() - callback_start);
                     return;
                 }
-                auto state = std::make_unique<SourceState>();
+                auto state = std::make_unique<SourceState>(storage_config_);
                 if(!state->ingress.admit_producer(routed.producer)
                    || !state->ingress.admit_source(routed.update->source)) {
                     ++messages_rejected_;
@@ -196,6 +223,14 @@ namespace SwarmDataPlane::Test {
             const auto result = source.ingress.receive(routed, callback_start);
             const auto apply_end = steady_now_ns();
             apply_latency_.observe(apply_end - apply_start);
+            if(result.status == IngressStatus::AppliedKeyframe
+               || result.status == IngressStatus::AppliedDelta) {
+                const auto & timing = source.ingress.map_applier().last_apply_timing();
+                payload_decode_latency_.observe(timing.payload_decode_duration_ns);
+                candidate_build_latency_.observe(timing.candidate_build_duration_ns);
+                canonical_hash_latency_.observe(timing.canonical_hash_duration_ns);
+                commit_latency_.observe(timing.commit_duration_ns);
+            }
             if(is_applied(result.status)) {
                 ++messages_applied_;
                 ++source.messages_applied;
@@ -204,6 +239,12 @@ namespace SwarmDataPlane::Test {
                     ++keyframes_applied_;
                 } else if(result.status == IngressStatus::AppliedDelta) {
                     ++deltas_applied_;
+                    const auto & metrics = source.ingress.map_applier().storage_metrics();
+                    delta_touched_chunks_.observe(metrics.touched_chunks);
+                    delta_shared_chunks_.observe(metrics.shared_chunks);
+                    delta_copied_cells_.observe(metrics.copied_cells);
+                    delta_copied_bucket_entries_.observe(metrics.copied_bucket_entries);
+                    delta_candidate_owned_bytes_.observe(metrics.candidate_owned_bytes);
                 }
                 write_ready_if_complete();
             } else if(result.status == IngressStatus::IgnoredDuplicate) {
@@ -255,6 +296,20 @@ namespace SwarmDataPlane::Test {
             output << prefix << "_max_ns\t" << histogram.max_ns() << '\n';
         }
 
+        void write_distribution(
+                std::ofstream & output,
+                const char * prefix,
+                const BoundedHistogram & histogram) const
+        {
+            output << prefix << "_count\t" << histogram.count() << '\n';
+            output << prefix << "_total\t" << histogram.total_ns() << '\n';
+            output << prefix << "_p50_upper\t"
+                   << histogram.percentile_upper_bound(0.50) << '\n';
+            output << prefix << "_p95_upper\t"
+                   << histogram.percentile_upper_bound(0.95) << '\n';
+            output << prefix << "_max\t" << histogram.max_ns() << '\n';
+        }
+
         void write_summary() const
         {
             if(summary_path_.empty() || per_source_path_.empty()) {
@@ -274,6 +329,9 @@ namespace SwarmDataPlane::Test {
                 }
             }
             write_value(summary, "schema_version", 1U);
+            summary << "storage_mode\t" << storage_mode_name_ << '\n';
+            write_value(summary, "chunk_edge", storage_config_.chunk_edge);
+            write_value(summary, "chunk_bucket_count", storage_config_.bucket_count);
             write_value(summary, "expected_sources", expected_sources_);
             write_value(summary, "sources_seen", sources_.size());
             write_value(summary, "qos_history_depth", qos_depth_);
@@ -298,8 +356,23 @@ namespace SwarmDataPlane::Test {
             write_value(summary, "final_cells_total", final_cells);
             write_histogram(summary, "decode", decode_latency_);
             write_histogram(summary, "apply", apply_latency_);
+            write_histogram(summary, "payload_decode", payload_decode_latency_);
+            write_histogram(summary, "candidate_build", candidate_build_latency_);
+            write_histogram(summary, "canonical_hash", canonical_hash_latency_);
+            write_histogram(summary, "commit", commit_latency_);
             write_histogram(summary, "callback", callback_latency_);
             write_histogram(summary, "origin_age", origin_age_);
+            write_distribution(summary, "delta_touched_chunks", delta_touched_chunks_);
+            write_distribution(summary, "delta_shared_chunks", delta_shared_chunks_);
+            write_distribution(summary, "delta_copied_cells", delta_copied_cells_);
+            write_distribution(
+                    summary,
+                    "delta_copied_bucket_entries",
+                    delta_copied_bucket_entries_);
+            write_distribution(
+                    summary,
+                    "delta_candidate_owned_bytes",
+                    delta_candidate_owned_bytes_);
             summary << "normal_completion\t1\n";
 
             per_source << "source\tmessages_received\tmessages_applied\tlast_sequence\t"
@@ -326,6 +399,8 @@ namespace SwarmDataPlane::Test {
         std::string summary_path_;
         std::string per_source_path_;
         std::string ready_path_;
+        std::string storage_mode_name_;
+        PerceptionMapUpdate::CellStorageConfig storage_config_;
         bool ready_written_ = false;
         std::map<std::string, std::unique_ptr<SourceState>> sources_;
         std::uint64_t messages_received_ = 0U;
@@ -339,8 +414,17 @@ namespace SwarmDataPlane::Test {
         std::uint64_t payload_bytes_received_ = 0U;
         BoundedHistogram decode_latency_;
         BoundedHistogram apply_latency_;
+        BoundedHistogram payload_decode_latency_;
+        BoundedHistogram candidate_build_latency_;
+        BoundedHistogram canonical_hash_latency_;
+        BoundedHistogram commit_latency_;
         BoundedHistogram callback_latency_;
         BoundedHistogram origin_age_;
+        BoundedHistogram delta_touched_chunks_;
+        BoundedHistogram delta_shared_chunks_;
+        BoundedHistogram delta_copied_cells_;
+        BoundedHistogram delta_copied_bucket_entries_;
+        BoundedHistogram delta_candidate_owned_bytes_;
         rclcpp::Subscription<swarm_data_interfaces::msg::RoutedMapUpdate>::SharedPtr
                 subscription_;
     };

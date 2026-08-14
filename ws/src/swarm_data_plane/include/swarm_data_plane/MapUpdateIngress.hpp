@@ -40,7 +40,8 @@ namespace SwarmDataPlane {
     public:
         explicit MapUpdateIngress(
                 DataPlaneLimits data_plane_limits = {},
-                PerceptionMapUpdate::MapUpdateLimits map_update_limits = {});
+                PerceptionMapUpdate::MapUpdateLimits map_update_limits = {},
+                PerceptionMapUpdate::CellStorageConfig cell_storage = {});
 
         bool admit_producer(const ProducerIdentity & producer);
         bool admit_source(const PerceptionMapUpdate::SourceIdentity & source);
