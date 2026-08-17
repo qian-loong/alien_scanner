@@ -566,7 +566,7 @@ namespace PerceptionLocalMap::Test {
         EXPECT_FALSE(diagnostics.resync_pending);
         EXPECT_GE(diagnostics.last_traversal_duration_ns, 0);
         EXPECT_GE(diagnostics.last_canonicalize_duration_ns, 0);
-        EXPECT_GE(diagnostics.last_content_hash_duration_ns, 0);
+        EXPECT_GE(diagnostics.last_geometry_fingerprint_duration_ns, 0);
         EXPECT_GE(diagnostics.last_validation_duration_ns, 0);
         EXPECT_GE(diagnostics.last_encode_duration_ns, 0);
         EXPECT_GE(diagnostics.last_update_hash_duration_ns, 0);

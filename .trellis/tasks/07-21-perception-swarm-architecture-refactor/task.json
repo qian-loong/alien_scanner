@@ -2,7 +2,7 @@
   "id": "perception-swarm-architecture-refactor",
   "name": "perception-swarm-architecture-refactor",
   "title": "下一阶段感知与多机协作架构重构",
-  "description": "跟踪感知、本机地图、通信数据面、拓扑角色、多机协作、执行安全与诊断回放的总体架构及分步落地；C1-C4 与 C4.1 已完成，下一关键路径为 C5 拓扑与角色。",
+  "description": "跟踪感知、本机地图、通信数据面、拓扑角色、多机协作、执行安全与诊断回放的总体架构及分步落地；C1-C4 与 C4.1/C4.2 已完成，下一关键路径为 C4.3 Merkle v2 生产集成，随后进入 C5。",
   "status": "in_progress",
   "dev_type": null,
   "scope": null,
@@ -26,10 +26,12 @@
     "08-01-c1-c2-perception-perf-memory-retest",
     "08-03-c3-map-state-updates",
     "08-10-c4-communication-data-plane",
-    "08-13-c4-chunked-map-cow-optimization"
+    "08-13-c4-chunked-map-cow-optimization",
+    "08-14-c4-incremental-merkle-hash-v2",
+    "08-15-c4-merkle-v2-production-integration"
   ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "C3 地图状态与 C4 通信数据面均已完成并归档。C4.1 已完成 8/16/32 布局估算和可选分块 COW：edge 16 是折中研究候选，但 R5 与短 A/B 未过门，生产默认保持 Vector；C5 必须消费 storage-independent canonical view。shared-view alignment 消费证据仍保持开放。",
+  "notes": "C3 地图状态与 C4 通信数据面均已完成并归档。C4.1 选出 edge 16 研究候选但生产 no-go；C4.2 增量 Merkle v2 算法 Gate go。C4.3 已在独立分支完成 v2-only schema、edge-16 COW + persistent Merkle producer/receiver、resync identity、route 透明承载、3 x 300 秒矩阵、内存工具和 rollback dry-run。正式矩阵正确且资源增长有界；严格 Memcheck 原始结果保留第三方 liblttng-ust 的 768 B possibly lost，但该 finding 已在 C1/C2/C4 历史证据中复现且不经过业务栈，business_memory_gate 通过。C4.3 production Gate 为 GO（含已知第三方 runtime 例外），C5d 前置阻塞解除；C5a-C5c 可继续推进。shared-view alignment 消费证据仍保持开放。",
   "meta": {}
 }

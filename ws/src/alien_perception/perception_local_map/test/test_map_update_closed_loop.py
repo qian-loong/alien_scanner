@@ -11,7 +11,7 @@ from launch.launch_description_sources import AnyLaunchDescriptionSource
 import launch_testing
 from launch_ros.actions import Node
 from octomap_msgs.msg import Octomap
-from perception_interfaces.msg import LocalMapState, MapUpdate
+from perception_interfaces.msg import ContentIdentityDescriptor, LocalMapState, MapUpdate
 from perception_interfaces.srv import RequestMapResync
 import pytest
 import rclpy
@@ -155,6 +155,12 @@ class TestMapUpdateClosedLoop(unittest.TestCase):
         request.requester_session_random_suffix = 7
         request.client_request_id = client_request_id
         request.bootstrap_latest = True
+        request.receiver_content_identity.scheme = (
+            ContentIdentityDescriptor.SCHEME_MERKLE_PATRICIA_SHA256_V2
+        )
+        request.receiver_content_identity.chunk_edge = 16
+        request.receiver_content_identity.coordinate_key_version = 1
+        request.receiver_content_identity.node_encoding_version = 1
         request.reason = RequestMapResync.Request.REASON_INITIAL_BASELINE
         return request
 

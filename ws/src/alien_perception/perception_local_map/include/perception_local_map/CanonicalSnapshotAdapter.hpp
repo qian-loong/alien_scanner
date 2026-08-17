@@ -23,7 +23,7 @@ namespace PerceptionLocalMap {
     struct CanonicalSnapshotTiming {
         std::int64_t traversal_duration_ns = 0;
         std::int64_t canonicalize_duration_ns = 0;
-        std::int64_t content_hash_duration_ns = 0;
+        std::int64_t geometry_fingerprint_duration_ns = 0;
     };
 
     struct CanonicalSnapshotResult {

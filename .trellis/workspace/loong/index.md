@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
-- **Last Active**: 2026-08-13
+- **Total Sessions**: 9
+- **Last Active**: 2026-08-17
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~313 | Active |
+| `journal-1.md` | ~382 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-08-17 | 完成 C4.1 与 C4.3 收尾归档 | `5875a41`, `4033bd1`, `6c742cb`, `0ef09ee` | `phase/4-merkle-v2-production-integration` |
+| 8 | 2026-08-15 | Complete incremental Merkle hash v2 evaluation | `6865c08` | `phase/4-incremental-merkle-hash-v2` |
 | 7 | 2026-08-13 | Relocate C3 profiling evidence | `26636e4` | `chore/profiling-evidence-layout` |
 | 6 | 2026-08-13 | Complete C4 communication data plane | `add6ca3`, `1459593` | `phase/4-c4-communication-data-plane` |
 | 5 | 2026-08-09 | 完成 C3 性能与内存验收收口 | `b4e26b1` | `phase/4-c3-map-updates` |

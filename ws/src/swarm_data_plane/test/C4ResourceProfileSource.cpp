@@ -1,4 +1,3 @@
-#include "perception_map_update/CanonicalCodec.hpp"
 #include "perception_map_update/ContentHasher.hpp"
 #include "perception_map_update/MapUpdateProducer.hpp"
 #include "swarm_data_plane/DataPlaneTypes.hpp"
@@ -31,13 +30,14 @@ namespace SwarmDataPlane::Test {
         using PerceptionMapUpdate::CanonicalSnapshot;
         using PerceptionMapUpdate::CellState;
         using PerceptionMapUpdate::ContentHasher;
-        using PerceptionMapUpdate::DeltaOperation;
-        using PerceptionMapUpdate::DeltaOperationKind;
         using PerceptionMapUpdate::Hash256;
         using PerceptionMapUpdate::MapGeometry;
         using PerceptionMapUpdate::MapUpdate;
+        using PerceptionMapUpdate::MapUpdateProducer;
         using PerceptionMapUpdate::RevisionProvenance;
         using PerceptionMapUpdate::SourceIdentity;
+
+        constexpr std::uint64_t kBoundedProfileMaxDeltaChainLength = 0U;
 
         enum class WorkloadMode
         {
@@ -117,16 +117,10 @@ namespace SwarmDataPlane::Test {
             SourceIdentity source;
             ProducerIdentity producer;
             MapGeometry geometry;
-            Hash256 geometry_fingerprint {};
-            Hash256 base_content_hash {};
-            Hash256 alternate_content_hash {};
             Hash256 current_content_hash {};
             MapUpdate initial_keyframe;
-            std::vector<std::uint8_t> to_alternate_payload;
-            std::vector<std::uint8_t> to_base_payload;
-            std::vector<std::uint8_t> alternate_keyframe_payload;
-            std::vector<std::uint8_t> base_keyframe_payload;
-            std::vector<CanonicalCell> expanding_cells;
+            std::unique_ptr<MapUpdateProducer> map_producer;
+            std::vector<CanonicalCell> current_cells;
             std::uint64_t target_known_cells = 0U;
             std::uint64_t current_known_cells = 0U;
             std::uint64_t delta_operations = 0U;
@@ -134,8 +128,12 @@ namespace SwarmDataPlane::Test {
             std::uint64_t sequence = 0U;
             std::uint64_t messages_sent = 0U;
             std::uint64_t payload_bytes_sent = 0U;
-            bool alternate = false;
         };
+
+        RevisionProvenance make_provenance(
+                const SourceState & state,
+                std::uint64_t now_ns,
+                std::uint64_t changed_cells);
 
         std::vector<CanonicalCell> make_cells(std::size_t count)
         {
@@ -168,73 +166,34 @@ namespace SwarmDataPlane::Test {
                             cells.size(), std::numeric_limits<std::uint32_t>::max()))};
             snapshot.cells = std::move(cells);
             snapshot.geometry_fingerprint = ContentHasher::geometry_fingerprint(geometry);
-            snapshot.content_hash = ContentHasher::content_hash(
-                    source, snapshot.geometry_fingerprint, snapshot.cells);
             return snapshot;
         }
 
-        void prepare_alternating_updates(
+        MapUpdate prepare_target(
                 SourceState & state,
-                const std::vector<CanonicalCell> & base_cells,
-                bool include_keyframes)
+                std::vector<CanonicalCell> target_cells,
+                std::uint64_t now_ns)
         {
-            auto alternate_cells = base_cells;
-            std::vector<DeltaOperation> to_alternate;
-            std::vector<DeltaOperation> to_base;
-            const auto operation_count = std::min<std::size_t>(
-                    static_cast<std::size_t>(state.delta_operations), base_cells.size());
-            to_alternate.reserve(operation_count);
-            to_base.reserve(operation_count);
-            for(std::size_t cell = 0U; cell < operation_count; ++cell) {
-                const auto base_state = base_cells[cell].state;
-                const auto alternate_state = base_state == CellState::Free
-                                                     ? CellState::Occupied
-                                                     : CellState::Free;
-                alternate_cells[cell].state = alternate_state;
-                to_alternate.push_back({
-                        base_cells[cell].index,
-                        alternate_state == CellState::Free
-                                ? DeltaOperationKind::UpsertFree
-                                : DeltaOperationKind::UpsertOccupied});
-                to_base.push_back({
-                        base_cells[cell].index,
-                        base_state == CellState::Free
-                                ? DeltaOperationKind::UpsertFree
-                                : DeltaOperationKind::UpsertOccupied});
+            auto target = std::make_shared<CanonicalSnapshot>(make_snapshot(
+                    state.source,
+                    state.geometry,
+                    std::move(target_cells),
+                    state.revision + 1U));
+            target->latest_commit = make_provenance(
+                    state,
+                    now_ns,
+                    state.delta_operations);
+            auto prepared = state.map_producer->prepare(std::move(target), 1U);
+            if(!prepared.update.has_value()
+               || !state.map_producer->commit_published(prepared)) {
+                throw std::runtime_error(
+                        "cannot prepare deterministic v2 profile update: "
+                        + prepared.diagnostic);
             }
-
-            state.base_content_hash = ContentHasher::content_hash(
-                    state.source, state.geometry_fingerprint, base_cells);
-            state.alternate_content_hash = ContentHasher::content_hash(
-                    state.source, state.geometry_fingerprint, alternate_cells);
-            state.current_content_hash = state.base_content_hash;
-
-            const auto to_alternate_encoded =
-                    PerceptionMapUpdate::CanonicalCodec::encode_delta_payload(
-                            to_alternate, PerceptionMapUpdate::MapUpdateLimits {});
-            const auto to_base_encoded =
-                    PerceptionMapUpdate::CanonicalCodec::encode_delta_payload(
-                            to_base, PerceptionMapUpdate::MapUpdateLimits {});
-            if(!to_alternate_encoded.success || !to_base_encoded.success) {
-                throw std::runtime_error("cannot encode deterministic profile deltas");
-            }
-            state.to_alternate_payload = to_alternate_encoded.bytes;
-            state.to_base_payload = to_base_encoded.bytes;
-
-            if(include_keyframes) {
-                const auto base_encoded =
-                        PerceptionMapUpdate::CanonicalCodec::encode_keyframe_payload(
-                                base_cells, PerceptionMapUpdate::MapUpdateLimits {});
-                const auto alternate_encoded =
-                        PerceptionMapUpdate::CanonicalCodec::encode_keyframe_payload(
-                                alternate_cells, PerceptionMapUpdate::MapUpdateLimits {});
-                if(!base_encoded.success || !alternate_encoded.success) {
-                    throw std::runtime_error(
-                            "cannot encode deterministic profile replacement keyframes");
-                }
-                state.base_keyframe_payload = base_encoded.bytes;
-                state.alternate_keyframe_payload = alternate_encoded.bytes;
-            }
+            state.current_cells = prepared.target_snapshot->cells;
+            state.current_known_cells = state.current_cells.size();
+            state.current_content_hash = prepared.update->content_hash;
+            return std::move(*prepared.update);
         }
 
         SourceState make_source_state(
@@ -264,33 +223,35 @@ namespace SwarmDataPlane::Test {
                                                   : known_cells;
             auto base_cells = make_cells(first_cell_count);
 
-            auto snapshot = make_snapshot(state.source, state.geometry, std::move(base_cells));
-            state.geometry_fingerprint = snapshot.geometry_fingerprint;
-            state.base_content_hash = snapshot.content_hash;
-            state.current_content_hash = snapshot.content_hash;
-
-            PerceptionMapUpdate::MapUpdateProducer producer;
-            auto prepared = producer.prepare(std::move(snapshot));
-            if(!prepared.update.has_value() || !producer.commit_published(prepared)) {
+            PerceptionMapUpdate::MapUpdateLimits producer_limits;
+            if(mode == WorkloadMode::Bounded) {
+                // Keep V1/V2 bounded A/B runs at the same initial-only keyframe cadence.
+                // The production default remains bounded by its normal chain limit.
+                producer_limits.max_delta_chain_length =
+                        kBoundedProfileMaxDeltaChainLength;
+            }
+            else if(mode == WorkloadMode::KeyframeReplacement) {
+                producer_limits.periodic_keyframe_revision_interval = 1U;
+            }
+            state.map_producer =
+                    std::make_unique<MapUpdateProducer>(std::move(producer_limits));
+            state.current_cells = base_cells;
+            auto snapshot = make_snapshot(
+                    state.source,
+                    state.geometry,
+                    std::move(base_cells));
+            auto prepared = state.map_producer->prepare(std::move(snapshot));
+            if(!prepared.update.has_value()
+               || !state.map_producer->commit_published(prepared)) {
                 throw std::runtime_error("cannot build deterministic profile keyframe");
             }
             state.initial_keyframe = std::move(*prepared.update);
+            state.current_content_hash = state.initial_keyframe.content_hash;
             state.target_known_cells = static_cast<std::uint64_t>(known_cells);
             state.current_known_cells = static_cast<std::uint64_t>(first_cell_count);
             state.delta_operations = static_cast<std::uint64_t>(delta_operations);
 
-            auto initial_state_cells = make_cells(first_cell_count);
-            if(mode == WorkloadMode::Expanding) {
-                state.expanding_cells = std::move(initial_state_cells);
-                if(first_cell_count == known_cells) {
-                    prepare_alternating_updates(state, state.expanding_cells, false);
-                }
-            } else {
-                prepare_alternating_updates(
-                        state,
-                        initial_state_cells,
-                        mode == WorkloadMode::KeyframeReplacement);
-            }
+            state.current_cells = prepared.target_snapshot->cells;
             return state;
         }
 
@@ -311,30 +272,15 @@ namespace SwarmDataPlane::Test {
 
         MapUpdate make_alternating_delta(SourceState & state, std::uint64_t now_ns)
         {
-            const bool next_alternate = !state.alternate;
-            MapUpdate update;
-            update.kind = PerceptionMapUpdate::UpdateKind::Delta;
-            update.source = state.source;
-            update.geometry = state.geometry;
-            update.base_revision = state.revision;
-            update.new_revision = state.revision + 1U;
-            update.revision_span = 1U;
-            update.observed_coalesced_receipt_count = 1U;
-            update.geometry_fingerprint = state.geometry_fingerprint;
-            update.base_content_hash = state.current_content_hash;
-            update.content_hash = next_alternate ? state.alternate_content_hash
-                                                 : state.base_content_hash;
-            update.latest_commit = make_provenance(
-                    state, now_ns, state.delta_operations);
-            update.known_cell_count = state.current_known_cells;
-            update.operation_count = state.delta_operations;
-            update.payload = next_alternate ? state.to_alternate_payload
-                                            : state.to_base_payload;
-            update.canonical_payload_bytes = static_cast<std::uint64_t>(update.payload.size());
-            update.update_hash = ContentHasher::update_hash(update);
-            state.alternate = next_alternate;
-            state.current_content_hash = update.content_hash;
-            return update;
+            auto target_cells = state.current_cells;
+            const auto operation_count = std::min<std::size_t>(
+                    static_cast<std::size_t>(state.delta_operations), target_cells.size());
+            for(std::size_t cell = 0U; cell < operation_count; ++cell) {
+                target_cells[cell].state = target_cells[cell].state == CellState::Free
+                                                   ? CellState::Occupied
+                                                   : CellState::Free;
+            }
+            return prepare_target(state, std::move(target_cells), now_ns);
         }
 
         MapUpdate make_expanding_delta(SourceState & state, std::uint64_t now_ns)
@@ -344,8 +290,8 @@ namespace SwarmDataPlane::Test {
                 return make_alternating_delta(state, now_ns);
             }
             const auto added = std::min(remaining, state.delta_operations);
-            std::vector<DeltaOperation> operations;
-            operations.reserve(static_cast<std::size_t>(added));
+            auto target_cells = state.current_cells;
+            target_cells.reserve(target_cells.size() + static_cast<std::size_t>(added));
             for(std::uint64_t offset = 0U; offset < added; ++offset) {
                 const auto cell = state.current_known_cells + offset;
                 const auto cell_state = (cell % 2U) == 0U
@@ -353,73 +299,22 @@ namespace SwarmDataPlane::Test {
                                                 : CellState::Occupied;
                 const CanonicalCell canonical {
                         {static_cast<std::int64_t>(cell), 0, 0}, cell_state};
-                state.expanding_cells.push_back(canonical);
-                operations.push_back({
-                        canonical.index,
-                        cell_state == CellState::Free
-                                ? DeltaOperationKind::UpsertFree
-                                : DeltaOperationKind::UpsertOccupied});
+                target_cells.push_back(canonical);
             }
-            const auto encoded = PerceptionMapUpdate::CanonicalCodec::encode_delta_payload(
-                    operations, PerceptionMapUpdate::MapUpdateLimits {});
-            if(!encoded.success) {
-                throw std::runtime_error("cannot encode deterministic expansion delta");
-            }
-
-            MapUpdate update;
-            update.kind = PerceptionMapUpdate::UpdateKind::Delta;
-            update.source = state.source;
-            update.geometry = state.geometry;
-            update.base_revision = state.revision;
-            update.new_revision = state.revision + 1U;
-            update.revision_span = 1U;
-            update.observed_coalesced_receipt_count = 1U;
-            update.geometry_fingerprint = state.geometry_fingerprint;
-            update.base_content_hash = state.current_content_hash;
-            update.content_hash = ContentHasher::content_hash(
-                    state.source, state.geometry_fingerprint, state.expanding_cells);
-            update.latest_commit = make_provenance(state, now_ns, added);
-            update.known_cell_count = state.current_known_cells + added;
-            update.operation_count = added;
-            update.payload = encoded.bytes;
-            update.canonical_payload_bytes = static_cast<std::uint64_t>(update.payload.size());
-            update.update_hash = ContentHasher::update_hash(update);
-
-            state.current_known_cells += added;
-            state.current_content_hash = update.content_hash;
-            if(state.current_known_cells == state.target_known_cells) {
-                prepare_alternating_updates(state, state.expanding_cells, false);
-                state.current_content_hash = update.content_hash;
-            }
-            return update;
+            return prepare_target(state, std::move(target_cells), now_ns);
         }
 
         MapUpdate make_replacement_keyframe(SourceState & state, std::uint64_t now_ns)
         {
-            const bool next_alternate = !state.alternate;
-            MapUpdate update;
-            update.kind = PerceptionMapUpdate::UpdateKind::Keyframe;
-            update.source = state.source;
-            update.geometry = state.geometry;
-            update.base_revision = 0U;
-            update.new_revision = state.revision + 1U;
-            update.revision_span = update.new_revision;
-            update.observed_coalesced_receipt_count = 1U;
-            update.geometry_fingerprint = state.geometry_fingerprint;
-            update.base_content_hash = {};
-            update.content_hash = next_alternate ? state.alternate_content_hash
-                                                 : state.base_content_hash;
-            update.latest_commit = make_provenance(
-                    state, now_ns, state.delta_operations);
-            update.known_cell_count = state.current_known_cells;
-            update.operation_count = 0U;
-            update.payload = next_alternate ? state.alternate_keyframe_payload
-                                            : state.base_keyframe_payload;
-            update.canonical_payload_bytes = static_cast<std::uint64_t>(update.payload.size());
-            update.update_hash = ContentHasher::update_hash(update);
-            state.alternate = next_alternate;
-            state.current_content_hash = update.content_hash;
-            return update;
+            auto target_cells = state.current_cells;
+            const auto operation_count = std::min<std::size_t>(
+                    static_cast<std::size_t>(state.delta_operations), target_cells.size());
+            for(std::size_t cell = 0U; cell < operation_count; ++cell) {
+                target_cells[cell].state = target_cells[cell].state == CellState::Free
+                                                   ? CellState::Occupied
+                                                   : CellState::Free;
+            }
+            return prepare_target(state, std::move(target_cells), now_ns);
         }
 
     }// namespace
@@ -577,6 +472,13 @@ namespace SwarmDataPlane::Test {
             }
             write_value(summary, "schema_version", 1U);
             summary << "workload_mode\t" << workload_mode_name(workload_mode_) << '\n';
+            summary << "keyframe_policy\t"
+                    << (workload_mode_ == WorkloadMode::Bounded
+                                ? "initial-only"
+                                : workload_mode_ == WorkloadMode::KeyframeReplacement
+                                      ? "every-revision"
+                                      : "producer-default")
+                    << '\n';
             write_value(summary, "source_count", sources_.size());
             write_value(summary, "messages_sent", messages_sent_);
             write_value(summary, "keyframes_sent", keyframes_sent_);

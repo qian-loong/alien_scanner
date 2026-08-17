@@ -33,6 +33,10 @@ set(PERCEPTION_MAP_UPDATE_CORE_HEADERS
   include/perception_map_update/MapUpdateLimits.hpp
   include/perception_map_update/MapUpdateProducer.hpp
   include/perception_map_update/MapUpdateTypes.hpp
+  include/perception_map_update/MerkleMapState.hpp
+  include/perception_map_update/MerklePatricia.hpp
+  include/perception_map_update/MerklePrototypeApplier.hpp
+  include/perception_map_update/MerklePrototypeProtocol.hpp
   include/perception_map_update/ResyncStateMachine.hpp
   include/perception_map_update/SnapshotDiffer.hpp
   include/perception_map_update/SpatialChunkLayout.hpp
@@ -57,6 +61,9 @@ add_library(perception_map_update_core STATIC
   src/MapUpdateApplier.cpp
   src/MapUpdateProducer.cpp
   src/MapUpdateTypes.cpp
+  src/MerkleMapState.cpp
+  src/MerklePatricia.cpp
+  src/MerklePrototypeProtocol.cpp
   src/ResyncStateMachine.cpp
   src/SnapshotDiffer.cpp
   src/SpatialChunkLayout.cpp
@@ -190,6 +197,18 @@ if(BUILD_TESTING)
   ament_add_gtest(TestCellSnapshotStore test/TestCellSnapshotStore.cpp)
   if(TARGET TestCellSnapshotStore)
     target_link_libraries(TestCellSnapshotStore perception_map_update_core)
+  endif()
+  ament_add_gtest(TestMerklePatricia test/TestMerklePatricia.cpp)
+  if(TARGET TestMerklePatricia)
+    target_link_libraries(TestMerklePatricia perception_map_update_core)
+  endif()
+  ament_add_gtest(TestMerklePrototypeApplier test/TestMerklePrototypeApplier.cpp)
+  if(TARGET TestMerklePrototypeApplier)
+    target_link_libraries(TestMerklePrototypeApplier perception_map_update_core)
+  endif()
+  ament_add_gtest(TestMerklePrototypeProtocol test/TestMerklePrototypeProtocol.cpp)
+  if(TARGET TestMerklePrototypeProtocol)
+    target_link_libraries(TestMerklePrototypeProtocol perception_map_update_core)
   endif()
   ament_add_gtest(
     TestMapUpdateStorageConformance

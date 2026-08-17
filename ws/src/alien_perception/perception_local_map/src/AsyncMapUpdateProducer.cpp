@@ -137,6 +137,21 @@ namespace PerceptionLocalMap {
         return true;
     }
 
+    std::optional<PerceptionMapUpdate::ProducerBaselineToken>
+    AsyncMapUpdateProducer::committed_baseline() const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto & baseline = producer_.baseline();
+        const auto & state = producer_.committed_state();
+        if(!baseline || !state) {
+            return std::nullopt;
+        }
+        return PerceptionMapUpdate::ProducerBaselineToken {
+                baseline->source,
+                baseline->revision,
+                state->identity()};
+    }
+
     AsyncMapUpdateDiagnostics AsyncMapUpdateProducer::diagnostics() const
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -262,8 +277,8 @@ namespace PerceptionLocalMap {
                         snapshot.timing.traversal_duration_ns;
                 diagnostics_.last_canonicalize_duration_ns =
                         snapshot.timing.canonicalize_duration_ns;
-                diagnostics_.last_content_hash_duration_ns =
-                        snapshot.timing.content_hash_duration_ns;
+                diagnostics_.last_geometry_fingerprint_duration_ns =
+                        snapshot.timing.geometry_fingerprint_duration_ns;
             }
             if(snapshot.status != CanonicalSnapshotStatus::Ready
                || !snapshot.snapshot.has_value()) {
@@ -297,6 +312,9 @@ namespace PerceptionLocalMap {
                         prepared.timing.validation_duration_ns;
                 diagnostics_.last_diff_duration_ns = prepared.timing.diff_duration_ns;
                 diagnostics_.last_encode_duration_ns = prepared.timing.encode_duration_ns;
+                diagnostics_.last_store_candidate_duration_ns =
+                        prepared.timing.store_candidate_duration_ns;
+                diagnostics_.last_merkle_duration_ns = prepared.timing.merkle_duration_ns;
                 diagnostics_.last_update_hash_duration_ns =
                         prepared.timing.update_hash_duration_ns;
                 diagnostics_.last_snapshot_cells = target_snapshot->cells.size();

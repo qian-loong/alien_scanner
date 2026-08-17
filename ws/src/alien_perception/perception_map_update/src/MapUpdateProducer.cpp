@@ -14,15 +14,17 @@ namespace PerceptionMapUpdate {
 
         MapUpdate make_common_update(
                 const CanonicalSnapshot & target,
+                const VersionedContentDigest & content_identity,
                 std::uint64_t observed_coalesced_receipt_count)
         {
             MapUpdate update;
+            update.content_identity = content_identity.descriptor;
             update.source = target.source;
             update.geometry = target.geometry;
             update.new_revision = target.revision;
             update.observed_coalesced_receipt_count = observed_coalesced_receipt_count;
             update.geometry_fingerprint = target.geometry_fingerprint;
-            update.content_hash = target.content_hash;
+            update.content_hash = content_identity.digest;
             update.latest_commit = target.latest_commit;
             update.known_cell_count = static_cast<std::uint64_t>(target.cells.size());
             return update;
@@ -35,7 +37,30 @@ namespace PerceptionMapUpdate {
                     .count();
         }
 
+        void record_merkle_timing(
+                const MerkleMapStateResult & candidate,
+                PrepareTiming & timing) noexcept
+        {
+            timing.store_candidate_duration_ns = static_cast<std::int64_t>(
+                    candidate.timings.storage_ns + candidate.timings.mutation_build_ns);
+            timing.merkle_duration_ns = static_cast<std::int64_t>(
+                    candidate.timings.merkle_ns);
+        }
+
     }// namespace
+
+    bool ProducerBaselineToken::operator==(
+            const ProducerBaselineToken & other) const noexcept
+    {
+        return source == other.source && revision == other.revision
+               && content_identity == other.content_identity;
+    }
+
+    bool ProducerBaselineToken::operator!=(
+            const ProducerBaselineToken & other) const noexcept
+    {
+        return !(*this == other);
+    }
 
     MapUpdateProducer::MapUpdateProducer(MapUpdateLimits limits) : limits_(std::move(limits)) {}
 
@@ -66,11 +91,6 @@ namespace PerceptionMapUpdate {
         if(expected_geometry != snapshot.geometry_fingerprint) {
             return {false, "snapshot geometry fingerprint mismatch"};
         }
-        const auto expected_content = ContentHasher::content_hash(
-                snapshot.source, snapshot.geometry_fingerprint, snapshot.cells);
-        if(expected_content != snapshot.content_hash) {
-            return {false, "snapshot content hash mismatch"};
-        }
         if(snapshot.cells.size()
            > std::numeric_limits<std::size_t>::max() / sizeof(CanonicalCell)) {
             return {false, "snapshot retained-state estimate overflows size_t"};
@@ -89,17 +109,40 @@ namespace PerceptionMapUpdate {
     {
         if(!target) {
             return {ProduceStatus::RejectedInvalidSnapshot, std::nullopt, nullptr,
-                    "target snapshot is null", timing, std::nullopt};
+                    "target snapshot is null", timing, std::nullopt, nullptr};
         }
         const auto & snapshot = *target;
+        const auto state = MerkleMapState::build(
+                snapshot.source,
+                snapshot.geometry_fingerprint,
+                snapshot.cells,
+                {CellStorageMode::Chunked, kMerkleChunkEdge, kMerkleChunkBucketCount},
+                {},
+                limits_);
+        record_merkle_timing(state, timing);
+        if(!state || !state.candidate) {
+            return {state.resource_limit
+                            ? ProduceStatus::RejectedResourceLimit
+                            : ProduceStatus::RejectedInvalidSnapshot,
+                    std::nullopt,
+                    nullptr,
+                    state.diagnostic,
+                    timing,
+                    std::nullopt,
+                    nullptr};
+        }
+
         const auto encode_start = std::chrono::steady_clock::now();
         auto encoded = CanonicalCodec::encode_keyframe_payload(snapshot.cells, limits_);
         timing.encode_duration_ns = elapsed_ns(encode_start);
         if(!encoded.success) {
             return {ProduceStatus::RejectedResourceLimit, std::nullopt, nullptr,
-                    encoded.diagnostic, timing, std::nullopt};
+                    encoded.diagnostic, timing, std::nullopt, nullptr};
         }
-        auto update = make_common_update(snapshot, observed_coalesced_receipt_count);
+        auto update = make_common_update(
+                snapshot,
+                state.candidate->identity(),
+                observed_coalesced_receipt_count);
         update.kind = UpdateKind::Keyframe;
         update.base_revision = 0U;
         update.revision_span = snapshot.revision;
@@ -119,8 +162,8 @@ namespace PerceptionMapUpdate {
                 std::move(target),
                 {},
                 timing,
-                std::nullopt};
-        prepared.expected_baseline = current_baseline_token();
+                current_baseline_token(),
+                state.candidate};
         return prepared;
     }
 
@@ -140,7 +183,7 @@ namespace PerceptionMapUpdate {
         PrepareTiming timing;
         if(!target) {
             return {ProduceStatus::RejectedInvalidSnapshot, std::nullopt, nullptr,
-                    "target snapshot is null", timing, std::nullopt};
+                    "target snapshot is null", timing, std::nullopt, nullptr};
         }
         const auto & snapshot = *target;
         const auto validation_start = std::chrono::steady_clock::now();
@@ -148,9 +191,9 @@ namespace PerceptionMapUpdate {
         timing.validation_duration_ns = elapsed_ns(validation_start);
         if(!validation) {
             return {ProduceStatus::RejectedInvalidSnapshot, std::nullopt, nullptr,
-                    validation.diagnostic, timing, std::nullopt};
+                    validation.diagnostic, timing, std::nullopt, nullptr};
         }
-        if(!baseline_ || pending_correlation_id_.has_value()
+        if(!baseline_ || !committed_state_ || pending_correlation_id_.has_value()
            || !limits_.delta_enabled || baseline_->source != snapshot.source
            || !(baseline_->geometry == snapshot.geometry)
            || baseline_->geometry_fingerprint != snapshot.geometry_fingerprint
@@ -162,78 +205,102 @@ namespace PerceptionMapUpdate {
                           >= limits_.periodic_keyframe_revision_interval)) {
             return make_keyframe(target, observed_coalesced_receipt_count, timing);
         }
-        if(snapshot.revision == baseline_->revision
-           && snapshot.content_hash == baseline_->content_hash) {
-            return {ProduceStatus::NoNewRevision,
+        if(snapshot.revision == baseline_->revision) {
+            if(snapshot.cells == baseline_->cells) {
+                return {ProduceStatus::NoNewRevision,
+                        std::nullopt,
+                        nullptr,
+                        {},
+                        timing,
+                        std::nullopt,
+                        nullptr};
+            }
+            return {ProduceStatus::RejectedInvalidSnapshot,
                     std::nullopt,
                     nullptr,
-                    {},
+                    "target changes cells without advancing revision",
                     timing,
-                    std::nullopt};
+                    std::nullopt,
+                    nullptr};
         }
-        if(snapshot.revision <= baseline_->revision) {
+        if(snapshot.revision < baseline_->revision) {
             return {ProduceStatus::RejectedInvalidSnapshot, std::nullopt, nullptr,
                     "target revision does not advance the producer baseline",
-                    timing,
-                    std::nullopt};
+                    timing, std::nullopt, nullptr};
         }
         if(snapshot.revision - baseline_->revision > limits_.max_revision_span) {
             return make_keyframe(target, observed_coalesced_receipt_count, timing);
         }
+
         const auto diff_start = std::chrono::steady_clock::now();
         const auto diff = SnapshotDiffer::compare(*baseline_, snapshot, limits_);
         timing.diff_duration_ns = elapsed_ns(diff_start);
         if(!diff.success) {
             return make_keyframe(target, observed_coalesced_receipt_count, timing);
         }
+        const auto state = committed_state_->apply(diff.operations);
+        record_merkle_timing(state, timing);
+        if(!state || !state.candidate) {
+            return {state.resource_limit
+                            ? ProduceStatus::RejectedResourceLimit
+                            : ProduceStatus::RejectedInvalidSnapshot,
+                    std::nullopt,
+                    nullptr,
+                    state.diagnostic,
+                    timing,
+                    current_baseline_token(),
+                    nullptr};
+        }
+
         const auto encode_start = std::chrono::steady_clock::now();
         auto encoded = CanonicalCodec::encode_delta_payload(diff.operations, limits_);
         timing.encode_duration_ns = elapsed_ns(encode_start);
         if(!encoded.success) {
-            return make_keyframe(target, observed_coalesced_receipt_count, timing);
+            return {ProduceStatus::RejectedResourceLimit, std::nullopt, nullptr,
+                    encoded.diagnostic, timing, current_baseline_token(), nullptr};
         }
-        auto update = make_common_update(snapshot, observed_coalesced_receipt_count);
+        auto update = make_common_update(
+                snapshot,
+                state.candidate->identity(),
+                observed_coalesced_receipt_count);
         update.kind = UpdateKind::Delta;
         update.base_revision = baseline_->revision;
         update.revision_span = snapshot.revision - baseline_->revision;
-        update.base_content_hash = baseline_->content_hash;
+        update.base_content_hash = committed_state_->identity().digest;
         update.operation_count = static_cast<std::uint64_t>(diff.operations.size());
         update.payload = std::move(encoded.bytes);
         update.canonical_payload_bytes = static_cast<std::uint64_t>(update.payload.size());
         const auto hash_start = std::chrono::steady_clock::now();
         update.update_hash = ContentHasher::update_hash(update);
         timing.update_hash_duration_ns = elapsed_ns(hash_start);
-        PreparedUpdate prepared {
-                ProduceStatus::ProducedDelta,
+        return {ProduceStatus::ProducedDelta,
                 std::move(update),
                 std::move(target),
                 {},
                 timing,
-                std::nullopt};
-        prepared.expected_baseline = current_baseline_token();
-        return prepared;
+                current_baseline_token(),
+                state.candidate};
     }
 
     bool MapUpdateProducer::commit_published(const PreparedUpdate & prepared)
     {
-        if(!prepared.update.has_value() || !prepared.target_snapshot) {
+        if(!prepared.update.has_value() || !prepared.target_snapshot
+           || !prepared.candidate_state) {
             return false;
         }
         const auto & update = *prepared.update;
         const auto & target = *prepared.target_snapshot;
-        if(prepared.expected_baseline.has_value() != static_cast<bool>(baseline_)) {
+        if(prepared.expected_baseline.has_value() != static_cast<bool>(baseline_)
+           || static_cast<bool>(baseline_) != static_cast<bool>(committed_state_)) {
             return false;
         }
-        if(prepared.expected_baseline.has_value()) {
-            const auto & expected = *prepared.expected_baseline;
-            if(baseline_->source != expected.source
-               || baseline_->revision != expected.revision
-               || baseline_->content_hash != expected.content_hash) {
-                return false;
-            }
+        if(prepared.expected_baseline.has_value()
+           && *prepared.expected_baseline != *current_baseline_token()) {
+            return false;
         }
         if(update.source != target.source || update.new_revision != target.revision
-           || update.content_hash != target.content_hash
+           || update.content_identity != prepared.candidate_state->identity().descriptor
+           || update.content_hash != prepared.candidate_state->identity().digest
            || update.update_hash != ContentHasher::update_hash(update)) {
             return false;
         }
@@ -247,18 +314,21 @@ namespace PerceptionMapUpdate {
            && delta_chain_length_ == std::numeric_limits<std::uint64_t>::max()) {
             return false;
         }
+
+        baseline_ = prepared.target_snapshot;
+        committed_state_ = prepared.candidate_state;
         if(update.kind == UpdateKind::Keyframe) {
-            baseline_ = prepared.target_snapshot;
             delta_chain_length_ = 0U;
             last_keyframe_revision_ = target.revision;
             if(pending_correlation_id_.has_value()
                && update.correlation_id == pending_correlation_id_) {
                 pending_correlation_id_.reset();
             }
-        } else if(update.kind == UpdateKind::Delta) {
-            baseline_ = prepared.target_snapshot;
+        }
+        else if(update.kind == UpdateKind::Delta) {
             ++delta_chain_length_;
-        } else {
+        }
+        else {
             return false;
         }
         return true;
@@ -267,11 +337,13 @@ namespace PerceptionMapUpdate {
     std::optional<ProducerBaselineToken>
     MapUpdateProducer::current_baseline_token() const
     {
-        if(!baseline_) {
+        if(!baseline_ || !committed_state_) {
             return std::nullopt;
         }
         return ProducerBaselineToken {
-                baseline_->source, baseline_->revision, baseline_->content_hash};
+                baseline_->source,
+                baseline_->revision,
+                committed_state_->identity()};
     }
 
     bool MapUpdateProducer::request_keyframe(std::string correlation_id)
@@ -305,6 +377,12 @@ namespace PerceptionMapUpdate {
     MapUpdateProducer::baseline() const noexcept
     {
         return baseline_;
+    }
+
+    const std::shared_ptr<const MerkleMapState> &
+    MapUpdateProducer::committed_state() const noexcept
+    {
+        return committed_state_;
     }
 
     std::uint64_t MapUpdateProducer::delta_chain_length() const noexcept

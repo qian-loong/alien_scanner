@@ -171,7 +171,10 @@ namespace PerceptionProfiling {
                    "session_boot_ns,session_suffix,fingerprint,full_no_return,active_sensor_count\n";
         diagnostics_ << "receipt_monotonic_ns,stamp_ns,level,name,message\n";
         snapshots_ << "receipt_monotonic_ns,stamp_ns,ordinal,binary,resolution_m,data_bytes\n";
-        map_updates_ << "receipt_monotonic_ns,stamp_ns,update_kind,vehicle_id,"
+        map_updates_ << "receipt_monotonic_ns,stamp_ns,protocol_version,"
+                        "canonical_encoding_version,hash_algorithm,content_identity_scheme,"
+                        "content_identity_chunk_edge,content_identity_coordinate_key_version,"
+                        "content_identity_node_encoding_version,update_kind,vehicle_id,"
                         "mapper_session_boot_ns,mapper_session_suffix,map_epoch,base_revision,"
                         "new_revision,revision_span,observed_coalesced_receipt_count,"
                         "known_cell_count,operation_count,canonical_payload_bytes,"
@@ -183,9 +186,10 @@ namespace PerceptionProfiling {
                                  "publish_failures,resource_rejections,snapshot_cells,"
                                  "delta_operations,payload_bytes,acquire_duration_ns,"
                                  "materialize_duration_ns,traversal_duration_ns,"
-                                 "canonicalize_duration_ns,content_hash_duration_ns,"
+                                 "canonicalize_duration_ns,geometry_fingerprint_duration_ns,"
                                  "prepare_duration_ns,validation_duration_ns,diff_duration_ns,"
-                                 "encode_duration_ns,update_hash_duration_ns,publish_duration_ns\n";
+                                 "encode_duration_ns,store_candidate_duration_ns,"
+                                 "merkle_duration_ns,update_hash_duration_ns,publish_duration_ns\n";
         write_manifest();
     }
 
@@ -374,11 +378,17 @@ namespace PerceptionProfiling {
                 << required_integer<std::int64_t>(values, "materialize_duration_ns") << ','
                 << required_integer<std::int64_t>(values, "traversal_duration_ns") << ','
                 << required_integer<std::int64_t>(values, "canonicalize_duration_ns") << ','
-                << required_integer<std::int64_t>(values, "content_hash_duration_ns") << ','
+                << required_integer<std::int64_t>(
+                           values, "geometry_fingerprint_duration_ns")
+                << ','
                 << required_integer<std::int64_t>(values, "prepare_duration_ns") << ','
                 << required_integer<std::int64_t>(values, "validation_duration_ns") << ','
                 << required_integer<std::int64_t>(values, "diff_duration_ns") << ','
                 << required_integer<std::int64_t>(values, "encode_duration_ns") << ','
+                << required_integer<std::int64_t>(
+                           values, "store_candidate_duration_ns")
+                << ','
+                << required_integer<std::int64_t>(values, "merkle_duration_ns") << ','
                 << required_integer<std::int64_t>(values, "update_hash_duration_ns") << ','
                 << required_integer<std::int64_t>(values, "publish_duration_ns") << '\n';
         producer_diagnostics_.flush();
@@ -408,6 +418,13 @@ namespace PerceptionProfiling {
             }
         }
         map_updates_ << update.receipt_monotonic_ns << ',' << update.stamp_ns << ','
+                     << update.protocol_version << ','
+                     << update.canonical_encoding_version << ','
+                     << static_cast<unsigned int>(update.hash_algorithm) << ','
+                     << update.content_identity_scheme << ','
+                     << update.content_identity_chunk_edge << ','
+                     << update.content_identity_coordinate_key_version << ','
+                     << update.content_identity_node_encoding_version << ','
                      << static_cast<unsigned int>(update.update_kind) << ','
                      << csv_escape(update.vehicle_id) << ','
                      << update.mapper_session.boot_time_ns << ','

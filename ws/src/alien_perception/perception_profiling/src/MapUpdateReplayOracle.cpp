@@ -3,6 +3,7 @@
 #include "perception_profiling/ProfileMapHarness.hpp"
 
 #include "perception_local_map/CanonicalSnapshotAdapter.hpp"
+#include "perception_map_update/ContentHasher.hpp"
 #include "perception_map_update/MapUpdateProducer.hpp"
 #include "perception_map_update/SnapshotDiffer.hpp"
 
@@ -64,15 +65,15 @@ namespace PerceptionProfiling {
             if(!revision_matches) {
                 return "revision mismatch";
             }
-            if(!hash_matches) {
-                return "content hash mismatch";
-            }
             if(missing != 0U || unexpected != 0U || state_mismatches != 0U) {
                 std::ostringstream stream;
                 stream << "cell mismatch: missing=" << missing
                        << ", unexpected=" << unexpected
                        << ", state=" << state_mismatches;
                 return stream.str();
+            }
+            if(!hash_matches) {
+                return "content hash mismatch";
             }
             return {};
         }
@@ -147,8 +148,14 @@ namespace PerceptionProfiling {
                         "replay canonical snapshot failed: " + materialized.diagnostic);
             }
 
-            auto target = std::make_shared<const PerceptionMapUpdate::CanonicalSnapshot>(
+            auto target = std::make_shared<PerceptionMapUpdate::CanonicalSnapshot>(
                     std::move(*materialized.snapshot));
+            // The flat digest is retained only for this isolated replay/oracle comparison;
+            // production producer/receiver never consume CanonicalSnapshot::content_hash.
+            target->content_hash = PerceptionMapUpdate::ContentHasher::content_hash(
+                    target->source,
+                    target->geometry_fingerprint,
+                    target->cells);
             std::vector<PerceptionMapUpdate::DeltaOperation> transition_operations;
             if(options.snapshot_transition_observer && final_oracle) {
                 const auto diff = PerceptionMapUpdate::SnapshotDiffer::compare(
@@ -270,7 +277,12 @@ namespace PerceptionProfiling {
         const bool source_matches = oracle.source == reconstructed.source;
         const bool geometry_matches = oracle.geometry == reconstructed.geometry;
         const bool revision_matches = oracle.revision == reconstructed.revision;
-        const bool hash_matches = oracle.content_hash == reconstructed.content_hash;
+        const auto reconstructed_flat_hash = PerceptionMapUpdate::ContentHasher::content_hash(
+                reconstructed.source,
+                PerceptionMapUpdate::ContentHasher::geometry_fingerprint(
+                        reconstructed.geometry),
+                reconstructed.cells);
+        const bool hash_matches = oracle.content_hash == reconstructed_flat_hash;
 
         std::size_t oracle_index = 0U;
         auto reconstructed_cursor = reconstructed.cells.cursor();

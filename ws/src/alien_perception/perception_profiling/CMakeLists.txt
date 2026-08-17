@@ -119,6 +119,10 @@ add_executable(perception_chunk_layout_estimator src/ChunkLayoutEstimatorMain.cp
 target_link_libraries(perception_chunk_layout_estimator
   perception_profiling_core yaml-cpp::yaml-cpp)
 
+add_executable(perception_merkle_profile src/MerkleHashBenchmarkMain.cpp)
+target_link_libraries(perception_merkle_profile
+  perception_profiling_core)
+
 add_executable(
   map_update_replay_visualization_node
   src/MapUpdateReplayVisualizationNode.cpp
@@ -144,6 +148,7 @@ install(TARGETS
   perception_profile_sink
   perception_profile_oracle
   perception_chunk_layout_estimator
+  perception_merkle_profile
   map_update_replay_visualization_node
   DESTINATION lib/${PROJECT_NAME}
 )

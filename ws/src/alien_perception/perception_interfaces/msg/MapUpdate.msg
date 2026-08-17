@@ -11,6 +11,7 @@ uint8 KIND_REMOVE = 4
 uint16 protocol_version
 uint16 canonical_encoding_version
 uint8 hash_algorithm
+perception_interfaces/ContentIdentityDescriptor content_identity
 uint8 update_kind
 
 string vehicle_id

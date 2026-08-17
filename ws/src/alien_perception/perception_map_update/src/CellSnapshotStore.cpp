@@ -615,6 +615,13 @@ namespace PerceptionMapUpdate {
     CellStoreResult CellSnapshotStore::estimate_replace_upper_bound(
             std::size_t cell_count) const noexcept
     {
+        return estimate_replace_upper_bound(cell_count, cell_count);
+    }
+
+    CellStoreResult CellSnapshotStore::estimate_replace_upper_bound(
+            std::size_t cell_count,
+            std::size_t chunk_count) const noexcept
+    {
         CellStorageMetrics metrics;
         metrics.committed_live_bytes = metrics_.committed_live_bytes;
         if(config_.mode == CellStorageMode::Vector) {
@@ -633,9 +640,12 @@ namespace PerceptionMapUpdate {
         std::size_t grouping_records = 0U;
         std::size_t ownership_records = 0U;
         std::size_t scratch = 0U;
-        std::size_t doubled_cells = 0U;
+        if(chunk_count > cell_count) {
+            return {false, "cell storage replacement chunk count exceeds cell count", {}};
+        }
+        std::size_t doubled_chunks = 0U;
         std::size_t grouping_record_size = 0U;
-        if(!checked_add(cell_count, cell_count, doubled_cells)
+        if(!checked_add(chunk_count, chunk_count, doubled_chunks)
            || !checked_bytes(
                    state_->buckets.capacity(),
                    sizeof(std::shared_ptr<const ChunkBucket>),
@@ -644,16 +654,16 @@ namespace PerceptionMapUpdate {
                    config_.bucket_count,
                    sizeof(std::shared_ptr<ChunkBucket>),
                    mutable_directory)
-           || !checked_bytes(doubled_cells, sizeof(ChunkEntry), bucket_entries)
+           || !checked_bytes(doubled_chunks, sizeof(ChunkEntry), bucket_entries)
            || !checked_bytes(cell_count, sizeof(CanonicalCell), decoded_cells)
            || !checked_bytes(cell_count, sizeof(CanonicalCell), chunk_cells)
            || !checked_add(
                    sizeof(std::pair<const ChunkCoordinate, CellChunk>),
                    4U * sizeof(void *),
                    grouping_record_size)
-           || !checked_bytes(cell_count, grouping_record_size, grouping_records)
+           || !checked_bytes(chunk_count, grouping_record_size, grouping_records)
            || !checked_bytes(
-                   doubled_cells,
+                   doubled_chunks,
                    2U * sizeof(void *),
                    ownership_records)
            || !traversal_scratch_upper_bound(cell_count, scratch)
@@ -680,7 +690,7 @@ namespace PerceptionMapUpdate {
                    metrics.candidate_owned_bytes)) {
             return {false, "cell storage replacement estimate overflow", {}};
         }
-        metrics.total_chunks = cell_count;
+        metrics.total_chunks = chunk_count;
         metrics.traversal_scratch_bytes = scratch;
         return {true, {}, metrics};
     }
@@ -1064,6 +1074,74 @@ namespace PerceptionMapUpdate {
     CanonicalCellView CellSnapshotStore::view() const
     {
         return CanonicalCellView(state_);
+    }
+
+    void CellSnapshotStore::for_each_chunk(const ChunkVisitor & visitor) const
+    {
+        if(!visitor) {
+            throw std::invalid_argument("cell chunk visitor must not be empty");
+        }
+        if(state_->mode == CellStorageMode::Vector) {
+            std::map<ChunkCoordinate, std::vector<CanonicalCell>> grouped;
+            for(const auto & cell : state_->vector_cells) {
+                const auto address = locate_chunk(cell.index, config_.chunk_edge);
+                if(!address) {
+                    throw std::logic_error(address.diagnostic);
+                }
+                grouped[address.address.chunk].push_back(cell);
+            }
+            for(const auto & entry : grouped) {
+                visitor(entry.first, entry.second);
+            }
+            return;
+        }
+
+        std::vector<const ChunkEntry *> entries;
+        for(const auto & bucket : state_->buckets) {
+            if(!bucket) {
+                continue;
+            }
+            for(const auto & entry : *bucket) {
+                if(!entry.chunk->empty()) {
+                    entries.push_back(&entry);
+                }
+            }
+        }
+        std::sort(
+                entries.begin(),
+                entries.end(),
+                [](const ChunkEntry * left, const ChunkEntry * right) {
+                    return left->coordinate < right->coordinate;
+                });
+        for(const auto * entry : entries) {
+            visitor(entry->coordinate, *entry->chunk);
+        }
+    }
+
+    bool CellSnapshotStore::copy_chunk(
+            const ChunkCoordinate & coordinate,
+            std::vector<CanonicalCell> & cells) const
+    {
+        cells.clear();
+        if(state_->mode == CellStorageMode::Chunked) {
+            const auto * entry = find_entry(*state_, coordinate);
+            if(entry == nullptr || entry->chunk->empty()) {
+                return false;
+            }
+            cells = *entry->chunk;
+            return true;
+        }
+
+        for(const auto & cell : state_->vector_cells) {
+            const auto address = locate_chunk(cell.index, config_.chunk_edge);
+            if(!address) {
+                throw std::logic_error(address.diagnostic);
+            }
+            if(address.address.chunk == coordinate) {
+                cells.push_back(cell);
+            }
+        }
+        return !cells.empty();
     }
 
     const CellStorageMetrics & CellSnapshotStore::metrics() const noexcept

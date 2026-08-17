@@ -27,6 +27,15 @@ BOUNDED_GROWTH_THRESHOLD_KIB_PER_MINUTE = 1024.0
 CAPACITY_BUCKET_SIZE = 200
 C3_MODES = {"disabled", "enabled", "keyframe-only"}
 C3_ZERO_HASH = "0" * 64
+C3_V2_IDENTITY = {
+    "protocol_version": 2,
+    "canonical_encoding_version": 1,
+    "hash_algorithm": 1,
+    "content_identity_scheme": 2,
+    "content_identity_chunk_edge": 16,
+    "content_identity_coordinate_key_version": 1,
+    "content_identity_node_encoding_version": 1,
+}
 
 REQUIRED_STAGE_NAMES = EVENT_SET_STAGES["full"]
 
@@ -576,6 +585,13 @@ def _validate_c3_evidence(
         updates_path,
         (
             "receipt_monotonic_ns",
+            "protocol_version",
+            "canonical_encoding_version",
+            "hash_algorithm",
+            "content_identity_scheme",
+            "content_identity_chunk_edge",
+            "content_identity_coordinate_key_version",
+            "content_identity_node_encoding_version",
             "update_kind",
             "vehicle_id",
             "mapper_session_boot_ns",
@@ -615,11 +631,13 @@ def _validate_c3_evidence(
             "materialize_duration_ns",
             "traversal_duration_ns",
             "canonicalize_duration_ns",
-            "content_hash_duration_ns",
+            "geometry_fingerprint_duration_ns",
             "prepare_duration_ns",
             "validation_duration_ns",
             "diff_duration_ns",
             "encode_duration_ns",
+            "store_candidate_duration_ns",
+            "merkle_duration_ns",
             "update_hash_duration_ns",
             "publish_duration_ns",
         ),
@@ -686,6 +704,11 @@ def _validate_c3_evidence(
     previous: dict[str, str] | None = None
     keyframes = deltas = revision_only = 0
     for row in updates:
+        for field, expected in C3_V2_IDENTITY.items():
+            if _integer(row, field, updates_path) != expected:
+                raise ValueError(
+                    f"{updates_path}: update does not use the production v2 identity"
+                )
         kind = _integer(row, "update_kind", updates_path)
         base_revision = _integer(row, "base_revision", updates_path)
         new_revision = _integer(row, "new_revision", updates_path)
@@ -774,11 +797,13 @@ def _validate_c3_evidence(
         "materialize_duration_ns",
         "traversal_duration_ns",
         "canonicalize_duration_ns",
-        "content_hash_duration_ns",
+        "geometry_fingerprint_duration_ns",
         "prepare_duration_ns",
         "validation_duration_ns",
         "diff_duration_ns",
         "encode_duration_ns",
+        "store_candidate_duration_ns",
+        "merkle_duration_ns",
         "update_hash_duration_ns",
         "publish_duration_ns",
     )

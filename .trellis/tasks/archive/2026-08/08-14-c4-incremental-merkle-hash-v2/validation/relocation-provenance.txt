@@ -1,0 +1,12 @@
+schema=alien-scanner/c4-merkle-v2-profile-evidence-relocation/v1
+relocated_on=2026-08-15
+capture_repository_root=.trellis/tasks/08-14-c4-incremental-merkle-hash-v2/validation
+local_raw_root=profiling-archive/c4-merkle-v2-20260815/raw
+git_summary_root=.trellis/tasks/08-14-c4-incremental-merkle-hash-v2/validation
+raw_file_count=905
+raw_total_bytes=4699734
+raw_tree_manifest_sha256=301d653297508f41433545caffa14810afd0d719b1e751340d0a076e2beada34
+raw_tree_manifest_format=sorted lowercase-sha256 two-spaces forward-slash-relative-path newline
+capture_paths_preserved=true
+raw_files_modified=false
+git_mirrored_evidence_files_are_hash_verified_copies=true

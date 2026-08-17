@@ -3,7 +3,7 @@
   "name": "c4-chunked-map-cow-optimization",
   "title": "分块地图布局估算与 COW 优化",
   "description": "在 C5 EdgeAggregator 前对接收端空间块大小 8/16/32 做只读估算，并在证据门通过后实施不可变空间块、固定分片索引与写时复制；保持 C3/C4 wire、hash、revision 和 resync 语义不变。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": "C4.1 receiver chunked storage and profiling",
   "package": "perception_map_update,perception_profiling,swarm_data_plane",
@@ -11,7 +11,7 @@
   "creator": "loong",
   "assignee": "loong",
   "createdAt": "2026-08-13",
-  "completedAt": null,
+  "completedAt": "2026-08-17",
   "branch": "phase/4-chunked-map-cow",
   "base_branch": "main",
   "worktree_path": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": "07-21-perception-swarm-architecture-refactor",
   "relatedFiles": [],
-  "notes": "规划分两门：A 先用一维、真实三维 replay 和分散最坏场景比较 8/16/32，无明确赢家默认 16；B 再做 vector/chunked 语义等价和 C4 正式矩阵 A/B。完整 canonical SHA-256 仍为 O(N)，不得宣称端到端完全增量。",
+  "notes": "Gate A 选择 edge 16 作为三档折中研究候选；Gate B 因复制收敛、端到端 apply 和常驻内存未过门而判定 no-go，生产默认保持 Vector。完整 canonical SHA-256 仍为 O(N)，不得宣称端到端完全增量。任务已 squash 合并为 5875a41；未执行的正式矩阵和内存工具保持明确标注。10 个未跟踪 estimator 中间文件已迁入 profiling-archive/c4-chunked-map-cow-20260814/raw/，数量、字节数和树摘要校验一致。",
   "meta": {}
 }

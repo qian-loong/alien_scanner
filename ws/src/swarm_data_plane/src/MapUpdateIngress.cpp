@@ -63,10 +63,9 @@ namespace SwarmDataPlane {
 
     MapUpdateIngress::MapUpdateIngress(
             DataPlaneLimits data_plane_limits,
-            PerceptionMapUpdate::MapUpdateLimits map_update_limits,
-            PerceptionMapUpdate::CellStorageConfig cell_storage)
+            PerceptionMapUpdate::MapUpdateLimits map_update_limits)
             : limits_(std::move(data_plane_limits)),
-              map_applier_(std::move(map_update_limits), cell_storage)
+              map_applier_(std::move(map_update_limits))
     {
     }
 

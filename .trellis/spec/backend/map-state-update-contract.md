@@ -29,14 +29,46 @@ struct CellStorageConfig {
     std::uint32_t chunk_edge = 16U;
     std::size_t bucket_count = 256U;
 };
-MapUpdateApplier::MapUpdateApplier(
-    MapUpdateLimits limits = {}, CellStorageConfig storage = {});
+explicit MapUpdateApplier::MapUpdateApplier(MapUpdateLimits limits = {});
 CanonicalCellCursor CanonicalCellView::cursor() const;
 std::vector<CanonicalCell> CanonicalCellView::materialize() const;
 CellStoreResult CellSnapshotStore::estimate_apply_upper_bound(
     const std::vector<DeltaOperation> & operations) const noexcept;
 CellStoreResult CellSnapshotStore::apply(
     const std::vector<DeltaOperation> & operations);
+void CellSnapshotStore::for_each_chunk(const ChunkVisitor & visitor) const;
+bool CellSnapshotStore::copy_chunk(
+    const ChunkCoordinate & coordinate,
+    std::vector<CanonicalCell> & cells) const;
+
+struct ContentIdentityDescriptor {
+    ContentIdentityScheme scheme = ContentIdentityScheme::MerklePatriciaSha256V2;
+    std::uint32_t chunk_edge = 16U;
+    std::uint16_t coordinate_key_version = 1U;
+    std::uint16_t node_encoding_version = 1U;
+};
+MerkleMapStateResult MerkleMapState::build(
+    const SourceIdentity & source,
+    const Hash256 & geometry_fingerprint,
+    const std::vector<CanonicalCell> & cells,
+    CellStorageConfig storage = {CellStorageMode::Chunked, 16U, 256U},
+    ContentIdentityDescriptor descriptor = {},
+    MapUpdateLimits limits = {});
+MerkleMapStateResult MerkleMapState::apply(
+    const std::vector<DeltaOperation> & operations) const;
+MerkleTreeResult MerklePatriciaTree::full_rebuild(
+    const SourceIdentity & source,
+    const Hash256 & geometry_fingerprint,
+    const CellSnapshotStore & store,
+    ContentIdentityDescriptor descriptor = {});
+MerkleTreeResult MerklePatriciaTree::apply(
+    const std::vector<MerkleChunkMutation> & mutations) const;
+MerklePrototypeResult MerklePrototypeApplier::apply(
+    const std::vector<DeltaOperation> & operations) const;
+MerklePrototypeTransition MerklePrototypeProtocol::verify_delta(
+    const MerklePrototypeApplier & committed,
+    std::uint64_t committed_revision,
+    const MerklePrototypeUpdate & update);
 
 ResyncResponse ResyncRequestLedger::accept(
     const ResyncRequest & request,
@@ -61,6 +93,15 @@ The ROS boundary is `perception_interfaces/msg/MapUpdate.msg` plus
 only acceptance, correlation, current-source identity/revision, and a bounded
 diagnostic; the keyframe remains an asynchronous `MapUpdate` publication.
 
+C4.3 fixes that ROS boundary to protocol v2-only. `MapUpdate.protocol_version`
+is `2`, `canonical_encoding_version` is `1`, and the only accepted hash
+algorithm is SHA-256. `content_identity` must be
+`{scheme=MerklePatriciaSha256V2, chunk_edge=16, coordinate_key_version=1,
+node_encoding_version=1}`. The `base_content_hash` and `content_hash` fields
+carry the versioned base/result Merkle digests; the descriptor is never inferred
+from a bare 32-byte value. Direct and routed resync messages carry the same
+descriptor plus digest, so a descriptor drift or unknown enum fails closed.
+
 ## 3. Contracts
 
 - Canonical state is a strictly sorted sparse vector of known `Free` or
@@ -71,23 +112,64 @@ diagnostic; the keyframe remains an asynchronous `MapUpdate` publication.
   `for_each()`; `materialize()` is reserved for explicit compatibility, test,
   or serialization boundaries and must not be cached as a second authoritative
   map.
-- `Vector` and `Chunked` storage modes implement the same apply state machine.
-  `Vector` remains the production default because the C4.1 Gate B was no-go.
-  Edge 16 with 256 deterministic buckets is the retained research candidate,
-  not a claim that chunked storage is currently faster or production-enabled.
+- `CellSnapshotStore` still exposes `Vector` and `Chunked` conformance modes,
+  but the production `MapUpdateProducer` and `MapUpdateApplier` are now v2-only
+  and use immutable chunked storage with edge 16 and 256 deterministic buckets.
+  Flat v1/vector remains available only to isolated correctness or benchmark
+  oracles; it is not a production runtime fallback.
 - A chunked committed snapshot, its buckets, and chunks are immutable. Delta
   apply shallow-copies the fixed directory and clones only touched buckets and
   chunks; unchanged chunks retain shared object identity. Revision-only delta
   shares every chunk. Candidate construction must not allocate a complete
   canonical cell vector.
+- Production Merkle code may use `CellSnapshotStore::for_each_chunk()` or
+  `copy_chunk()` to read deterministic const chunk contents. These visitors
+  never expose bucket/chunk mutability or replace the storage-independent
+  `CanonicalCellView` consumer boundary.
+- The production v2 identity is a persistent Merkle Patricia trie over edge-16
+  chunks. Its collision-free 192-bit key is signed `x/y/z` int64 with each sign
+  bit flipped and each axis written big-endian. Empty, leaf, branch, outer
+  content, and prototype-update hashes use distinct length-prefixed domains.
+  Leaves retain only key, digest, and cell count; canonical chunk cells remain
+  owned by `CellSnapshotStore` and are not duplicated in the tree.
+- A v2 descriptor is part of the content and update identity. Scheme, chunk
+  edge, coordinate-key version, and node-encoding version must all match. A
+  bare `HashAlgorithm::Sha256` value cannot identify flat v1 versus Merkle v2,
+  and a v1 base must never continue a v2 delta chain.
+- `MerkleMapState` copies the immutable committed store/tree handles, builds
+  touched chunks and persistent trie paths, validates the locally recomputed
+  result root, then publishes one candidate containing both. The historical
+  `MerklePrototypeApplier` name is only a compatibility alias used by isolated
+  tests/benchmarks; it is not a second production state machine. Any operation,
+  descriptor, base, count/overflow, or root failure discards the candidate and
+  cannot mutate the committed store, root, or revision.
+- Initial/resync keyframes still rebuild store and tree in O(N). Existing-leaf
+  delta work is proportional to touched chunks and their shared Patricia paths,
+  not the complete known-cell stream. Revision-only deltas allocate no tree
+  nodes and preserve the content root. An empty keyframe has a non-zero
+  canonical root; `Remove` uses a zero tombstone and no candidate map.
+- Merkle correctness mode may compute flat v1 and full-rebuild v2 oracles.
+  Merkle performance mode must not compute any flat keyframe/hash/apply work;
+  flat performance mode must not compute Merkle work. Evidence directories are
+  create-once and each run records executable SHA/build ID, image SHA,
+  PID/starttime, source hashes, command, compiler, PSS/USS, and raw smaps.
+- C4.3 promotes the ROS-visible contract to protocol v2-only. `MapUpdate`
+  carries a `ContentIdentityDescriptor` and the base/result Merkle digests;
+  conversions and direct/routed resync messages reject unknown descriptors
+  before allocation. Relays treat the nested update as opaque and do not inspect
+  Patricia nodes. The implementation is complete on the integration branch,
+  but production acceptance remains pending the separately required 3 x
+  300-second resource matrix, sanitizer/memory-tool evidence, and rollback
+  review. Until that Gate is recorded as GO, C5d must remain blocked.
 - Chunk coordinates use mathematical floor division for negative voxel indices.
   A chunked canonical cursor performs a deterministic global `(x,y,z)` merge;
   bucket order, chunk-coordinate order, and local chunk order are not protocol
   v1 canonical order by themselves.
-- Protocol v1 `content_hash` remains flat SHA-256 over the complete canonical
-  stream for both storage modes. Chunked COW reduces candidate copying but does
-  not remove the `O(N)` receiver hash traversal; Merkle identity is a separate
-  wire/hash-version task.
+- Flat protocol-v1 `content_hash` remains a frozen SHA-256 oracle over the
+  complete canonical stream for both storage modes. It is not read or written
+  by production v2 nodes. Production `content_hash` is the locally recomputed
+  v2 Merkle root, whose descriptor is carried in the same update and resync
+  identity; the receiver never trusts a sender-provided root.
 - Protocol v1 orders a chain by `(vehicle_id, mapper_session, map_epoch,
   revision)`. ROS `header.stamp`, correlation IDs, and transport arrival time
   never participate in ordering or hashes.
@@ -203,6 +285,12 @@ diagnostic; the keyframe remains an asynchronous `MapUpdate` publication.
 | Negative voxel index lies on or beside a chunk boundary | Use floor division and produce a local coordinate in `[0, chunk_edge)`; never use C++ truncation toward zero |
 | Chunked estimate or apply sees unsorted/duplicate/invalid operations or checked-size overflow | Return a failed `CellStoreResult`; keep the committed snapshot and sharing identities unchanged |
 | Candidate count/hash/resource check fails after chunk construction | Discard the candidate atomically; retain the last legal revision, cells, hash, and freshness |
+| Merkle descriptor is unknown, has a non-16 edge, or differs between envelope/base/result | Reject before candidate commit; do not reinterpret the 32-byte digest as flat v1 |
+| Merkle delta base descriptor/root/revision, source, or geometry differs from committed state | Reject atomically and retain the committed store/tree pair |
+| Producer result root or prototype update hash is tampered | Recompute locally, reject the candidate, and retain the committed store/tree pair |
+| Revision-only Merkle delta has no operations | Reuse the committed tree/root and allocate zero candidate tree bytes |
+| Merkle remove targets the valid committed chain | Commit a zero tombstone with no candidate map; never equate it with the non-zero empty-keyframe root |
+| Profiling output directory already exists or run identities differ | Fail the run/aggregate; never overwrite or combine the evidence |
 | Declared count/bytes disagree with payload or exceed a configured limit | Reject before decode allocation or candidate-state mutation |
 | Shared snapshot passed to `prepare()` is null | Return `RejectedInvalidSnapshot`; do not create an update or change the baseline |
 | C2 receipt is superseded | Fall forward to the current exact transaction or discard; never combine old metadata with current cells |
@@ -230,12 +318,20 @@ diagnostic; the keyframe remains an asynchronous `MapUpdate` publication.
   refer to the same object.
 - Base: delta production is disabled. The same envelope, resource admission,
   atomic keyframe replacement, and resync path remain valid.
-- Base: `MapUpdateApplier(limits)` uses `Vector`; callers opt into chunked
-  storage only through an explicit `CellStorageConfig` for conformance or
-  profiling.
+- Base: the production `MapUpdateApplier(limits)` uses fixed chunk-16 Merkle
+  state; `CellStorageConfig{Vector,...}` is reserved for isolated flat-v1
+  conformance and benchmark code.
 - Good: a chunked delta changes two chunks, preserves the pointer identity of
   every untouched chunk, hashes the cursor stream to the same v1 digest as a
   vector applier, and commits only after all checks pass.
+- Good: a v2 receiver starts from its local committed tree, applies four
+  touched chunks, recomputes leaf/branch/content hashes, and accepts only when
+  its result equals the versioned producer root.
+- Base: a flat-v1 oracle may be linked by unit/profiling code, but production
+  ROS nodes publish and verify only the v2 descriptor/root contract.
+- Bad: trusting a producer-provided Merkle root, using a bucket hash as the trie
+  key, accepting an unknown descriptor as v1, or computing flat SHA-256 in a
+  v2 production/profile run.
 - Good: replay runs once, caches the final MarkerArrays, and republishes only
   those arrays at 1 Hz; an RViz display toggled back on recovers within one
   period without changing the oracle diagnostic.
@@ -273,6 +369,18 @@ diagnostic; the keyframe remains an asynchronous `MapUpdate` publication.
   cursor global order, flat-hash golden equivalence, and checked peak-admission
   bounds. Vector/chunked conformance covers every `ApplyUpdateStatus` and every
   three-dimensional replay checkpoint.
+- Merkle tests cover signed-coordinate golden keys, fixed empty/single-leaf
+  roots, odd leaf counts, insert/replace/delete, deleting the last cell,
+  revision-only zero allocation, duplicate/invalid mutations, and at least 400
+  deterministic three-dimensional checkpoints where incremental roots equal an
+  independent full rebuild.
+- Production protocol tests assert locally recomputed keyframe/delta roots,
+  keyframe/resync replacement, revision-only, zero remove tombstone, update-hash
+  determinism, wrong base/revision/source/geometry, descriptor drift, unknown
+  kind, tampering, and failure atomicity. The compatibility prototype tests
+  cover the same pure algorithm vectors, while performance evidence asserts
+  zero flat columns in v2-only runs and zero Merkle columns in flat-only oracle
+  runs.
 - Layout estimator tests compare predicted metrics with a real
   `CellSnapshotStore::apply()` for every row. A storage A/B uses one
   RelWithDebInfo receiver/runner identity and keeps flat SHA-256, wire input,
@@ -367,7 +475,27 @@ while (!cursor.done()) {
     cursor.advance();
 }
 
-CellStorageConfig research_storage{
-    CellStorageMode::Chunked, 16U, 256U};
-MapUpdateApplier research_applier(limits, research_storage);
+MapUpdateApplier production_applier(limits); // fixed chunk-16 Merkle v2
+CellStorageConfig oracle_storage{CellStorageMode::Vector, 16U, 256U};
+```
+
+Wrong:
+
+```cpp
+// Same SHA-256 enum, but the identity structure is silently changed.
+update.hash_algorithm = HashAlgorithm::Sha256;
+committed_root = update.result_root; // Trusts the sender and skips local apply.
+```
+
+Correct:
+
+```cpp
+ContentIdentityDescriptor descriptor{
+    ContentIdentityScheme::MerklePatriciaSha256V2, 16U, 1U, 1U};
+auto verified = MerklePrototypeProtocol::verify_delta(
+    committed_prototype, committed_revision, prototype_update);
+if (!verified) {
+    return; // Committed store/tree remain unchanged.
+}
+auto next = std::move(verified.candidate);
 ```

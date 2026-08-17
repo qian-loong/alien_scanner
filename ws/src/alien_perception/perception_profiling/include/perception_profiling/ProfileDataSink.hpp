@@ -47,6 +47,13 @@ namespace PerceptionProfiling {
     struct MapUpdateProjection {
         std::int64_t receipt_monotonic_ns = 0;
         std::int64_t stamp_ns = 0;
+        std::uint16_t protocol_version = 2U;
+        std::uint16_t canonical_encoding_version = 1U;
+        std::uint8_t hash_algorithm = 1U;
+        std::uint16_t content_identity_scheme = 2U;
+        std::uint32_t content_identity_chunk_edge = 16U;
+        std::uint16_t content_identity_coordinate_key_version = 1U;
+        std::uint16_t content_identity_node_encoding_version = 1U;
         std::uint8_t update_kind = 0U;
         std::string vehicle_id;
         Perception::SessionID mapper_session {0U, 0U};

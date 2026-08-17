@@ -250,6 +250,13 @@ class AnalyzeLocalMapProfileTest(unittest.TestCase):
                     {
                         "receipt_monotonic_ns": update_receipt,
                         "stamp_ns": state["stamp_ns"],
+                        "protocol_version": 2,
+                        "canonical_encoding_version": 1,
+                        "hash_algorithm": 1,
+                        "content_identity_scheme": 2,
+                        "content_identity_chunk_edge": 16,
+                        "content_identity_coordinate_key_version": 1,
+                        "content_identity_node_encoding_version": 1,
                         "update_kind": kind,
                         "vehicle_id": "profile-vehicle",
                         "mapper_session_boot_ns": 123456,
@@ -296,7 +303,11 @@ class AnalyzeLocalMapProfileTest(unittest.TestCase):
         write_csv(
             run_dir / "map_updates.csv",
             (
-                "receipt_monotonic_ns", "stamp_ns", "update_kind", "vehicle_id",
+                "receipt_monotonic_ns", "stamp_ns", "protocol_version",
+                "canonical_encoding_version", "hash_algorithm",
+                "content_identity_scheme", "content_identity_chunk_edge",
+                "content_identity_coordinate_key_version",
+                "content_identity_node_encoding_version", "update_kind", "vehicle_id",
                 "mapper_session_boot_ns", "mapper_session_suffix", "map_epoch",
                 "base_revision", "new_revision", "revision_span",
                 "observed_coalesced_receipt_count", "known_cell_count",
@@ -315,9 +326,10 @@ class AnalyzeLocalMapProfileTest(unittest.TestCase):
                 "publish_failures", "resource_rejections", "snapshot_cells",
                 "delta_operations", "payload_bytes", "acquire_duration_ns",
                 "materialize_duration_ns", "traversal_duration_ns",
-                "canonicalize_duration_ns", "content_hash_duration_ns",
+                "canonicalize_duration_ns", "geometry_fingerprint_duration_ns",
                 "prepare_duration_ns", "validation_duration_ns", "diff_duration_ns",
-                "encode_duration_ns", "update_hash_duration_ns", "publish_duration_ns",
+                "encode_duration_ns", "store_candidate_duration_ns",
+                "merkle_duration_ns", "update_hash_duration_ns", "publish_duration_ns",
             ),
             producer_diagnostics,
         )
@@ -526,13 +538,15 @@ class AnalyzeLocalMapProfileTest(unittest.TestCase):
             "materialize_duration_ns": revision + 1,
             "traversal_duration_ns": revision + 2,
             "canonicalize_duration_ns": revision + 3,
-            "content_hash_duration_ns": revision + 4,
+            "geometry_fingerprint_duration_ns": revision + 4,
             "prepare_duration_ns": revision + 5,
             "validation_duration_ns": revision + 6,
             "diff_duration_ns": revision + 7,
             "encode_duration_ns": revision + 8,
-            "update_hash_duration_ns": revision + 9,
-            "publish_duration_ns": revision + 10,
+            "store_candidate_duration_ns": revision + 9,
+            "merkle_duration_ns": revision + 10,
+            "update_hash_duration_ns": revision + 11,
+            "publish_duration_ns": revision + 12,
         }
 
     def mutate_csv(self, path: Path, mutator) -> None:

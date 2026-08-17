@@ -3,9 +3,13 @@
 > 状态：父任务持续跟踪中。架构规划基线已确认，C1/C2 已完成并归档；C3
 > 地图状态与增量更新的实现、本机质量门、冻结版本性能/内存专项和确定性
 > exact-revision replay/oracle 已完成；C4 通信数据面及其性能/内存质量门也已完成。
-> C4.1 分块与 COW 评估已完成，Gate B 为 no-go，生产默认保持 Vector。历史 Phase 3
-> bag 资产不可用；唯一保留的 C3 跨阶段证据缺口是 shared-view alignment 消费验收。
-> 当前关键路径为 C5 拓扑与角色。本文继续定义父任务的跨模块目标、约束和最终验收标准。
+> C4.1 分块与 COW 评估已完成，Gate B 为 no-go；C4.2 增量 Merkle v2 算法 Gate 为 go。
+> C4.3 v2-only 生产集成及正式矩阵已完成验证。严格 Memcheck 原始结果保留已知第三方
+> runtime 的 `768 B possibly lost`，但该 finding 已由历史 C1/C2/C4 证据复现且不经过业务栈，
+> business memory Gate 通过，C4.3 production Gate 为 GO（含已知例外）。历史 Phase 3 bag
+> 资产不可用；唯一保留的 C3 跨阶段证据缺口是 shared-view alignment 消费验收。
+> C5a-C5c 可独立推进，C5d EdgeAggregator 前置阻塞已解除。本文继续定义父任务的
+> 跨模块目标、约束和最终验收标准。
 
 ## 1. 目标
 

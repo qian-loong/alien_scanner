@@ -85,6 +85,16 @@ namespace PerceptionMapUpdate {
             Encoding::write_u8(sink, static_cast<std::uint8_t>(HashAlgorithm::Sha256));
         }
 
+        void write_content_identity_descriptor(
+                DigestSink & sink,
+                const ContentIdentityDescriptor & descriptor)
+        {
+            Encoding::write_u16(sink, static_cast<std::uint16_t>(descriptor.scheme));
+            Encoding::write_u32(sink, descriptor.chunk_edge);
+            Encoding::write_u16(sink, descriptor.coordinate_key_version);
+            Encoding::write_u16(sink, descriptor.node_encoding_version);
+        }
+
         template<typename ForEach>
         Hash256 content_hash_impl(
                 const SourceIdentity & source,
@@ -144,10 +154,11 @@ namespace PerceptionMapUpdate {
     Hash256 ContentHasher::update_hash(const MapUpdate & update)
     {
         DigestSink sink;
-        write_domain(sink, "alien-scanner/map-update/v1");
+        write_domain(sink, "alien-scanner/map-update/v2");
         Encoding::write_u16(sink, update.protocol_version);
         Encoding::write_u16(sink, update.canonical_encoding_version);
         Encoding::write_u8(sink, static_cast<std::uint8_t>(update.hash_algorithm));
+        write_content_identity_descriptor(sink, update.content_identity);
         Encoding::write_u8(sink, static_cast<std::uint8_t>(update.kind));
         Encoding::write_identity(sink, update.source);
         Encoding::write_geometry(sink, update.geometry);

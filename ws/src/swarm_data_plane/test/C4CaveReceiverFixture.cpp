@@ -347,7 +347,10 @@ namespace SwarmDataPlane::Test {
                     && !routed.correlation_id.empty() && oracle_map.has_value()
                     && oracle_map->source == routed.update->source
                     && oracle_map->revision == routed.update->new_revision
-                    && oracle_map->content_hash == routed.update->content_hash;
+                    && oracle_map->content_identity
+                               == PerceptionMapUpdate::VersionedContentDigest {
+                                       routed.update->content_identity,
+                                       routed.update->content_hash};
             const auto oracle_result = equivalent_resync_keyframe
                                                ? PerceptionMapUpdate::ApplyUpdateResult {
                                                          PerceptionMapUpdate::
@@ -583,9 +586,17 @@ namespace SwarmDataPlane::Test {
                     channel.source->mapper_session.random_suffix;
             request->expected_map_epoch = channel.source->map_epoch;
             request->receiver_revision = reconstructed->revision;
+            request->receiver_content_identity.scheme = static_cast<std::uint16_t>(
+                    reconstructed->content_identity.descriptor.scheme);
+            request->receiver_content_identity.chunk_edge =
+                    reconstructed->content_identity.descriptor.chunk_edge;
+            request->receiver_content_identity.coordinate_key_version =
+                    reconstructed->content_identity.descriptor.coordinate_key_version;
+            request->receiver_content_identity.node_encoding_version =
+                    reconstructed->content_identity.descriptor.node_encoding_version;
             std::copy(
-                    reconstructed->content_hash.begin(),
-                    reconstructed->content_hash.end(),
+                    reconstructed->content_identity.digest.begin(),
+                    reconstructed->content_identity.digest.end(),
                     request->receiver_content_hash.begin());
             request->reason = ResyncService::Request::REASON_GAP;
 

@@ -92,6 +92,22 @@ namespace PerceptionMapUpdate::Ros {
                 node,
                 parameter_name(prefix, "max_receiver_cells"),
                 limits.max_receiver_cells);
+        limits.max_live_chunks = positive_size_parameter(
+                node,
+                parameter_name(prefix, "max_live_chunks"),
+                limits.max_live_chunks);
+        limits.max_merkle_nodes = positive_size_parameter(
+                node,
+                parameter_name(prefix, "max_merkle_nodes"),
+                limits.max_merkle_nodes);
+        limits.max_merkle_owned_bytes = positive_size_parameter(
+                node,
+                parameter_name(prefix, "max_merkle_owned_bytes"),
+                limits.max_merkle_owned_bytes);
+        limits.max_candidate_merkle_bytes = positive_size_parameter(
+                node,
+                parameter_name(prefix, "max_candidate_merkle_bytes"),
+                limits.max_candidate_merkle_bytes);
         limits.max_peak_apply_bytes = positive_size_parameter(
                 node,
                 parameter_name(prefix, "max_peak_apply_bytes"),

@@ -2,6 +2,7 @@
 #define PERCEPTION_MAP_UPDATE_CELL_SNAPSHOT_STORE_HPP
 
 #include "perception_map_update/MapUpdateTypes.hpp"
+#include "perception_map_update/SpatialChunkLayout.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -114,9 +115,16 @@ namespace PerceptionMapUpdate {
     class CellSnapshotStore
     {
     public:
+        using ChunkVisitor = std::function<void(
+                const ChunkCoordinate &,
+                const std::vector<CanonicalCell> &)>;
+
         explicit CellSnapshotStore(CellStorageConfig config = {});
 
         CellStoreResult estimate_replace_upper_bound(std::size_t cell_count) const noexcept;
+        CellStoreResult estimate_replace_upper_bound(
+                std::size_t cell_count,
+                std::size_t chunk_count) const noexcept;
         CellStoreResult estimate_apply_upper_bound(
                 const std::vector<DeltaOperation> & operations) const noexcept;
         CellStoreResult replace(std::vector<CanonicalCell> cells);
@@ -125,6 +133,15 @@ namespace PerceptionMapUpdate {
 
         std::size_t size() const noexcept;
         CanonicalCellView view() const;
+        // Read-only research seam for chunk-aware consumers. The visitor sees
+        // deterministic signed chunk-coordinate order and never receives a
+        // mutable bucket/chunk handle.
+        void for_each_chunk(const ChunkVisitor & visitor) const;
+        // Copies one committed chunk into caller-owned storage. A missing or
+        // empty chunk returns false; the committed state is never exposed.
+        bool copy_chunk(
+                const ChunkCoordinate & coordinate,
+                std::vector<CanonicalCell> & cells) const;
         const CellStorageMetrics & metrics() const noexcept;
         const void * chunk_identity(const VoxelIndex & index) const noexcept;
         CellStorageMode mode() const noexcept;

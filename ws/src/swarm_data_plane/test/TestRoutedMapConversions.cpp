@@ -107,7 +107,10 @@ namespace SwarmDataPlane::Test {
         EXPECT_EQ(decoded_intent.intent->request, intent.request);
 
         RoutedResyncLedger ledger(intent.target_producer, intent.route_epoch);
-        const auto ack = ledger.accept(intent, *intent.request.expected_source, 2U);
+        PerceptionMapUpdate::VersionedContentDigest current_identity;
+        current_identity.digest[0] = 42U;
+        const auto ack = ledger.accept(
+                intent, *intent.request.expected_source, 2U, current_identity);
         ASSERT_TRUE(ack.accepted) << ack.diagnostic;
         swarm_data_interfaces::msg::ResyncAck ros_ack;
         ASSERT_TRUE(Ros::encode_resync_ack(ack, ros_ack, diagnostic)) << diagnostic;
@@ -118,6 +121,7 @@ namespace SwarmDataPlane::Test {
         EXPECT_EQ(decoded_ack.ack->target_producer, ack.target_producer);
         EXPECT_EQ(decoded_ack.ack->current_source, ack.current_source);
         EXPECT_EQ(decoded_ack.ack->current_revision, ack.current_revision);
+        EXPECT_EQ(decoded_ack.ack->current_content_identity, current_identity);
     }
 
     TEST(AggregateConversionsTest, RoundTripKeepsManifestAtomicWithMapRevision)

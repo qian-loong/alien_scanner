@@ -17,6 +17,10 @@ namespace PerceptionMapUpdate {
         std::size_t max_keyframe_payload_bytes = 128U * 1024U * 1024U;
         std::size_t max_delta_payload_bytes    = 128U * 1024U * 1024U;
         std::size_t max_receiver_cells         = 3'000'000U;
+        std::size_t max_live_chunks            = 3'000'000U;
+        std::size_t max_merkle_nodes           = 6'000'000U;
+        std::size_t max_merkle_owned_bytes     = 256U * 1024U * 1024U;
+        std::size_t max_candidate_merkle_bytes = 128U * 1024U * 1024U;
         std::size_t max_peak_apply_bytes       = 384U * 1024U * 1024U;
         std::size_t max_retained_snapshot_bytes = 192U * 1024U * 1024U;
         std::size_t max_recent_resync_requests = 64U;

@@ -9,4 +9,6 @@ uint64 current_mapper_session_boot_time_ns
 uint32 current_mapper_session_random_suffix
 uint64 current_map_epoch
 uint64 current_revision
+perception_interfaces/ContentIdentityDescriptor current_content_identity
+uint8[32] current_content_hash
 string<=256 diagnostic

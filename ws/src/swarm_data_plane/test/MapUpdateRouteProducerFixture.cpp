@@ -39,8 +39,6 @@ namespace SwarmDataPlane::Test {
             result.cells = std::move(cells);
             result.geometry_fingerprint = ContentHasher::geometry_fingerprint(
                     result.geometry);
-            result.content_hash = ContentHasher::content_hash(
-                    result.source, result.geometry_fingerprint, result.cells);
             return result;
         }
 
@@ -151,19 +149,27 @@ namespace SwarmDataPlane::Test {
                 const swarm_data_interfaces::srv::RequestRoutedMapResync::Request & request,
                 swarm_data_interfaces::srv::RequestRoutedMapResync::Response & response)
         {
+            const auto current_content_identity = producer_.committed_state()
+                                                          ? producer_.committed_state()->identity()
+                                                          : PerceptionMapUpdate::
+                                                                    VersionedContentDigest {};
             const auto decoded = Ros::decode_resync_intent(request.intent);
             if(!decoded.success || !decoded.intent.has_value()) {
                 RoutedResyncAck rejected;
                 rejected.target_producer = {"mapper_endpoint", {300U, 11U}};
                 rejected.current_source = current_snapshot_.source;
                 rejected.current_revision = current_snapshot_.revision;
+                rejected.current_content_identity = current_content_identity;
                 rejected.diagnostic = decoded.diagnostic;
                 std::string diagnostic;
                 Ros::encode_resync_ack(rejected, response.ack, diagnostic);
                 return;
             }
             const auto ack = resync_ledger_.accept(
-                    *decoded.intent, current_snapshot_.source, current_snapshot_.revision);
+                    *decoded.intent,
+                    current_snapshot_.source,
+                    current_snapshot_.revision,
+                    current_content_identity);
             std::string diagnostic;
             if(!Ros::encode_resync_ack(ack, response.ack, diagnostic)) {
                 RCLCPP_ERROR(get_logger(), "%s", diagnostic.c_str());

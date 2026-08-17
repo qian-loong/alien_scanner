@@ -54,6 +54,26 @@ namespace PerceptionMapUpdate::Ros {
                    && value <= static_cast<std::uint8_t>(ResyncReason::LocalStateInvalid);
         }
 
+        ContentIdentityDescriptor decode_content_identity(
+                const perception_interfaces::msg::ContentIdentityDescriptor & message)
+        {
+            return {
+                    static_cast<ContentIdentityScheme>(message.scheme),
+                    message.chunk_edge,
+                    message.coordinate_key_version,
+                    message.node_encoding_version};
+        }
+
+        void encode_content_identity(
+                const ContentIdentityDescriptor & descriptor,
+                perception_interfaces::msg::ContentIdentityDescriptor & message)
+        {
+            message.scheme = static_cast<std::uint16_t>(descriptor.scheme);
+            message.chunk_edge = descriptor.chunk_edge;
+            message.coordinate_key_version = descriptor.coordinate_key_version;
+            message.node_encoding_version = descriptor.node_encoding_version;
+        }
+
     }// namespace
 
     bool encode_map_update(
@@ -62,6 +82,13 @@ namespace PerceptionMapUpdate::Ros {
             std::string & diagnostic)
     {
         builtin_interfaces::msg::Time observation_stamp;
+        if(update.protocol_version != kProtocolVersion
+           || update.canonical_encoding_version != kCanonicalEncodingVersion
+           || update.hash_algorithm != HashAlgorithm::Sha256
+           || !update.content_identity.valid()) {
+            diagnostic = "map update protocol or content identity is invalid";
+            return false;
+        }
         if(!to_builtin_time(update.latest_commit.observation_stamp, observation_stamp)) {
             diagnostic = "latest observation stamp is outside builtin_interfaces/Time range";
             return false;
@@ -70,6 +97,7 @@ namespace PerceptionMapUpdate::Ros {
         message.protocol_version = update.protocol_version;
         message.canonical_encoding_version = update.canonical_encoding_version;
         message.hash_algorithm = static_cast<std::uint8_t>(update.hash_algorithm);
+        encode_content_identity(update.content_identity, message.content_identity);
         message.update_kind = static_cast<std::uint8_t>(update.kind);
         message.vehicle_id = update.source.vehicle_id;
         message.mapper_session_boot_time_ns = update.source.mapper_session.boot_time_ns;
@@ -117,6 +145,13 @@ namespace PerceptionMapUpdate::Ros {
             const perception_interfaces::msg::MapUpdate & message,
             const MapUpdateLimits & limits)
     {
+        if(message.protocol_version != kProtocolVersion
+           || message.canonical_encoding_version != kCanonicalEncodingVersion
+           || message.hash_algorithm
+                      != static_cast<std::uint8_t>(HashAlgorithm::Sha256)) {
+            return {false, std::nullopt,
+                    "map update protocol, canonical encoding, or hash algorithm is invalid"};
+        }
         if(message.header.frame_id != message.source_map_frame) {
             return {false, std::nullopt, "header frame and source map frame differ"};
         }
@@ -149,6 +184,10 @@ namespace PerceptionMapUpdate::Ros {
         update.protocol_version = message.protocol_version;
         update.canonical_encoding_version = message.canonical_encoding_version;
         update.hash_algorithm = static_cast<HashAlgorithm>(message.hash_algorithm);
+        update.content_identity = decode_content_identity(message.content_identity);
+        if(!update.content_identity.valid()) {
+            return {false, std::nullopt, "map update content identity descriptor is invalid"};
+        }
         update.kind = static_cast<UpdateKind>(message.update_kind);
         update.source = {
                 message.vehicle_id,
@@ -240,10 +279,24 @@ namespace PerceptionMapUpdate::Ros {
                  message.requester_session_random_suffix}};
         request.client_request_id = message.client_request_id;
         request.receiver_revision = message.receiver_revision;
+        request.receiver_content_identity.descriptor =
+                decode_content_identity(message.receiver_content_identity);
+        if(!request.receiver_content_identity.descriptor.valid()) {
+            diagnostic = "receiver content identity descriptor is invalid";
+            return false;
+        }
         std::copy(
                 message.receiver_content_hash.begin(),
                 message.receiver_content_hash.end(),
-                request.receiver_content_hash.begin());
+                request.receiver_content_identity.digest.begin());
+        if(message.bootstrap_latest
+           && std::any_of(
+                   request.receiver_content_identity.digest.begin(),
+                   request.receiver_content_identity.digest.end(),
+                   [](std::uint8_t value) { return value != 0U; })) {
+            diagnostic = "bootstrap resync receiver digest must be zero";
+            return false;
+        }
         request.reason = static_cast<ResyncReason>(message.reason);
         diagnostic.clear();
         return true;
@@ -262,6 +315,13 @@ namespace PerceptionMapUpdate::Ros {
                 response.current_source.mapper_session.random_suffix;
         message.current_map_epoch = response.current_source.map_epoch;
         message.current_revision = response.current_revision;
+        encode_content_identity(
+                response.current_content_identity.descriptor,
+                message.current_content_identity);
+        std::copy(
+                response.current_content_identity.digest.begin(),
+                response.current_content_identity.digest.end(),
+                message.current_content_hash.begin());
         message.diagnostic = response.diagnostic;
     }
 

@@ -197,13 +197,30 @@ private:
     {
         ResyncRequest request;
         std::string diagnostic;
+        const auto committed_state = producer_.committed_state();
+        const auto committed_baseline = producer_.baseline();
+        const auto current_identity = committed_state
+                                              ? committed_state->identity()
+                                              : PerceptionMapUpdate::VersionedContentDigest {};
+        const auto current_revision = committed_baseline
+                                              ? committed_baseline->revision
+                                              : current_.revision;
         PerceptionMapUpdate::ResyncResponse response {
-                false, {}, source_, current_.revision, {}};
+                false,
+                {},
+                source_,
+                current_revision,
+                current_identity,
+                {}};
         if(!PerceptionMapUpdate::Ros::decode_resync_request(
                    message, request, {}, diagnostic)) {
             response.diagnostic = std::move(diagnostic);
         } else {
-            response = ledger_.accept(request, source_, current_.revision);
+            response = ledger_.accept(
+                    request,
+                    source_,
+                    current_revision,
+                    current_identity);
             if(response.accepted) {
                 const auto queued = std::find_if(
                         pending_resync_.begin(),

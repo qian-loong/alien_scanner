@@ -81,11 +81,37 @@ run_c4_resource_matrix.py --runner <script> --source <elf> --receiver <elf>
 - profile source/receiver、runner 和 smoke target 只能位于 `BUILD_TESTING`。正式 bounded
   矩阵固定为每场景 3 个独立、至少 300 秒的 plain receiver 样本；每轮必须记录唯一
   PID/starttime、统一 ELF SHA-256/build-id、完整业务守恒和每秒角色/内存采样。
-- C4.1 已在不改变 wire、flat canonical SHA-256、revision 和原子 apply 的前提下评估
+- C4.1 在不改变 wire、flat canonical SHA-256、revision 和原子 apply 的前提下评估了
   `8/16/32` 分块不可变快照与 COW。edge 16 是三档中的折中研究候选，但成熟三维 replay
-  的 copied-cell P95 未达到 `<5%`，短 A/B 的端到端 apply/PSS 也未优于 vector，因此 Gate B
-  为 no-go，生产默认保持 `Vector`。C5 消费 `CanonicalCellView` 的有序 cursor，不得重新
-  绑定 `std::vector<CanonicalCell>` 所有权或依赖 chunk/bucket 内部布局。
+  的 copied-cell P95 未达到 `<5%`，短 A/B 的端到端 apply/PSS 也未优于 vector，因此当时的
+  Gate B 为 no-go。C4.3 后续若未通过正式集成 Gate，回退目标仍是 `Vector + flat v1`；无论
+  哪个实现处于生产状态，C5 都消费 `CanonicalCellView` 的有序 cursor，不得重新绑定
+  `std::vector<CanonicalCell>` 所有权或依赖 chunk/bucket 内部布局。
+
+### C4.3 v2 content-identity boundary
+
+- The production map-update payload is now protocol v2-only. The nested
+  `MapUpdate` must carry `ContentIdentityDescriptor` with
+  `scheme=MerklePatriciaSha256V2`, `chunk_edge=16`,
+  `coordinate_key_version=1`, and `node_encoding_version=1`; the route envelope
+  retains its independent C4 protocol version (`1`) and does not duplicate or
+  reinterpret Patricia nodes. A C4 v1 envelope therefore legitimately carries
+  a C3 `MapUpdate` v2 payload; the two version fields describe different layers.
+- `MapUpdateIngress` and routed conversion code preserve the descriptor, base
+  digest, result digest, and update hash byte-for-byte. A relay must not rewrite
+  source/session/epoch/revision/identity fields. Unknown protocol or descriptor
+  values are rejected before map state mutation; no v1 fallback, dual-read,
+  dual-write, negotiation, or runtime downgrade exists on this branch.
+- The C3 receiver rebuilds the candidate chunk store and Merkle tree locally,
+  compares the candidate root/count/descriptor to the envelope, and atomically
+  commits the candidate plus freshness/resync state only after every check
+  passes. The sender-provided digest is never trusted as a substitute for local
+  recomputation.
+- Flat SHA-256 v1 remains only in isolated oracle/benchmark fixtures and frozen
+  comparison evidence. It must not appear in v2 production samples. C5d
+  `EdgeAggregator` remains blocked until the separate C4.3 formal resource Gate
+  (3 x 300-second receiver matrix plus memory-tool and rollback evidence) is
+  recorded as GO; C5a-C5c may consume the opaque descriptor/digest boundary.
 
 ## 4. Validation & Error Matrix
 

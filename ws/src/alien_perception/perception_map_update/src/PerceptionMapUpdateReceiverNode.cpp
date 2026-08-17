@@ -383,6 +383,13 @@ private:
         request->requester_session_boot_time_ns = requester_session_.boot_time_ns;
         request->requester_session_random_suffix = requester_session_.random_suffix;
         request->client_request_id = client_request_id_;
+        request->receiver_content_identity.scheme = static_cast<std::uint16_t>(
+                PerceptionMapUpdate::ContentIdentityScheme::MerklePatriciaSha256V2);
+        request->receiver_content_identity.chunk_edge = PerceptionMapUpdate::kMerkleChunkEdge;
+        request->receiver_content_identity.coordinate_key_version =
+                PerceptionMapUpdate::kMerkleCoordinateKeyVersion;
+        request->receiver_content_identity.node_encoding_version =
+                PerceptionMapUpdate::kMerkleNodeEncodingVersion;
         const bool retained_current_source = applier_->reconstructed_map().has_value()
                                              && applier_->reconstructed_map()->source
                                                         == *admitted_source_;
@@ -400,9 +407,17 @@ private:
         }
         if(retained_current_source) {
             request->receiver_revision = applier_->reconstructed_map()->revision;
+            const auto & identity = applier_->reconstructed_map()->content_identity;
+            request->receiver_content_identity.scheme = static_cast<std::uint16_t>(
+                    identity.descriptor.scheme);
+            request->receiver_content_identity.chunk_edge = identity.descriptor.chunk_edge;
+            request->receiver_content_identity.coordinate_key_version =
+                    identity.descriptor.coordinate_key_version;
+            request->receiver_content_identity.node_encoding_version =
+                    identity.descriptor.node_encoding_version;
             std::copy(
-                    applier_->reconstructed_map()->content_hash.begin(),
-                    applier_->reconstructed_map()->content_hash.end(),
+                    identity.digest.begin(),
+                    identity.digest.end(),
                     request->receiver_content_hash.begin());
         }
         request->reason = static_cast<std::uint8_t>(resync_reason_);

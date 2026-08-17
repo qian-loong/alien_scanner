@@ -383,7 +383,8 @@ namespace PerceptionMapUpdate::Test {
         ResyncRequest request {
                 {invalid_utf8, {500U, 1U}}, "client-1", std::nullopt, 0U, {},
                 ResyncReason::InitialBaseline};
-        EXPECT_FALSE(ledger.accept(request, source(), 1U).accepted);
+        EXPECT_FALSE(ledger.accept(
+                request, source(), 1U, VersionedContentDigest {}).accepted);
     }
 
     TEST(MapUpdateApplierTest, NewAdmittedEpochCanStartAtLowerRevision)
@@ -590,23 +591,28 @@ namespace PerceptionMapUpdate::Test {
         ResyncRequest request {
                 {"receiver", {500U, 1U}}, "client-1", std::nullopt, 0U, {},
                 ResyncReason::InitialBaseline};
-        const auto first = ledger.accept(request, source(), 4U);
+        const auto first = ledger.accept(
+                request, source(), 4U, VersionedContentDigest {});
         ASSERT_TRUE(first.accepted) << first.diagnostic;
-        const auto duplicate = ledger.accept(request, source(), 4U);
+        const auto duplicate = ledger.accept(
+                request, source(), 4U, VersionedContentDigest {});
         EXPECT_TRUE(duplicate.accepted);
         EXPECT_EQ(duplicate.correlation_id, first.correlation_id);
         EXPECT_EQ(ledger.size(), 1U);
-        const auto retired_duplicate = ledger.accept(request, source(2U), 1U);
+        const auto retired_duplicate = ledger.accept(
+                request, source(2U), 1U, VersionedContentDigest {});
         EXPECT_FALSE(retired_duplicate.accepted);
         EXPECT_EQ(retired_duplicate.current_source, source(2U));
         EXPECT_EQ(ledger.size(), 1U);
 
         auto conflict = request;
         conflict.receiver_revision = 1U;
-        EXPECT_FALSE(ledger.accept(conflict, source(), 4U).accepted);
+        EXPECT_FALSE(ledger.accept(
+                conflict, source(), 4U, VersionedContentDigest {}).accepted);
         auto second = request;
         second.client_request_id = "client-2";
-        EXPECT_FALSE(ledger.accept(second, source(), 4U).accepted);
+        EXPECT_FALSE(ledger.accept(
+                second, source(), 4U, VersionedContentDigest {}).accepted);
         EXPECT_EQ(ledger.size(), 1U);
     }
 
@@ -621,7 +627,8 @@ namespace PerceptionMapUpdate::Test {
         const ResyncRequest request {
                 {"receiver", {500U, 1U}}, "client-1", std::nullopt, 0U, {},
                 ResyncReason::InitialBaseline};
-        const auto response = ledger.accept(request, long_source, 1U);
+        const auto response = ledger.accept(
+                request, long_source, 1U, VersionedContentDigest {});
         EXPECT_TRUE(response.accepted) << response.diagnostic;
         EXPECT_LE(response.correlation_id.size(), limits.max_correlation_id_bytes);
     }
@@ -632,7 +639,8 @@ namespace PerceptionMapUpdate::Test {
         ResyncRequest request {
                 {"receiver", {500U, 1U}}, "client-invalid", std::nullopt, 0U, {},
                 static_cast<ResyncReason>(0U)};
-        const auto response = ledger.accept(request, source(), 1U);
+        const auto response = ledger.accept(
+                request, source(), 1U, VersionedContentDigest {});
         EXPECT_FALSE(response.accepted);
         EXPECT_EQ(response.diagnostic, "resync reason is invalid");
         EXPECT_EQ(ledger.size(), 0U);
@@ -716,7 +724,9 @@ namespace PerceptionMapUpdate::Test {
 
             ASSERT_TRUE(receiver.reconstructed_map().has_value());
             EXPECT_EQ(receiver.reconstructed_map()->revision, revision);
-            EXPECT_EQ(receiver.reconstructed_map()->content_hash, checkpoint.content_hash);
+            EXPECT_EQ(
+                    receiver.reconstructed_map()->content_identity.digest,
+                    prepared.update->content_hash);
             EXPECT_EQ(receiver.reconstructed_map()->cells, checkpoint.cells);
             last_applied_revision = revision;
 

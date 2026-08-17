@@ -10,16 +10,17 @@ LiDAR，也不替代 C2 的本机安全查询。
 C2 CommitReceipt
     -> exact-revision MapReadTransaction
     -> CanonicalSnapshotAdapter
-    -> MapUpdateProducer (keyframe / delta)
+    -> MapUpdateProducer (v2 keyframe / delta)
     -> local_map/updates
-    -> MapUpdateApplier
-    -> reconstructed source-local occupancy view
+    -> MapUpdateApplier (chunk-16 COW + persistent Merkle)
+    -> reconstructed source-local occupancy view + VersionedContentDigest
 ```
 
 - `MapReadTransaction` 同时锁定 source/session、map epoch、revision、geometry 和 cells，
   防止把旧 receipt 的元数据与较新地图内容拼接。
 - `CanonicalSnapshot` 是生产内部的完整只读地图表示。known cells 严格排序，缺失 cell
-  表示 `Unknown`，并携带稳定 geometry fingerprint 与 content hash。
+  表示 `Unknown`，并携带稳定 geometry fingerprint；正式 producer 的 content identity
+  由固定 edge-16 `MerkleMapState` 计算。flat content hash 仅保留在隔离 oracle/benchmark。
 - `Keyframe` 独立建立或替换接收端基线；`Delta` 只在接收端 revision 严格等于
   `base_revision` 时应用。概率变化但三态内容不变时，允许空操作的 revision-only delta。
 - 重复更新幂等；乱序、缺口、旧 session/epoch、hash 冲突、损坏 payload 和资源超限
@@ -46,6 +47,25 @@ receipt；全图 materialize、diff、hash 和编码不在 mutation callback 中
 使用 `map_update.*` 前缀；默认最多 3,000,000 known/receiver cells、128 MiB 单个
 keyframe/delta payload、384 MiB apply 峰值预算和 128 个连续 delta。完整默认值见
 `MapUpdateLimits.hpp`。
+
+## C4.3 v2-only 内容身份
+
+当前生产分支统一使用 `protocol_version=2`。每条 `MapUpdate` 都显式携带
+`ContentIdentityDescriptor`：`MerklePatriciaSha256V2 / edge=16 /
+coordinate_key_version=1 / node_encoding_version=1`。`base_content_hash` 与
+`content_hash` 是该 descriptor 下的 base/result Merkle root；接收端在 candidate
+store/tree 上本地重算 root，并在 descriptor、count、resource 和 update hash 全部通过后
+一次性提交。Relay 只透明转发嵌套 `MapUpdate`，不读取 Patricia 内部节点。
+
+direct `RequestMapResync` 以及 C4 routed `ResyncIntent/ResyncAck` 同样携带完整 descriptor
+和 digest。未知 protocol/descriptor、descriptor drift、错误 base/root 或资源超限均
+fail closed，不改变最后合法地图，也不存在 v1 fallback、双写、协商或 runtime downgrade。
+flat SHA-256 v1 仅用于冻结对照和 correctness oracle，不进入 v2 production profile。
+
+实现代码已在 `phase/4-merkle-v2-production-integration` 完成并通过受影响包测试；正式
+生产 Gate 仍需独立的 3 x 300 秒 receiver 矩阵、内存工具证据和 rollback review。Gate GO
+前 C5d EdgeAggregator 不绑定 Patricia 内部结构，C5a-C5c 只能消费 descriptor + digest
+的稳定边界。
 
 回滚参数：
 

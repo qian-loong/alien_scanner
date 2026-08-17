@@ -30,7 +30,7 @@ namespace PerceptionMapUpdate {
         std::string                  client_request_id;
         std::optional<SourceIdentity> expected_source;
         std::uint64_t                receiver_revision = 0U;
-        Hash256                     receiver_content_hash {};
+        VersionedContentDigest       receiver_content_identity;
         ResyncReason                reason = ResyncReason::InitialBaseline;
 
         bool operator==(const ResyncRequest & other) const noexcept;
@@ -41,6 +41,7 @@ namespace PerceptionMapUpdate {
         std::string    correlation_id;
         SourceIdentity current_source;
         std::uint64_t  current_revision = 0U;
+        VersionedContentDigest current_content_identity;
         std::string    diagnostic;
     };
 
@@ -52,7 +53,8 @@ namespace PerceptionMapUpdate {
         ResyncResponse accept(
                 const ResyncRequest & request,
                 const SourceIdentity & current_source,
-                std::uint64_t current_revision);
+                std::uint64_t current_revision,
+                const VersionedContentDigest & current_content_identity);
         std::size_t size() const noexcept;
 
     private:

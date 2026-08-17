@@ -666,7 +666,9 @@ private:
                 run.final_oracle->source,
                 run.final_oracle->geometry,
                 run.final_oracle->revision,
-                run.final_oracle->content_hash,
+                PerceptionMapUpdate::VersionedContentDigest {
+                        PerceptionMapUpdate::ContentIdentityDescriptor {},
+                        run.final_oracle->content_hash},
                 std::move(oracle_cells)};
 
         octomap_msgs::msg::Octomap oracle_message;

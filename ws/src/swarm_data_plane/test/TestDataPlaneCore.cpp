@@ -197,17 +197,20 @@ namespace SwarmDataPlane::Test {
         intent.request.receiver_revision = 1U;
         intent.request.reason = PerceptionMapUpdate::ResyncReason::Gap;
 
-        const auto first = ledger.accept(intent, source, 2U);
+        const auto first = ledger.accept(
+                intent, source, 2U, PerceptionMapUpdate::VersionedContentDigest {});
         ASSERT_TRUE(first.accepted) << first.diagnostic;
         EXPECT_FALSE(first.correlation_id.empty());
-        const auto duplicate = ledger.accept(intent, source, 2U);
+        const auto duplicate = ledger.accept(
+                intent, source, 2U, PerceptionMapUpdate::VersionedContentDigest {});
         EXPECT_TRUE(duplicate.accepted);
         EXPECT_EQ(duplicate.correlation_id, first.correlation_id);
         EXPECT_EQ(ledger.size(), 1U);
 
         auto conflict = intent;
         conflict.request.receiver_revision = 0U;
-        const auto rejected = ledger.accept(conflict, source, 2U);
+        const auto rejected = ledger.accept(
+                conflict, source, 2U, PerceptionMapUpdate::VersionedContentDigest {});
         EXPECT_FALSE(rejected.accepted);
         EXPECT_TRUE(rejected.correlation_id.empty());
         EXPECT_EQ(ledger.size(), 1U);
@@ -215,7 +218,11 @@ namespace SwarmDataPlane::Test {
         auto stale_route = intent;
         stale_route.request.client_request_id = "request-2";
         stale_route.route_epoch = 3U;
-        EXPECT_FALSE(ledger.accept(stale_route, source, 2U).accepted);
+        EXPECT_FALSE(ledger.accept(
+                stale_route,
+                source,
+                2U,
+                PerceptionMapUpdate::VersionedContentDigest {}).accepted);
         EXPECT_EQ(ledger.size(), 1U);
     }
 
@@ -383,7 +390,8 @@ namespace SwarmDataPlane::Test {
         ASSERT_TRUE(ingress.admit_source(prepared.update->source));
         ASSERT_EQ(ingress.receive(first, 100U).status, IngressStatus::AppliedKeyframe);
         ASSERT_TRUE(ingress.map_applier().reconstructed_map().has_value());
-        const auto fingerprint = ingress.map_applier().reconstructed_map()->content_hash;
+        const auto fingerprint =
+                ingress.map_applier().reconstructed_map()->content_identity;
 
         const auto delta = producer.prepare(snapshot(
                 2U,
@@ -396,7 +404,9 @@ namespace SwarmDataPlane::Test {
 
         ASSERT_TRUE(ingress.map_applier().reconstructed_map().has_value());
         EXPECT_EQ(ingress.map_applier().reconstructed_map()->revision, 1U);
-        EXPECT_EQ(ingress.map_applier().reconstructed_map()->content_hash, fingerprint);
+        EXPECT_EQ(
+                ingress.map_applier().reconstructed_map()->content_identity,
+                fingerprint);
         EXPECT_EQ(ingress.last_fresh_receive_monotonic_ns(), 100U);
     }
 

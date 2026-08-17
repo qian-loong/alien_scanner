@@ -41,18 +41,6 @@ namespace SwarmDataPlane::Test {
             return static_cast<std::size_t>(value);
         }
 
-        PerceptionMapUpdate::CellStorageMode parse_storage_mode(
-                const std::string & value)
-        {
-            if(value == "vector") {
-                return PerceptionMapUpdate::CellStorageMode::Vector;
-            }
-            if(value == "chunked") {
-                return PerceptionMapUpdate::CellStorageMode::Chunked;
-            }
-            throw std::invalid_argument("storage_mode must be vector or chunked");
-        }
-
         void write_value(std::ofstream & output, const char * key, std::uint64_t value)
         {
             output << key << '\t' << value << '\n';
@@ -114,10 +102,7 @@ namespace SwarmDataPlane::Test {
         }
 
         struct SourceState {
-            explicit SourceState(PerceptionMapUpdate::CellStorageConfig storage)
-                : ingress({}, {}, storage)
-            {
-            }
+            SourceState() = default;
 
             MapUpdateIngress ingress;
             std::uint64_t messages_received = 0U;
@@ -145,16 +130,6 @@ namespace SwarmDataPlane::Test {
             summary_path_ = declare_parameter<std::string>("summary_path", "");
             per_source_path_ = declare_parameter<std::string>("per_source_path", "");
             ready_path_ = declare_parameter<std::string>("ready_path", "");
-            storage_mode_name_ = declare_parameter<std::string>(
-                    "storage_mode", "vector");
-            storage_config_.mode = parse_storage_mode(storage_mode_name_);
-            const auto chunk_edge = positive_size_parameter(*this, "chunk_edge", 16);
-            if(chunk_edge > std::numeric_limits<std::uint32_t>::max()) {
-                throw std::invalid_argument("chunk_edge exceeds uint32 range");
-            }
-            storage_config_.chunk_edge = static_cast<std::uint32_t>(chunk_edge);
-            storage_config_.bucket_count = positive_size_parameter(
-                    *this, "chunk_bucket_count", 256);
             const auto topic = declare_parameter<std::string>(
                     "input_topic", "/c4/profile/routed_updates");
             subscription_ = create_subscription<swarm_data_interfaces::msg::RoutedMapUpdate>(
@@ -194,7 +169,7 @@ namespace SwarmDataPlane::Test {
                     callback_latency_.observe(steady_now_ns() - callback_start);
                     return;
                 }
-                auto state = std::make_unique<SourceState>(storage_config_);
+                auto state = std::make_unique<SourceState>();
                 if(!state->ingress.admit_producer(routed.producer)
                    || !state->ingress.admit_source(routed.update->source)) {
                     ++messages_rejected_;
@@ -228,7 +203,7 @@ namespace SwarmDataPlane::Test {
                 const auto & timing = source.ingress.map_applier().last_apply_timing();
                 payload_decode_latency_.observe(timing.payload_decode_duration_ns);
                 candidate_build_latency_.observe(timing.candidate_build_duration_ns);
-                canonical_hash_latency_.observe(timing.canonical_hash_duration_ns);
+                merkle_latency_.observe(timing.merkle_duration_ns);
                 commit_latency_.observe(timing.commit_duration_ns);
             }
             if(is_applied(result.status)) {
@@ -329,9 +304,13 @@ namespace SwarmDataPlane::Test {
                 }
             }
             write_value(summary, "schema_version", 1U);
-            summary << "storage_mode\t" << storage_mode_name_ << '\n';
-            write_value(summary, "chunk_edge", storage_config_.chunk_edge);
-            write_value(summary, "chunk_bucket_count", storage_config_.bucket_count);
+            summary << "content_identity_scheme\tmerkle-patricia-sha256-v2\n"
+                    << "storage_mode\tchunked\n";
+            write_value(summary, "chunk_edge", PerceptionMapUpdate::kMerkleChunkEdge);
+            write_value(
+                    summary,
+                    "chunk_bucket_count",
+                    PerceptionMapUpdate::kMerkleChunkBucketCount);
             write_value(summary, "expected_sources", expected_sources_);
             write_value(summary, "sources_seen", sources_.size());
             write_value(summary, "qos_history_depth", qos_depth_);
@@ -358,7 +337,7 @@ namespace SwarmDataPlane::Test {
             write_histogram(summary, "apply", apply_latency_);
             write_histogram(summary, "payload_decode", payload_decode_latency_);
             write_histogram(summary, "candidate_build", candidate_build_latency_);
-            write_histogram(summary, "canonical_hash", canonical_hash_latency_);
+            write_histogram(summary, "merkle", merkle_latency_);
             write_histogram(summary, "commit", commit_latency_);
             write_histogram(summary, "callback", callback_latency_);
             write_histogram(summary, "origin_age", origin_age_);
@@ -384,7 +363,8 @@ namespace SwarmDataPlane::Test {
                            << state->messages_applied << '\t' << state->last_sequence << '\t';
                 if(map.has_value()) {
                     per_source << map->revision << '\t' << map->cells.size() << '\t'
-                               << PerceptionMapUpdate::hash_to_hex(map->content_hash);
+                               << PerceptionMapUpdate::hash_to_hex(
+                                          map->content_identity.digest);
                 } else {
                     per_source << "0\t0\t";
                 }
@@ -399,8 +379,6 @@ namespace SwarmDataPlane::Test {
         std::string summary_path_;
         std::string per_source_path_;
         std::string ready_path_;
-        std::string storage_mode_name_;
-        PerceptionMapUpdate::CellStorageConfig storage_config_;
         bool ready_written_ = false;
         std::map<std::string, std::unique_ptr<SourceState>> sources_;
         std::uint64_t messages_received_ = 0U;
@@ -416,7 +394,7 @@ namespace SwarmDataPlane::Test {
         BoundedHistogram apply_latency_;
         BoundedHistogram payload_decode_latency_;
         BoundedHistogram candidate_build_latency_;
-        BoundedHistogram canonical_hash_latency_;
+        BoundedHistogram merkle_latency_;
         BoundedHistogram commit_latency_;
         BoundedHistogram callback_latency_;
         BoundedHistogram origin_age_;

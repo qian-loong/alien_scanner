@@ -600,13 +600,15 @@ namespace PerceptionProfiling::Test {
                     {"materialize_duration_ns", "2"},
                     {"traversal_duration_ns", "3"},
                     {"canonicalize_duration_ns", "4"},
-                    {"content_hash_duration_ns", "5"},
+                    {"geometry_fingerprint_duration_ns", "5"},
                     {"prepare_duration_ns", "6"},
                     {"validation_duration_ns", "7"},
                     {"diff_duration_ns", "8"},
                     {"encode_duration_ns", "9"},
-                    {"update_hash_duration_ns", "10"},
-                    {"publish_duration_ns", "11"},
+                    {"store_candidate_duration_ns", "10"},
+                    {"merkle_duration_ns", "11"},
+                    {"update_hash_duration_ns", "12"},
+                    {"publish_duration_ns", "13"},
             };
             sink.record_diagnostic(producer_diagnostic);
             sink.record_snapshot({11, 0, 1U, true, 0.2, 100U});

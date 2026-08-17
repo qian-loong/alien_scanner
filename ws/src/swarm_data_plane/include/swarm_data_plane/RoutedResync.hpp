@@ -23,6 +23,7 @@ namespace SwarmDataPlane {
         ProducerIdentity target_producer;
         PerceptionMapUpdate::SourceIdentity current_source;
         std::uint64_t current_revision = 0U;
+        PerceptionMapUpdate::VersionedContentDigest current_content_identity;
         std::string diagnostic;
     };
 
@@ -38,7 +39,8 @@ namespace SwarmDataPlane {
         RoutedResyncAck accept(
                 const RoutedResyncIntent & intent,
                 const PerceptionMapUpdate::SourceIdentity & current_source,
-                std::uint64_t current_revision);
+                std::uint64_t current_revision,
+                const PerceptionMapUpdate::VersionedContentDigest & current_content_identity);
         std::size_t size() const noexcept;
 
     private:

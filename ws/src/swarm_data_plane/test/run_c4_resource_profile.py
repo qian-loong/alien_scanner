@@ -17,6 +17,17 @@ import time
 from pathlib import Path
 
 
+PRODUCTION_STORAGE_MODE = "chunked"
+PRODUCTION_CHUNK_EDGE = 16
+PRODUCTION_CHUNK_BUCKET_COUNT = 256
+PRODUCTION_CONTENT_IDENTITY_SCHEME = "merkle-patricia-sha256-v2"
+EXPECTED_KEYFRAME_POLICY = {
+    "bounded": "initial-only",
+    "expanding": "producer-default",
+    "keyframe-replacement": "every-revision",
+}
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Run the isolated C4 receiver resource workload")
     parser.add_argument("--source", required=True, type=Path)
@@ -41,9 +52,6 @@ def parse_args():
     parser.add_argument("--delta-operations", type=int, default=256)
     parser.add_argument("--rate-hz-per-source", type=float, default=10.0)
     parser.add_argument("--qos-depth", type=int, default=4)
-    parser.add_argument("--storage-mode", choices=("vector", "chunked"), default="vector")
-    parser.add_argument("--chunk-edge", type=int, choices=(8, 16, 32), default=16)
-    parser.add_argument("--chunk-bucket-count", type=int, default=256)
     parser.add_argument("--warmup-s", type=float, default=3.0)
     parser.add_argument("--ready-timeout-s", type=float, default=60.0)
     parser.add_argument("--window-s", type=float, default=30.0)
@@ -86,10 +94,6 @@ def validate(args):
     require(math.isfinite(args.rate_hz_per_source) and args.rate_hz_per_source > 0,
             "rate-hz-per-source must be finite and positive")
     require(args.qos_depth > 0, "qos-depth must be positive")
-    require(
-        0 < args.chunk_bucket_count <= (1 << 63) - 1,
-        "chunk-bucket-count must fit a positive int64",
-    )
     require(math.isfinite(args.warmup_s) and args.warmup_s >= 0, "warmup-s is invalid")
     require(
         math.isfinite(args.ready_timeout_s) and args.ready_timeout_s > 0,
@@ -547,17 +551,17 @@ def stage_summary(receiver_values):
     apply_total = receiver_values.get("apply_total_ns", 0)
     payload_decode_total = receiver_values.get("payload_decode_total_ns", 0)
     candidate_build_total = receiver_values.get("candidate_build_total_ns", 0)
-    canonical_hash_total = receiver_values.get("canonical_hash_total_ns", 0)
+    merkle_total = receiver_values.get("merkle_total_ns", 0)
     commit_total = receiver_values.get("commit_total_ns", 0)
     internal_total = (
-        payload_decode_total + candidate_build_total + canonical_hash_total + commit_total
+        payload_decode_total + candidate_build_total + merkle_total + commit_total
     )
     return {
         "decode_fraction_of_callback": decode_total / callback_total,
         "apply_fraction_of_callback": apply_total / callback_total,
         "payload_decode_fraction_of_callback": payload_decode_total / callback_total,
         "candidate_build_fraction_of_callback": candidate_build_total / callback_total,
-        "canonical_hash_fraction_of_callback": canonical_hash_total / callback_total,
+        "merkle_fraction_of_callback": merkle_total / callback_total,
         "commit_fraction_of_callback": commit_total / callback_total,
         "apply_internal_other_fraction_of_callback": max(
             0.0, (apply_total - internal_total) / callback_total
@@ -670,9 +674,6 @@ def main():
             "per_source_path": receiver_rows,
             "ready_path": receiver_ready,
             "input_topic": topic,
-            "storage_mode": args.storage_mode,
-            "chunk_edge": args.chunk_edge,
-            "chunk_bucket_count": args.chunk_bucket_count,
         }),
     ]
     source_command = [
@@ -918,6 +919,8 @@ def main():
         and instrumentation_valid
         and sanitizer["gate_pass"]
         and source_values.get("workload_mode") == args.workload_mode
+        and source_values.get("keyframe_policy")
+        == EXPECTED_KEYFRAME_POLICY[args.workload_mode]
         and source_values.get("conversion_failures") == 0
         and source_values.get("serialization_failures") == 0
         and source_values.get("endpoint_count_anomalies") == 0
@@ -926,9 +929,12 @@ def main():
         and receiver_values.get("origin_clock_anomalies") == 0
         and receiver_values.get("endpoint_count_anomalies") == 0
         and receiver_values.get("sources_seen") == args.source_count
-        and receiver_values.get("storage_mode") == args.storage_mode
-        and receiver_values.get("chunk_edge") == args.chunk_edge
-        and receiver_values.get("chunk_bucket_count") == args.chunk_bucket_count
+        and receiver_values.get("content_identity_scheme")
+        == PRODUCTION_CONTENT_IDENTITY_SCHEME
+        and receiver_values.get("storage_mode") == PRODUCTION_STORAGE_MODE
+        and receiver_values.get("chunk_edge") == PRODUCTION_CHUNK_EDGE
+        and receiver_values.get("chunk_bucket_count")
+        == PRODUCTION_CHUNK_BUCKET_COUNT
         and ready_values.get("sources_ready") == args.source_count
         and ready_values.get("cells_per_source") == args.cells_per_source
         and smem_crosscheck is not None
@@ -958,9 +964,10 @@ def main():
             "delta_operations": args.delta_operations,
             "rate_hz_per_source": args.rate_hz_per_source,
             "qos_depth": args.qos_depth,
-            "storage_mode": args.storage_mode,
-            "chunk_edge": args.chunk_edge,
-            "chunk_bucket_count": args.chunk_bucket_count,
+            "content_identity_scheme": PRODUCTION_CONTENT_IDENTITY_SCHEME,
+            "storage_mode": PRODUCTION_STORAGE_MODE,
+            "chunk_edge": PRODUCTION_CHUNK_EDGE,
+            "chunk_bucket_count": PRODUCTION_CHUNK_BUCKET_COUNT,
             "warmup_s": args.warmup_s,
             "ready_timeout_s": args.ready_timeout_s,
             "window_s": args.window_s,

@@ -100,3 +100,10 @@ Task-local：
 早期 `vector-2x100k`、`vector-2x100k-valid`、相对 ELF 路径失败的
 `vector-2x100k-final-v3`、身份字段为 unknown 的 estimator，以及 cursor 优化前目录
 仅保留作诊断，不参与上述结论。
+
+2026-08-17 收尾时，任务目录内 5 组未跟踪 estimator 中间输出已按原相对路径迁入
+`profiling-archive/c4-chunked-map-cow-20260814/raw/`。迁移集合共 10 个文件、
+886962 字节，规范化树摘要 SHA-256 为
+`99b250183b35b7e3741281c7ac073ff10bad81697f95dfe11d9d5fb13c403311`；详见
+`validation/relocation-provenance.txt`。受 Git 跟踪的 `...identified-v2` 最终摘要未移动、
+未改写。

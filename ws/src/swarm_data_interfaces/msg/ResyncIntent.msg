@@ -21,5 +21,6 @@ uint64 expected_mapper_session_boot_time_ns
 uint32 expected_mapper_session_random_suffix
 uint64 expected_map_epoch
 uint64 receiver_revision
+perception_interfaces/ContentIdentityDescriptor receiver_content_identity
 uint8[32] receiver_content_hash
 uint8 reason

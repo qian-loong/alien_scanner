@@ -192,12 +192,10 @@ namespace PerceptionLocalMap {
                     "canonical snapshot retained bytes exceed configured limit", timing};
         }
         timing.canonicalize_duration_ns = elapsed_ns(canonicalize_start);
-        const auto hash_start = std::chrono::steady_clock::now();
+        const auto fingerprint_start = std::chrono::steady_clock::now();
         snapshot.geometry_fingerprint =
                 PerceptionMapUpdate::ContentHasher::geometry_fingerprint(snapshot.geometry);
-        snapshot.content_hash = PerceptionMapUpdate::ContentHasher::content_hash(
-                snapshot.source, snapshot.geometry_fingerprint, snapshot.cells);
-        timing.content_hash_duration_ns = elapsed_ns(hash_start);
+        timing.geometry_fingerprint_duration_ns = elapsed_ns(fingerprint_start);
         return {CanonicalSnapshotStatus::Ready, std::move(snapshot), {}, timing};
     }
 

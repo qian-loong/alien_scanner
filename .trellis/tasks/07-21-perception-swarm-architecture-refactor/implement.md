@@ -3,8 +3,11 @@
 > 状态：父任务持续跟踪中。Phase 1 规划已经完成并通过评审；C1/C2 已完成
 > 并归档，C3 实现、本机质量门、冻结版本性能/内存专项和确定性 exact-revision replay/oracle 已完成。
 > 历史 Phase 3 bag 资产不可用；shared-view alignment 消费证据仍保持开放。
-> C4 通信数据面及其质量门已完成；C4.1 分块与 COW 评估也已完成，Gate B 为 no-go，
-> 生产默认保持 Vector。当前关键路径为 C5 拓扑与角色。本文维护
+> C4 通信数据面及其质量门已完成；C4.1 分块与 COW 评估为 no-go；C4.2 增量 Merkle v2
+> 算法 Gate 为 go。C4.3 的 v2-only 实现、正式矩阵、内存工具和 rollback dry-run 已完成。
+> 严格 Memcheck 原始结果保留第三方 `liblttng-ust` 768 B `possibly lost`，但该 finding
+> 已由 C1/C2/C4 历史证据确认且不经过业务栈，business memory Gate 通过；C4.3 production
+> Gate 为 GO（含已知第三方 runtime 例外），C5d 前置阻塞解除。本文维护
 > 后续子任务顺序、验证门和回滚边界；Git 提交仍需用户明确授权。
 
 ## 1. 父任务规划步骤
@@ -62,7 +65,9 @@
 | C3 地图状态与增量更新 | 本机验收完成 | snapshot/keyframe/delta、原子 apply、乱序拒绝、resync、确定性 exact-revision replay/oracle 和冻结版本性能/内存专项已完成；shared-view alignment 消费证据保持开放 |
 | C4 通信数据面 | 已完成 | routed envelope、admission/resync、故障注入、信任拒绝、可视化与性能/内存质量门已归档 |
 | C4.1 接收地图分块与 COW | 已完成（no-go） | edge 16 为三档折中研究候选；R5 与短 A/B 未过门，默认仍为 Vector，保留 storage-independent view 与可选 COW 实现 |
-| C5-C8 | 下一步为 C5 | 拓扑角色、多 Region、执行恢复和总集成按依赖推进；C5 只依赖 canonical view，不绑定 vector/chunk 内部布局 |
+| C4.2 增量 Merkle 内容身份 v2 | 已完成（算法 go / 生产 no-go） | 固定 4 个 touched chunks 时相对 chunk+flat 改善 20.5x/189x/858x；PSS 增加 1.7%/5.2%/6.9%，默认仍为 Vector/v1，生产迁移另立任务 |
+| C4.3 Merkle v2 生产集成 | 已完成（GO，含已知第三方 runtime 例外） | v2-only descriptor、本地 root 重算、资源 admission、3 x 300 秒矩阵和 rollback 已完成；原始 Memcheck 严格 gate 保留第三方 768 B finding，business memory Gate 通过 |
+| C5-C8 | C5 可进入 | C5a-C5c 可独立于内容身份内部结构推进；C5d 前置 Gate 已解除，后续多 Region、执行恢复和总集成按依赖推进 |
 | C9a/C9b | 后续扩展 | HA 扩展不阻塞 C1-C8 核心路径 |
 
 ## 3. 后续子任务顺序
@@ -201,9 +206,11 @@
 
 ## 6. 当前执行边界
 
-- C3/C4 语义和质量门已经稳定；C4.1 已完成且未切换生产默认。C5 必须消费
+- C3/C4 语义和质量门已经稳定；C4.1/C4.2 已完成且未切换生产默认。C5 必须消费
   storage-independent canonical view，不得依赖 vector/chunk 内部布局，也不得借 C5
-  修改 C3/C4 wire、hash、revision、resync 或 trust 契约。
+  修改 C3/C4 wire、hash、revision、resync 或 trust 契约。Merkle v2 生产 schema、协商、
+  admission、回滚与 3 x 300 秒 ROS 矩阵必须由 C4.3 完成；C5d EdgeAggregator 在其
+  Gate 通过前不得固定新的内容身份 wire 语义。
 - 历史 Phase 3 bag 资产不可用，但当前确定性 C2 exact-revision replay/oracle 已完成
   C3 功能验收；shared-view alignment 消费证据由具备聚合边界的后续任务验收。
 - 只按依赖创建近期子任务，不批量创建 C5-C9 空目录。

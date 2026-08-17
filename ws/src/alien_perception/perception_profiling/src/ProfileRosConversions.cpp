@@ -216,6 +216,15 @@ namespace PerceptionProfiling::Ros {
         MapUpdateProjection result;
         result.receipt_monotonic_ns = receipt_monotonic_ns;
         result.stamp_ns = from_time(message.header.stamp).nanoseconds;
+        result.protocol_version = message.protocol_version;
+        result.canonical_encoding_version = message.canonical_encoding_version;
+        result.hash_algorithm = message.hash_algorithm;
+        result.content_identity_scheme = message.content_identity.scheme;
+        result.content_identity_chunk_edge = message.content_identity.chunk_edge;
+        result.content_identity_coordinate_key_version =
+                message.content_identity.coordinate_key_version;
+        result.content_identity_node_encoding_version =
+                message.content_identity.node_encoding_version;
         result.update_kind = message.update_kind;
         result.vehicle_id = message.vehicle_id;
         result.mapper_session = {

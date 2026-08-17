@@ -311,3 +311,72 @@ docs/perception-real-chain-retest.md.
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Complete incremental Merkle hash v2 evaluation
+
+**Date**: 2026-08-15
+**Task**: Complete incremental Merkle hash v2 evaluation
+**Branch**: `phase/4-incremental-merkle-hash-v2`
+
+### Summary
+
+Completed chunk-16 incremental Merkle v2 prototype, conformance, performance-memory Gate, evidence relocation, and C4.3 rollout sequencing.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6865c08` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 9: 完成 C4.1 与 C4.3 收尾归档
+
+**Date**: 2026-08-17
+**Task**: 完成 C4.1 与 C4.3 收尾归档
+**Branch**: `phase/4-merkle-v2-production-integration`
+
+### Summary
+
+C4.1 分块 COW Gate B no-go 与 C4.3 Merkle v2 production Gate GO 的状态、证据和父任务依赖已同步；C4.1 中间 estimator raw 已按完整性校验迁入 profiling archive；两个子任务已归档，C5 前置阻塞解除。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5875a41` | (see git log) |
+| `4033bd1` | (see git log) |
+| `6c742cb` | (see git log) |
+| `0ef09ee` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

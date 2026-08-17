@@ -1,0 +1,27 @@
+capture_date=2026-08-15
+build_type=RelWithDebInfo
+cxx_flags=-fsanitize=address,undefined -fno-omit-frame-pointer
+exe_linker_flags=-fsanitize=address,undefined
+shared_linker_flags=-fsanitize=address,undefined
+asan_options=detect_leaks=1:halt_on_error=1
+ubsan_options=halt_on_error=1:print_stacktrace=1
+
+TestMerklePatricia_sha256=c2b9c508548d8bc38c2153f953e2fa8c889d8e80d3de53f95e5b974701901488
+TestMerklePatricia_tests=10
+TestMerklePatricia_result=passed
+
+TestMerklePrototypeApplier_sha256=08736c88cdaaca0e991a5306cec99257a744a604005586e61b7cef247c32783e
+TestMerklePrototypeApplier_tests=4
+TestMerklePrototypeApplier_result=passed
+
+TestMerklePrototypeProtocol_sha256=a2e47c6ea651fa062880cd06fc781a23c21dd60920557564b6abf271416e9859
+TestMerklePrototypeProtocol_tests=4
+TestMerklePrototypeProtocol_result=passed
+
+total_tests=18
+asan_diagnostics=0
+lsan_diagnostics=0
+ubsan_diagnostics=0
+
+scope=ROS-free Merkle core, candidate transaction, protocol harness, and 400-checkpoint replay
+excluded=full profiling package ASan matrix; production v2 ROS integration does not exist in this task

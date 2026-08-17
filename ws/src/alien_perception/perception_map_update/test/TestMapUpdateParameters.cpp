@@ -33,11 +33,15 @@ namespace PerceptionMapUpdate::Test {
         RclcppScope scope;
         rclcpp::NodeOptions valid_options;
         valid_options.append_parameter_override("map_update.max_known_cells", 42);
+        valid_options.append_parameter_override("map_update.max_live_chunks", 21);
+        valid_options.append_parameter_override("map_update.max_merkle_nodes", 41);
         valid_options.append_parameter_override("map_update.max_delta_chain_length", 0);
         auto valid_node = std::make_shared<rclcpp::Node>(
                 "valid_map_update_parameters", valid_options);
         const auto limits = Ros::declare_map_update_limits(*valid_node);
         EXPECT_EQ(limits.max_known_cells, 42U);
+        EXPECT_EQ(limits.max_live_chunks, 21U);
+        EXPECT_EQ(limits.max_merkle_nodes, 41U);
         EXPECT_EQ(limits.max_delta_chain_length, 0U);
 
         rclcpp::NodeOptions zero_cells_options;

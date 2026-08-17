@@ -37,7 +37,8 @@ namespace SwarmDataPlane {
     RoutedResyncAck RoutedResyncLedger::accept(
             const RoutedResyncIntent & intent,
             const PerceptionMapUpdate::SourceIdentity & current_source,
-            std::uint64_t current_revision)
+            std::uint64_t current_revision,
+            const PerceptionMapUpdate::VersionedContentDigest & current_content_identity)
     {
         const auto rejected = [&](std::string diagnostic) {
             return RoutedResyncAck {
@@ -47,6 +48,7 @@ namespace SwarmDataPlane {
                     target_producer_,
                     current_source,
                     current_revision,
+                    current_content_identity,
                     std::move(diagnostic)};
         };
         if(intent.protocol_version != kProtocolVersion) {
@@ -60,13 +62,15 @@ namespace SwarmDataPlane {
             return rejected("routed resync targets a stale or unknown route epoch");
         }
 
-        const auto response = ledger_.accept(intent.request, current_source, current_revision);
+        const auto response = ledger_.accept(
+                intent.request, current_source, current_revision, current_content_identity);
         return {kProtocolVersion,
                 response.accepted,
                 response.correlation_id,
                 target_producer_,
                 response.current_source,
                 response.current_revision,
+                response.current_content_identity,
                 response.diagnostic};
     }
 

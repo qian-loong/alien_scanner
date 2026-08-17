@@ -42,11 +42,13 @@ namespace PerceptionLocalMap {
         std::int64_t last_materialize_duration_ns = 0;
         std::int64_t last_traversal_duration_ns = 0;
         std::int64_t last_canonicalize_duration_ns = 0;
-        std::int64_t last_content_hash_duration_ns = 0;
+        std::int64_t last_geometry_fingerprint_duration_ns = 0;
         std::int64_t last_prepare_duration_ns = 0;
         std::int64_t last_validation_duration_ns = 0;
         std::int64_t last_diff_duration_ns = 0;
         std::int64_t last_encode_duration_ns = 0;
+        std::int64_t last_store_candidate_duration_ns = 0;
+        std::int64_t last_merkle_duration_ns = 0;
         std::int64_t last_update_hash_duration_ns = 0;
         std::int64_t last_publish_duration_ns = 0;
         std::string last_diagnostic;
@@ -68,6 +70,7 @@ namespace PerceptionLocalMap {
 
         bool enqueue(const CommitReceipt & receipt);
         bool request_keyframe(std::string correlation_id);
+        std::optional<PerceptionMapUpdate::ProducerBaselineToken> committed_baseline() const;
         AsyncMapUpdateDiagnostics diagnostics() const;
         void shutdown() noexcept;
 

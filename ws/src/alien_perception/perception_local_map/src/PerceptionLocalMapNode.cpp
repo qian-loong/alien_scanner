@@ -659,12 +659,17 @@ private:
             perception_interfaces::srv::RequestMapResync::Response & response_message)
     {
         const auto state = mapper_->state(monotonic_now_ns());
-        const PerceptionMapUpdate::SourceIdentity current_source {
+        const PerceptionMapUpdate::SourceIdentity observed_source {
                 state.identity.vehicle_id,
                 state.identity.mapper_session,
                 state.identity.map_epoch};
         PerceptionMapUpdate::ResyncResponse response {
-                false, {}, current_source, state.identity.revision, {}};
+                false,
+                {},
+                observed_source,
+                state.identity.revision,
+                PerceptionMapUpdate::VersionedContentDigest {},
+                {}};
         PerceptionMapUpdate::ResyncRequest request;
         std::string diagnostic;
         if(!PerceptionMapUpdate::Ros::decode_resync_request(
@@ -675,8 +680,17 @@ private:
         } else if(!resync_ledger_ || !map_update_producer_) {
             response.diagnostic = "map update producer is disabled";
         } else {
+            const auto committed = map_update_producer_->committed_baseline();
+            if(!committed.has_value()) {
+                response.diagnostic = "producer has not published a committed v2 baseline";
+                PerceptionMapUpdate::Ros::encode_resync_response(response, response_message);
+                return;
+            }
             response = resync_ledger_->accept(
-                    request, current_source, state.identity.revision);
+                    request,
+                    committed->source,
+                    committed->revision,
+                    committed->content_identity);
             if(response.accepted) {
                 std::lock_guard<std::mutex> lock(pending_resync_mutex_);
                 const bool already_active = active_resync_correlation_.has_value()
@@ -801,11 +815,15 @@ private:
         append("materialize_duration_ns", producer.last_materialize_duration_ns);
         append("traversal_duration_ns", producer.last_traversal_duration_ns);
         append("canonicalize_duration_ns", producer.last_canonicalize_duration_ns);
-        append("content_hash_duration_ns", producer.last_content_hash_duration_ns);
+        append(
+                "geometry_fingerprint_duration_ns",
+                producer.last_geometry_fingerprint_duration_ns);
         append("prepare_duration_ns", producer.last_prepare_duration_ns);
         append("validation_duration_ns", producer.last_validation_duration_ns);
         append("diff_duration_ns", producer.last_diff_duration_ns);
         append("encode_duration_ns", producer.last_encode_duration_ns);
+        append("store_candidate_duration_ns", producer.last_store_candidate_duration_ns);
+        append("merkle_duration_ns", producer.last_merkle_duration_ns);
         append("update_hash_duration_ns", producer.last_update_hash_duration_ns);
         append("publish_duration_ns", producer.last_publish_duration_ns);
         array.status.push_back(std::move(status));

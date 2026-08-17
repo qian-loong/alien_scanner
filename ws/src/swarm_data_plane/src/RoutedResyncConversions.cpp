@@ -29,7 +29,8 @@ namespace SwarmDataPlane::Ros {
                 std::string & diagnostic)
         {
             if(ack.protocol_version != kProtocolVersion
-               || !valid_producer(ack.target_producer, data_plane_limits)) {
+               || !valid_producer(ack.target_producer, data_plane_limits)
+               || !ack.current_content_identity.descriptor.valid()) {
                 diagnostic = "resync ack protocol or target producer is invalid";
                 return false;
             }
@@ -82,9 +83,17 @@ namespace SwarmDataPlane::Ros {
             c3_message.expected_map_epoch = intent.request.expected_source->map_epoch;
         }
         c3_message.receiver_revision = intent.request.receiver_revision;
+        c3_message.receiver_content_identity.scheme = static_cast<std::uint16_t>(
+                intent.request.receiver_content_identity.descriptor.scheme);
+        c3_message.receiver_content_identity.chunk_edge =
+                intent.request.receiver_content_identity.descriptor.chunk_edge;
+        c3_message.receiver_content_identity.coordinate_key_version =
+                intent.request.receiver_content_identity.descriptor.coordinate_key_version;
+        c3_message.receiver_content_identity.node_encoding_version =
+                intent.request.receiver_content_identity.descriptor.node_encoding_version;
         std::copy(
-                intent.request.receiver_content_hash.begin(),
-                intent.request.receiver_content_hash.end(),
+                intent.request.receiver_content_identity.digest.begin(),
+                intent.request.receiver_content_identity.digest.end(),
                 c3_message.receiver_content_hash.begin());
         c3_message.reason = static_cast<std::uint8_t>(intent.request.reason);
 
@@ -114,6 +123,7 @@ namespace SwarmDataPlane::Ros {
                 c3_message.expected_mapper_session_random_suffix;
         message.expected_map_epoch = c3_message.expected_map_epoch;
         message.receiver_revision = c3_message.receiver_revision;
+        message.receiver_content_identity = c3_message.receiver_content_identity;
         std::copy(
                 c3_message.receiver_content_hash.begin(),
                 c3_message.receiver_content_hash.end(),
@@ -154,6 +164,7 @@ namespace SwarmDataPlane::Ros {
                 message.expected_mapper_session_random_suffix;
         c3_message.expected_map_epoch = message.expected_map_epoch;
         c3_message.receiver_revision = message.receiver_revision;
+        c3_message.receiver_content_identity = message.receiver_content_identity;
         std::copy(
                 message.receiver_content_hash.begin(),
                 message.receiver_content_hash.end(),
@@ -193,6 +204,18 @@ namespace SwarmDataPlane::Ros {
                 ack.current_source.mapper_session.random_suffix;
         message.current_map_epoch = ack.current_source.map_epoch;
         message.current_revision = ack.current_revision;
+        message.current_content_identity.scheme = static_cast<std::uint16_t>(
+                ack.current_content_identity.descriptor.scheme);
+        message.current_content_identity.chunk_edge =
+                ack.current_content_identity.descriptor.chunk_edge;
+        message.current_content_identity.coordinate_key_version =
+                ack.current_content_identity.descriptor.coordinate_key_version;
+        message.current_content_identity.node_encoding_version =
+                ack.current_content_identity.descriptor.node_encoding_version;
+        std::copy(
+                ack.current_content_identity.digest.begin(),
+                ack.current_content_identity.digest.end(),
+                message.current_content_hash.begin());
         message.diagnostic = ack.diagnostic;
         diagnostic.clear();
         return true;
@@ -217,6 +240,16 @@ namespace SwarmDataPlane::Ros {
                  message.current_mapper_session_random_suffix},
                 message.current_map_epoch};
         ack.current_revision = message.current_revision;
+        ack.current_content_identity.descriptor = {
+                static_cast<PerceptionMapUpdate::ContentIdentityScheme>(
+                        message.current_content_identity.scheme),
+                message.current_content_identity.chunk_edge,
+                message.current_content_identity.coordinate_key_version,
+                message.current_content_identity.node_encoding_version};
+        std::copy(
+                message.current_content_hash.begin(),
+                message.current_content_hash.end(),
+                ack.current_content_identity.digest.begin());
         ack.diagnostic = message.diagnostic;
         std::string diagnostic;
         if(!valid_ack(ack, data_plane_limits, map_update_limits, diagnostic)) {

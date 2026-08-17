@@ -48,6 +48,8 @@ namespace PerceptionMapUpdate::Test {
         ASSERT_TRUE(decoded.success) << decoded.diagnostic;
         ASSERT_TRUE(decoded.update.has_value());
         EXPECT_EQ(decoded.update->update_hash, prepared.update->update_hash);
+        EXPECT_EQ(decoded.update->protocol_version, kProtocolVersion);
+        EXPECT_EQ(decoded.update->content_identity, ContentIdentityDescriptor {});
         EXPECT_EQ(decoded.update->payload, prepared.update->payload);
         EXPECT_EQ(decoded.update->latest_commit, prepared.update->latest_commit);
     }
@@ -67,6 +69,9 @@ namespace PerceptionMapUpdate::Test {
         ++message.canonical_payload_bytes;
         EXPECT_FALSE(Ros::decode_map_update(message).success);
         --message.canonical_payload_bytes;
+        message.content_identity.chunk_edge = 8U;
+        EXPECT_FALSE(Ros::decode_map_update(message).success);
+        message.content_identity.chunk_edge = kMerkleChunkEdge;
         message.latest_observation_stamp.nanosec = 1'000'000'000U;
         EXPECT_FALSE(Ros::decode_map_update(message).success);
     }
@@ -80,6 +85,13 @@ namespace PerceptionMapUpdate::Test {
         message.client_request_id = "client-1";
         message.bootstrap_latest = true;
         message.reason = message.REASON_INITIAL_BASELINE;
+        message.receiver_content_identity.scheme = static_cast<std::uint16_t>(
+                ContentIdentityScheme::MerklePatriciaSha256V2);
+        message.receiver_content_identity.chunk_edge = kMerkleChunkEdge;
+        message.receiver_content_identity.coordinate_key_version =
+                kMerkleCoordinateKeyVersion;
+        message.receiver_content_identity.node_encoding_version =
+                kMerkleNodeEncodingVersion;
         ResyncRequest request;
         std::string diagnostic;
         ASSERT_TRUE(Ros::decode_resync_request(message, request, {}, diagnostic)) << diagnostic;
@@ -104,6 +116,10 @@ namespace PerceptionMapUpdate::Test {
         ASSERT_TRUE(Ros::decode_resync_request(message, request, {}, diagnostic)) << diagnostic;
         EXPECT_FALSE(request.expected_source.has_value());
 
+        message.receiver_content_identity.chunk_edge = 8U;
+        EXPECT_FALSE(Ros::decode_resync_request(message, request, {}, diagnostic));
+        message.receiver_content_identity.chunk_edge = kMerkleChunkEdge;
+
         message.requester_id = std::string("\xC0\xAF", 2U);
         EXPECT_FALSE(Ros::decode_resync_request(message, request, {}, diagnostic));
     }
@@ -117,10 +133,7 @@ namespace PerceptionMapUpdate::Test {
         map.cells = {
                 {{0, 0, 0}, CellState::Free},
                 {{1, 0, 0}, CellState::Occupied}};
-        map.content_hash = ContentHasher::content_hash(
-                map.source,
-                ContentHasher::geometry_fingerprint(map.geometry),
-                map.cells);
+        map.content_identity = {};
 
         octomap_msgs::msg::Octomap message;
         std::string diagnostic;

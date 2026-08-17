@@ -3,9 +3,12 @@
 > 状态：已确认的父级架构基线。C1/C2 已落地并完成资源复测；C3 地图更新
 > 语义、直接闭环、本机质量门、冻结版本性能/内存专项和确定性 exact-revision replay/oracle 已完成。
 > 历史 Phase 3 bag 资产不可用；shared-view alignment 消费证据仍由后续聚合
-> 验收补齐。C4 通信数据面及其质量门已完成；C4.1 分块与 COW 评估已完成，
-> Gate B 为 no-go，生产默认保持 Vector。当前关键路径为 C5 拓扑与角色。
-> 本文不提前宣称 C4 及后续能力已经实现。
+> 验收补齐。C4 通信数据面及其质量门已完成；C4.1 分块与 COW 评估为 no-go，
+> C4.2 增量 Merkle v2 算法 Gate 为 go；C4.3 v2-only 生产集成及正式矩阵已完成验证。
+> 严格 Memcheck 原始结果保留已知第三方 runtime 的 768 B finding，但 business memory Gate
+> 通过，C4.3 production Gate 为 GO（含已知例外）。C5a-C5c 可独立推进；C5d EdgeAggregator
+> 前置阻塞已解除。本文不提前宣称
+> C5 及后续能力已经实现。
 
 ## 1. 设计驱动因素
 
@@ -596,6 +599,9 @@ C3 地图更新语义
 | C2 | 本机观测消费与局部地图 | 多 origin 更新、本机地图 revision、现有地图/安全行为对照 |
 | C3 | 地图 snapshot/keyframe/delta 模型 | 离线 delta 推导、等价重建、epoch/revision/resync |
 | C4 | 通信数据面 | 优先级、去重、背压、重同步、传输与处理性能 |
+| C4.1 | 接收地图分块与 COW 评估 | edge 16 候选、storage-independent view、固定 flat v1 的布局 A/B；生产切换 no-go |
+| C4.2 | 增量 Merkle 内容身份 v2 | persistent Patricia 原型、增量 root conformance、B/C 算法 Gate go；生产迁移 no-go |
+| C4.3 | Merkle v2 生产集成 | v2-only descriptor、receiver 本地重算、admission/rollback、3 x 300 秒矩阵已完成；已知第三方 768 B finding 作为例外，production Gate GO，C5d 解锁 |
 | C5 | 拓扑与角色（强制） | 三图模型、实际稀疏拓扑、Explorer/纯 Relay、独立 EdgeAggregator、断链与路由；Reserve 契约/测试替身 |
 | C6 | 多 Region 与任务生命周期 | 3-9 强制验收、owner/lease/revoke/reassign |
 | C7 | 本机恢复与执行状态 | stalled、任务拒绝、失联和能力降级，不放宽安全 |

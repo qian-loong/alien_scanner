@@ -106,7 +106,9 @@ namespace PerceptionMapUpdate::Test {
 
         ASSERT_TRUE(receiver.reconstructed_map().has_value());
         EXPECT_EQ(receiver.reconstructed_map()->revision, target->revision);
-        EXPECT_EQ(receiver.reconstructed_map()->content_hash, target->content_hash);
+        EXPECT_EQ(
+                receiver.reconstructed_map()->content_identity.digest,
+                delta.update->content_hash);
         EXPECT_EQ(receiver.reconstructed_map()->cells, target->cells);
 
         MapUpdateLimits rejected_limits;

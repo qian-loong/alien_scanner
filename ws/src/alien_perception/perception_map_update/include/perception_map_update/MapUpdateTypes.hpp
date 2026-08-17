@@ -13,15 +13,45 @@
 
 namespace PerceptionMapUpdate {
 
-    constexpr std::uint16_t kProtocolVersion          = 1U;
+    constexpr std::uint16_t kProtocolVersion          = 2U;
     constexpr std::uint16_t kCanonicalEncodingVersion = 1U;
     constexpr std::size_t   kSha256Bytes              = 32U;
+
+    constexpr std::uint16_t kMerkleContentIdentityVersion = 2U;
+    constexpr std::uint32_t kMerkleChunkEdge = 16U;
+    constexpr std::size_t kMerkleChunkBucketCount = 256U;
+    constexpr std::uint16_t kMerkleCoordinateKeyVersion = 1U;
+    constexpr std::uint16_t kMerkleNodeEncodingVersion = 1U;
 
     using Hash256 = std::array<std::uint8_t, kSha256Bytes>;
 
     enum class HashAlgorithm : std::uint8_t
     {
         Sha256 = 1
+    };
+
+    enum class ContentIdentityScheme : std::uint16_t
+    {
+        MerklePatriciaSha256V2 = 2
+    };
+
+    struct ContentIdentityDescriptor {
+        ContentIdentityScheme scheme = ContentIdentityScheme::MerklePatriciaSha256V2;
+        std::uint32_t chunk_edge = kMerkleChunkEdge;
+        std::uint16_t coordinate_key_version = kMerkleCoordinateKeyVersion;
+        std::uint16_t node_encoding_version = kMerkleNodeEncodingVersion;
+
+        bool operator==(const ContentIdentityDescriptor & other) const noexcept;
+        bool operator!=(const ContentIdentityDescriptor & other) const noexcept;
+        bool valid() const noexcept;
+    };
+
+    struct VersionedContentDigest {
+        ContentIdentityDescriptor descriptor;
+        Hash256 digest {};
+
+        bool operator==(const VersionedContentDigest & other) const noexcept;
+        bool operator!=(const VersionedContentDigest & other) const noexcept;
     };
 
     enum class CellState : std::uint8_t
@@ -119,6 +149,7 @@ namespace PerceptionMapUpdate {
         std::uint16_t protocol_version           = kProtocolVersion;
         std::uint16_t canonical_encoding_version = kCanonicalEncodingVersion;
         HashAlgorithm hash_algorithm             = HashAlgorithm::Sha256;
+        ContentIdentityDescriptor content_identity;
         UpdateKind    kind                       = UpdateKind::Keyframe;
         SourceIdentity source;
         MapGeometry   geometry;

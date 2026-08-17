@@ -38,7 +38,8 @@ namespace PerceptionMapUpdate {
         return requester == other.requester && client_request_id == other.client_request_id
                && expected_source == other.expected_source
                && receiver_revision == other.receiver_revision
-               && receiver_content_hash == other.receiver_content_hash && reason == other.reason;
+               && receiver_content_identity == other.receiver_content_identity
+               && reason == other.reason;
     }
 
     ResyncRequestLedger::ResyncRequestLedger(MapUpdateLimits limits)
@@ -49,11 +50,12 @@ namespace PerceptionMapUpdate {
     ResyncResponse ResyncRequestLedger::accept(
             const ResyncRequest & request,
             const SourceIdentity & current_source,
-            std::uint64_t current_revision)
+            std::uint64_t current_revision,
+            const VersionedContentDigest & current_content_identity)
     {
         const auto current_validation = CanonicalCodec::validate_identity(current_source, limits_);
-        if(!current_validation) {
-            return {false, {}, current_source, current_revision,
+        if(!current_validation || !current_content_identity.descriptor.valid()) {
+            return {false, {}, current_source, current_revision, current_content_identity,
                     "producer current source is invalid"};
         }
         const auto requester = CanonicalCodec::validate_string(
@@ -68,12 +70,16 @@ namespace PerceptionMapUpdate {
                 false);
         if(!requester || !client_request
            || request.requester.requester_session.boot_time_ns == 0U) {
-            return {false, {}, current_source, current_revision,
+            return {false, {}, current_source, current_revision, current_content_identity,
                     "resync requester or client request id is invalid"};
         }
         if(!is_valid_resync_reason(request.reason)) {
-            return {false, {}, current_source, current_revision,
+            return {false, {}, current_source, current_revision, current_content_identity,
                     "resync reason is invalid"};
+        }
+        if(!request.receiver_content_identity.descriptor.valid()) {
+            return {false, {}, current_source, current_revision, current_content_identity,
+                    "receiver content identity descriptor is invalid"};
         }
         const auto duplicate = std::find_if(
                 entries_.begin(), entries_.end(), [&](const Entry & entry) {
@@ -83,12 +89,12 @@ namespace PerceptionMapUpdate {
         if(duplicate != entries_.end()) {
             if(duplicate->request == request) {
                 if(duplicate->response.current_source != current_source) {
-                    return {false, {}, current_source, current_revision,
+                    return {false, {}, current_source, current_revision, current_content_identity,
                             "resync request belongs to a retired source chain"};
                 }
                 return duplicate->response;
             }
-            return {false, {}, current_source, current_revision,
+            return {false, {}, current_source, current_revision, current_content_identity,
                     "client request id conflicts with an earlier resync request"};
         }
         const bool bootstrap = request.reason == ResyncReason::InitialBaseline
@@ -96,16 +102,16 @@ namespace PerceptionMapUpdate {
         if(!bootstrap
            && (!request.expected_source.has_value()
                || *request.expected_source != current_source)) {
-            return {false, {}, current_source, current_revision,
+            return {false, {}, current_source, current_revision, current_content_identity,
                     "resync request targets a stale or unknown source chain"};
         }
         if(request.receiver_revision > current_revision) {
-            return {false, {}, current_source, current_revision,
+            return {false, {}, current_source, current_revision, current_content_identity,
                     "receiver revision is ahead of producer revision"};
         }
         if(entries_.size() >= limits_.max_recent_resync_requests
            || next_correlation_sequence_ == std::numeric_limits<std::uint64_t>::max()) {
-            return {false, {}, current_source, current_revision,
+            return {false, {}, current_source, current_revision, current_content_identity,
                     "resync request ledger is at its configured capacity"};
         }
 
@@ -116,9 +122,10 @@ namespace PerceptionMapUpdate {
                     << std::setw(16) << current_source.map_epoch << '-'
                     << std::setw(16) << next_correlation_sequence_++;
         ResyncResponse response {
-                true, correlation.str(), current_source, current_revision, {}};
+                true, correlation.str(), current_source, current_revision,
+                current_content_identity, {}};
         if(response.correlation_id.size() > limits_.max_correlation_id_bytes) {
-            return {false, {}, current_source, current_revision,
+            return {false, {}, current_source, current_revision, current_content_identity,
                     "generated correlation id exceeds configured limit"};
         }
         entries_.push_back({request, response});

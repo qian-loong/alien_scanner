@@ -32,6 +32,80 @@
   删除后无法与"从未检查"区分。
 - **禁止**在报告中给 CPU 或延迟绝对值写三位有效数字的精度暗示。
 
+## 更新类型混杂检查
+
+V1/V2 或不同 content-identity 实现的端到端 A/B，除了固定地图规模、操作数、频率、
+warmup、窗口和 ROS domain，还必须固定 `keyframe`/`delta` 的组成。生产 producer 的
+`max_delta_chain_length` 或周期 keyframe 参数可能在同一时间窗口内插入完整基线；如果
+两组的 keyframe 数不同，payload、candidate、内存和 apply 成本就不再只反映算法差异。
+
+- profiling fixture 必须在摘要中记录明确的 `keyframe_policy`，runner 对该字段做校验；
+- bounded V1/V2 筛选若采用“每来源仅初始 keyframe”，应将 fixture 专用 chain limit 设为
+  `0`，不改变生产默认 chain limit；
+- 若两组总消息数相同但 keyframe 数不同，不能把差异解释为处理速度造成的 cadence；应先
+  停止归因并统一触发策略；
+- A/B 摘要必须同时报告 `messages_*`、`keyframes_*`、`deltas_*` 和最终 revision，
+  keyframe 计数不一致的样本不得进入性能 Gate 聚合。
+
+## 内存工具归因与严格门
+
+### 1. 适用范围
+
+当 ASan/LSan、Memcheck 或 Heaptrack 参与 rollout Gate 时，工具结论和归因必须分开记录。
+第三方 runtime 的 retained allocation 可以解释来源，但不能静默覆盖工具的严格门结果。
+
+### 2. 摘要字段
+
+Memcheck 摘要至少保留：`target_verified`、`invalid_access`、`definite_lost_bytes`、
+`indirect_lost_bytes`、`possibly_lost_bytes`、`still_reachable_bytes` 和 `gate_pass`。Sanitizer
+摘要至少保留 `configured`、`enabled`、`report_files` 和 `gate_pass`。Heaptrack 必须同时记录
+primary artifact、parse/target verification、peak heap 和工具自己的 leak 口径。
+
+### 3. 契约
+
+- `possibly_lost_bytes > 0` 时，严格 Memcheck `gate_pass` 必须保持 false，即使调用栈落在
+  `liblttng-ust`、DDS 或其他第三方库；
+- 严格工具门与业务资源门分列：只有在同一栈已被至少两次历史基线复现、调用栈不经过业务
+  代码、业务 definite/indirect/invalid 均为零且 retained bytes 不随 workload 增长时，
+  才能显式记录 `business_memory_gate=pass` 和固定的第三方例外 ID；该记录不修改原始
+  Memcheck `gate_pass=false`；
+- 报告必须另写 attribution，明确是业务代码、第三方 runtime 还是无法归因；
+- Heaptrack 的 `total_memory_leaked` 不等同于 Memcheck 的 definitely lost，不能跨工具替换口径；
+- 工具开销导致消息、revision 或最终 cell 不守恒时，该样本只能用于工具诊断，不能进入业务 Gate；
+- “未发现业务 leak”与“严格内存门通过”是两个独立陈述，不得互换。
+
+### 4. 验证与错误矩阵
+
+| 条件 | 必须结果 |
+| --- | --- |
+| definite/indirect lost 或 invalid access 非零 | 业务 Gate 失败，修复后重跑 |
+| only possibly lost，且栈在第三方 runtime，并满足历史复现/非业务栈/不增长条件 | 严格工具门仍失败；可显式记录第三方例外并通过 business memory gate |
+| sanitizer report 为空但 workload 未完成 | 样本无效，不能写成 sanitizer Gate 通过 |
+| Heaptrack parse 通过但 target 未验证 | 只保留 allocation 诊断，不纳入正式 Gate |
+| full dependency closure 有非目标包错误 | 精确重跑受影响包并并列记录；不能伪称整个闭包通过 |
+
+### 5. Good / Base / Bad
+
+- Good：业务链完整，Memcheck definite/indirect 为 0、possible 为 768 B，调用栈归因第三方，
+  且 C1/C2/C4 历史基线复现；报告同时写 `strict_memcheck_gate=false`、
+  `business_memory_gate=pass` 和例外 ID。
+- Base：第三方 possible-lost 尚未完成历史复现或 workload 相关性检查，business memory gate
+  保持 pending，不得依赖猜测放行。
+- Bad：看到第三方调用栈后手工把 `gate_pass` 改为 true，或用 Heaptrack leak 数替代 Memcheck。
+
+### 6. 必需测试
+
+- runner/parser 单测断言每个工具字段存在且数值解析正确；
+- positive control 必须能让 invalid access 或 definite leak 使 Gate 失败；
+- workload completion 断言消息、revision、最终 cell 和 target verification 守恒；
+- C4/C5 等跨包链路必须把目标包精确结果与 dependency-closure 结果分列。
+
+### 7. Wrong vs Correct
+
+Wrong：`possible lost 来自第三方，因此 Memcheck passed`。
+
+Correct：`strict_memcheck_gate=false；definite/indirect/invalid=0，possible=768 B，第三方 runtime 归因且历史可复现；business_memory_gate=pass，例外 ID 已记录`。
+
 ## 指标可信度分级
 
 | 级别 | 指标 | 说明 |
@@ -77,6 +151,8 @@
   `git ls-files --others --exclude-standard -- <source-root>`，不得靠扩展名或目录名猜测。
 - 树摘要行：`<lowercase sha256><two spaces><forward-slash relative path>\n`；按整行 ordinal
   排序、UTF-8 无 BOM 拼接后再计算 SHA-256。
+- 可重放 analyzer：`analyzer --raw-root <archive-raw-root> --output-dir <git-summary-root>`；
+  raw 输入根与 aggregate 输出根必须可独立指定。
 
 ### 3. 契约
 
@@ -88,6 +164,9 @@
   `relocation-provenance.txt` 映射 capture root、当前 raw root 和 Git summary root。
 - 迁移后的 README/provenance 记录迁移日期、三项完整性指标、清单格式、路径保留声明和
   raw 未修改声明。
+- 同一 raw 树和同一 analyzer 必须产生字节级一致的 aggregate。不得把 analyzer 执行时的
+  当前时间写入 aggregate；确需时间身份时，使用 raw 中已冻结的 capture 时间或独立
+  postprocessing provenance。迁移后必须直接从 archive raw 重跑，不能先复制 raw 回任务目录。
 - 提交前必须证明 raw 的 tracked 数为 0，且 staged 路径不包含任何 `raw/` 或无关未跟踪文件。
 
 ### 4. 验证与错误矩阵
@@ -99,6 +178,7 @@
 | 源集合包含 tracked 摘要 | 停止；修正为 `git ls-files --others --exclude-standard` 的结果 |
 | 目标文件未命中 ignore 规则或被 Git 跟踪 | 停止提交并修复布局/规则 |
 | raw 内仍记录旧 task 绝对路径 | 保留原值；通过 relocation provenance 解释当前位置 |
+| analyzer 只从脚本同级目录读取 raw，或每次重跑改变 aggregate SHA | 停止归档收尾；分离 raw/output 根并移除非确定性执行时间 |
 | Windows PowerShell 的 `check-ignore --stdin` 首行受 BOM 影响 | 使用占位首行吸收 BOM，或逐条/无 BOM 输入复核；不得据此误判规则缺口 |
 | 归档脚本把其他未跟踪 raw 纳入自动提交 | 立即从索引移除并核对文件仍在磁盘，修正提交后再继续 |
 
@@ -115,6 +195,8 @@
 
 - 比较迁移前后 raw file count、total bytes、tree manifest SHA-256。
 - 比较迁移前后既有 tracked 摘要的 blob/hash，确认内容身份未变化。
+- 从 archive raw 直接运行 analyzer 两次，断言 aggregate 字节/SHA 一致，并验证报告引用该
+  SHA；镜像到 Git 的 run manifest 与 summary 逐文件对比 archive SHA。
 - 执行 `git check-ignore` 覆盖每个目标 raw，并执行
   `git ls-files -- <archive-raw-root>` 断言输出为空。
 - 执行 `git diff --check`，逐项审查 `git status --short`、`git diff --name-only` 和最终 staged
@@ -126,6 +208,7 @@ Wrong：
 
 ```powershell
 Move-Item validation profiling-archive/c3/raw
+python validation/analyze.py  # 假定 raw 仍与脚本同目录，且写入当前时间
 git add -A
 ```
 
@@ -135,6 +218,8 @@ Correct：
 $raw = @(git ls-files --others --exclude-standard -- $sourceRoot)
 # 冻结 count/bytes/tree hash，逐文件拒绝覆盖地移动并保持相对路径。
 # 从目标根独立复算三项指标后，只暂存 README、摘要和 relocation provenance。
+python validation/analyze.py --raw-root profiling-archive/c3/raw --output-dir validation
+# 固定 raw/analyzer 重跑时，aggregate SHA 必须不变。
 git ls-files -- $archiveRawRoot  # 必须为空
 ```
 

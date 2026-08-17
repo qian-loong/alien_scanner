@@ -4,6 +4,40 @@
 
 namespace PerceptionMapUpdate {
 
+    bool ContentIdentityDescriptor::operator==(
+            const ContentIdentityDescriptor & other) const noexcept
+    {
+        return scheme == other.scheme && chunk_edge == other.chunk_edge
+               && coordinate_key_version == other.coordinate_key_version
+               && node_encoding_version == other.node_encoding_version;
+    }
+
+    bool ContentIdentityDescriptor::operator!=(
+            const ContentIdentityDescriptor & other) const noexcept
+    {
+        return !(*this == other);
+    }
+
+    bool ContentIdentityDescriptor::valid() const noexcept
+    {
+        return scheme == ContentIdentityScheme::MerklePatriciaSha256V2
+               && chunk_edge == kMerkleChunkEdge
+               && coordinate_key_version == kMerkleCoordinateKeyVersion
+               && node_encoding_version == kMerkleNodeEncodingVersion;
+    }
+
+    bool VersionedContentDigest::operator==(
+            const VersionedContentDigest & other) const noexcept
+    {
+        return descriptor == other.descriptor && digest == other.digest;
+    }
+
+    bool VersionedContentDigest::operator!=(
+            const VersionedContentDigest & other) const noexcept
+    {
+        return !(*this == other);
+    }
+
     bool Point3d::operator==(const Point3d & other) const noexcept
     {
         return x == other.x && y == other.y && z == other.z;

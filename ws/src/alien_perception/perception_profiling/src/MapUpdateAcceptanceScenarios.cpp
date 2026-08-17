@@ -89,10 +89,14 @@ namespace PerceptionProfiling {
                 const std::optional<ReconstructedMap> & map,
                 const CanonicalSnapshot & snapshot)
         {
+            const auto flat_hash = PerceptionMapUpdate::ContentHasher::content_hash(
+                    snapshot.source,
+                    snapshot.geometry_fingerprint,
+                    map.has_value() ? map->cells : PerceptionMapUpdate::CanonicalCellView {});
             return map.has_value() && map->source == snapshot.source
                    && map->geometry == snapshot.geometry
                    && map->revision == snapshot.revision
-                   && map->content_hash == snapshot.content_hash
+                   && flat_hash == snapshot.content_hash
                    && map->cells == snapshot.cells;
         }
 
@@ -107,7 +111,7 @@ namespace PerceptionProfiling {
                    || (left->source == right->source
                        && left->geometry == right->geometry
                        && left->revision == right->revision
-                       && left->content_hash == right->content_hash
+                       && left->content_identity == right->content_identity
                        && left->cells == right->cells);
         }
 

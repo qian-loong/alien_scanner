@@ -227,8 +227,8 @@ namespace SwarmDataPlane {
             if(ingress_.map_applier().reconstructed_map().has_value()) {
                 intent.request.receiver_revision =
                         ingress_.map_applier().reconstructed_map()->revision;
-                intent.request.receiver_content_hash =
-                        ingress_.map_applier().reconstructed_map()->content_hash;
+                intent.request.receiver_content_identity =
+                        ingress_.map_applier().reconstructed_map()->content_identity;
             }
 
             auto request = std::make_shared<

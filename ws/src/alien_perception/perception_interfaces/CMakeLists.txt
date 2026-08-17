@@ -22,6 +22,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
         "msg/PoseEstimate.msg"
         "msg/HealthState.msg"
         "msg/LocalMapState.msg"
+        "msg/ContentIdentityDescriptor.msg"
         "msg/MapUpdate.msg"
         "msg/SensorHealth.msg"
         "srv/RequestMapResync.srv"

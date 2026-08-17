@@ -1,0 +1,19 @@
+schema: alien-scanner/profiling-relocation/v1
+relocation_date: 2026-08-17
+capture_root: .trellis/tasks/08-13-c4-chunked-map-cow-optimization/validation
+current_raw_root: profiling-archive/c4-chunked-map-cow-20260814/raw
+git_summary_root: .trellis/tasks/08-13-c4-chunked-map-cow-optimization/validation
+selection: git ls-files --others --exclude-standard -- <capture_root>
+file_count: 10
+total_bytes: 886962
+tree_sha256: 99b250183b35b7e3741281c7ac073ff10bad81697f95dfe11d9d5fb13c403311
+manifest_format: <lowercase sha256><two spaces><forward-slash relative path><LF>, ordinal sorted, UTF-8 without BOM
+relative_paths_preserved: true
+raw_content_modified: false
+tracked_summary_moved: false
+
+The selected untracked estimator outputs were moved file-for-file from the
+capture root to the current raw root. The count, total bytes, per-file SHA-256,
+and normalized tree SHA-256 were recomputed after the move and matched the
+pre-move values. Existing tracked summaries, manifests, and recorded capture
+paths were not rewritten.

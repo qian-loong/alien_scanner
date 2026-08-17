@@ -373,7 +373,7 @@ class TestCaveFullRaySceneIntegration(unittest.TestCase):
         for key in (
             "traversal_duration_ns",
             "canonicalize_duration_ns",
-            "content_hash_duration_ns",
+            "geometry_fingerprint_duration_ns",
             "validation_duration_ns",
             "diff_duration_ns",
             "encode_duration_ns",

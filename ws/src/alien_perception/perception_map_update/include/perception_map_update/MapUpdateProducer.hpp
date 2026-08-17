@@ -3,6 +3,7 @@
 
 #include "perception_map_update/MapUpdateLimits.hpp"
 #include "perception_map_update/MapUpdateTypes.hpp"
+#include "perception_map_update/MerkleMapState.hpp"
 
 #include <memory>
 #include <optional>
@@ -21,13 +22,18 @@ namespace PerceptionMapUpdate {
     struct ProducerBaselineToken {
         SourceIdentity source;
         std::uint64_t  revision = 0U;
-        Hash256        content_hash {};
+        VersionedContentDigest content_identity;
+
+        bool operator==(const ProducerBaselineToken & other) const noexcept;
+        bool operator!=(const ProducerBaselineToken & other) const noexcept;
     };
 
     struct PrepareTiming {
         std::int64_t validation_duration_ns = 0;
         std::int64_t diff_duration_ns = 0;
         std::int64_t encode_duration_ns = 0;
+        std::int64_t store_candidate_duration_ns = 0;
+        std::int64_t merkle_duration_ns = 0;
         std::int64_t update_hash_duration_ns = 0;
     };
 
@@ -38,6 +44,7 @@ namespace PerceptionMapUpdate {
         std::string                              diagnostic;
         PrepareTiming                            timing;
         std::optional<ProducerBaselineToken>     expected_baseline = std::nullopt;
+        std::shared_ptr<const MerkleMapState>     candidate_state;
     };
 
     class MapUpdateProducer
@@ -56,6 +63,7 @@ namespace PerceptionMapUpdate {
         bool cancel_keyframe_request(const std::string & correlation_id) noexcept;
 
         const std::shared_ptr<const CanonicalSnapshot> & baseline() const noexcept;
+        const std::shared_ptr<const MerkleMapState> & committed_state() const noexcept;
         std::uint64_t delta_chain_length() const noexcept;
         bool keyframe_pending() const noexcept;
 
@@ -69,6 +77,7 @@ namespace PerceptionMapUpdate {
 
         MapUpdateLimits limits_;
         std::shared_ptr<const CanonicalSnapshot> baseline_;
+        std::shared_ptr<const MerkleMapState> committed_state_;
         std::uint64_t                           delta_chain_length_ = 0U;
         std::uint64_t                           last_keyframe_revision_ = 0U;
         std::optional<std::string> pending_correlation_id_;

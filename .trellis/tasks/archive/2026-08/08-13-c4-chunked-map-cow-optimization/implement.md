@@ -104,9 +104,8 @@ Gate B 已在短筛选阶段判定 no-go。上面保留的正式矩阵、Heaptra
 - [x] 加载 `trellis-update-spec`，把稳定的 chunk/view/resource contract 更新到
   `.trellis/spec/backend/`。
 - [x] 更新父任务：C4.1 完成，C5 拓扑与角色成为下一关键路径。
-- [ ] 按 Trellis Phase 3.4 给出仅包含本任务文件的提交计划，获得用户一次确认后提交；
-  不 push。
-- [ ] 用户验收后运行 finish-work，归档任务并记录 session。
+- [x] 已按 Trellis Phase 3.4 完成提交，并 squash 合并为 `5875a41`；未 push。
+- [x] 用户已确认 C4 收尾；任务进入 finish-work 归档与 session 记录。
 
 ## 8. 预计受影响文件
 

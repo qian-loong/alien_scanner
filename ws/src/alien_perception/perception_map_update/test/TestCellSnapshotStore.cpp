@@ -65,6 +65,47 @@ namespace PerceptionMapUpdate::Test {
                 ContentHasher::content_hash(source, geometry_hash, kInterleavedCells));
     }
 
+    TEST(CellSnapshotStore, ChunkVisitorIsReadOnlyAndDeterministicAcrossStorageModes)
+    {
+        auto vector_store = make_store(CellStorageMode::Vector);
+        auto chunked_store = make_store(CellStorageMode::Chunked);
+        ASSERT_TRUE(vector_store.replace(kInterleavedCells).success);
+        ASSERT_TRUE(chunked_store.replace(kInterleavedCells).success);
+
+        std::vector<ChunkCoordinate> vector_coordinates;
+        std::vector<std::size_t> vector_sizes;
+        vector_store.for_each_chunk([&](
+                                             const ChunkCoordinate & coordinate,
+                                             const std::vector<CanonicalCell> & cells) {
+            vector_coordinates.push_back(coordinate);
+            vector_sizes.push_back(cells.size());
+        });
+        std::vector<ChunkCoordinate> chunked_coordinates;
+        std::vector<std::size_t> chunked_sizes;
+        chunked_store.for_each_chunk([&](
+                                              const ChunkCoordinate & coordinate,
+                                              const std::vector<CanonicalCell> & cells) {
+            chunked_coordinates.push_back(coordinate);
+            chunked_sizes.push_back(cells.size());
+        });
+
+        EXPECT_EQ(vector_coordinates, chunked_coordinates);
+        EXPECT_EQ(vector_sizes, chunked_sizes);
+        ASSERT_FALSE(vector_coordinates.empty());
+        const ChunkCoordinate expected_first {-2, 0, 0};
+        EXPECT_EQ(vector_coordinates.front(), expected_first);
+        EXPECT_EQ(vector_store.view(), kInterleavedCells);
+        EXPECT_EQ(chunked_store.view(), kInterleavedCells);
+
+        std::vector<CanonicalCell> copied;
+        ASSERT_TRUE(chunked_store.copy_chunk({0, 0, 0}, copied));
+        EXPECT_EQ(copied, std::vector<CanonicalCell>({
+                                   cell(0, 0, 0, CellState::Occupied),
+                                   cell(15, 15, 15, CellState::Free)}));
+        EXPECT_FALSE(chunked_store.copy_chunk({99, 99, 99}, copied));
+        EXPECT_TRUE(copied.empty());
+    }
+
     TEST(CellSnapshotStore, ChunkedApplyCopiesOnlyTouchedChunksAndSharesTheRest)
     {
         auto store = make_store(CellStorageMode::Chunked);
