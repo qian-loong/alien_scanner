@@ -11,7 +11,9 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <limits>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,12 +24,15 @@ namespace SwarmDataPlane::Test {
 
         PerceptionMapUpdate::CanonicalSnapshot snapshot(
                 std::uint64_t revision,
-                std::vector<PerceptionMapUpdate::CanonicalCell> cells)
+                std::vector<PerceptionMapUpdate::CanonicalCell> cells,
+                const std::string & source_vehicle_id = "drone_0",
+                Perception::SessionID source_session = {100U, 7U},
+                const std::string & map_frame = "drone_0/map")
         {
             using namespace PerceptionMapUpdate;
             CanonicalSnapshot result;
-            result.source = {"drone_0", {100U, 7U}, 1U};
-            result.geometry = {0.1, {0.0, 0.0, 0.0}, "drone_0/map"};
+            result.source = {source_vehicle_id, source_session, 1U};
+            result.geometry = {0.1, {0.0, 0.0, 0.0}, map_frame};
             result.revision = revision;
             result.latest_commit = {
                     "lidar",
@@ -48,18 +53,62 @@ namespace SwarmDataPlane::Test {
     {
     public:
         MapUpdateRouteProducerFixture()
-                : Node("map_update_route_producer_fixture"),
-                  current_snapshot_(snapshot(
-                          1U,
-                          {{{0, 0, 0}, PerceptionMapUpdate::CellState::Free},
-                           {{1, 0, 0}, PerceptionMapUpdate::CellState::Free},
-                           {{2, 0, 0}, PerceptionMapUpdate::CellState::Occupied}})),
-                  resync_ledger_({"mapper_endpoint", {300U, 11U}}, 1U)
+                : Node("map_update_route_producer_fixture")
         {
             const auto output_topic = declare_parameter<std::string>(
                     "output_topic", "/c4/source_map");
             const auto service_name = declare_parameter<std::string>(
                     "resync_service", "/c4/resync");
+            source_vehicle_id_ = declare_parameter<std::string>(
+                    "source_vehicle_id", "drone_0");
+            const auto source_boot_time = declare_parameter<std::int64_t>(
+                    "source_session_boot_time_ns", 100);
+            const auto source_random_suffix = declare_parameter<std::int64_t>(
+                    "source_session_random_suffix", 7);
+            map_frame_ = declare_parameter<std::string>(
+                    "map_frame", "drone_0/map");
+            producer_identity_.producer_id = declare_parameter<std::string>(
+                    "producer_id", "mapper_endpoint");
+            const auto producer_boot_time = declare_parameter<std::int64_t>(
+                    "producer_session_boot_time_ns", 300);
+            const auto producer_random_suffix = declare_parameter<std::int64_t>(
+                    "producer_session_random_suffix", 11);
+            const auto route_epoch = declare_parameter<std::int64_t>(
+                    "resync_route_epoch", 1);
+            const auto continuous_update_period_ms = declare_parameter<std::int64_t>(
+                    "continuous_update_period_ms", 0);
+            const auto initial_publish_delay_ms = declare_parameter<std::int64_t>(
+                    "initial_publish_delay_ms", 1'000);
+            if(source_vehicle_id_.empty() || map_frame_.empty()
+                || source_boot_time <= 0 || source_random_suffix <= 0
+               || producer_identity_.producer_id.empty()
+               || producer_boot_time <= 0 || producer_random_suffix <= 0
+               || route_epoch <= 0 || continuous_update_period_ms < 0
+               || initial_publish_delay_ms < 0
+               || static_cast<std::uint64_t>(source_random_suffix)
+                          > std::numeric_limits<std::uint32_t>::max()
+               || static_cast<std::uint64_t>(producer_random_suffix)
+                          > std::numeric_limits<std::uint32_t>::max()) {
+                throw std::invalid_argument("fixture source identity is invalid");
+            }
+            source_session_ = {
+                    static_cast<std::uint64_t>(source_boot_time),
+                    static_cast<std::uint32_t>(source_random_suffix)};
+            producer_identity_.session = {
+                    static_cast<std::uint64_t>(producer_boot_time),
+                    static_cast<std::uint32_t>(producer_random_suffix)};
+            resync_ledger_ = std::make_unique<RoutedResyncLedger>(
+                    producer_identity_, static_cast<std::uint64_t>(route_epoch));
+            continuous_update_period_ =
+                    std::chrono::milliseconds(continuous_update_period_ms);
+            initial_publish_delay_ =
+                    std::chrono::milliseconds(initial_publish_delay_ms);
+            current_snapshot_ = snapshot(
+                    1U,
+                    {{{0, 0, 0}, PerceptionMapUpdate::CellState::Free},
+                     {{1, 0, 0}, PerceptionMapUpdate::CellState::Free},
+                     {{2, 0, 0}, PerceptionMapUpdate::CellState::Occupied}},
+                    source_vehicle_id_, source_session_, map_frame_);
             publisher_ = create_publisher<perception_interfaces::msg::MapUpdate>(
                     output_topic, Ros::map_update_qos());
             resync_service_ = create_service<
@@ -106,7 +155,7 @@ namespace SwarmDataPlane::Test {
         {
             if(publisher_->get_subscription_count() == 0U
                || std::chrono::steady_clock::now() - start_time_
-                          < std::chrono::seconds(1)) {
+                          < initial_publish_delay_) {
                 return;
             }
             if(stage_ == 0U) {
@@ -125,7 +174,8 @@ namespace SwarmDataPlane::Test {
                         2U,
                         {{{0, 0, 0}, PerceptionMapUpdate::CellState::Occupied},
                          {{1, 0, 0}, PerceptionMapUpdate::CellState::Free},
-                         {{2, 0, 0}, PerceptionMapUpdate::CellState::Occupied}});
+                         {{2, 0, 0}, PerceptionMapUpdate::CellState::Occupied}},
+                        source_vehicle_id_, source_session_, map_frame_);
                 if(publish_prepared(producer_.prepare(current_snapshot_))) {
                     ++stage_;
                     next_stage_time_ = std::chrono::steady_clock::now()
@@ -138,9 +188,32 @@ namespace SwarmDataPlane::Test {
                         3U,
                         {{{0, 0, 0}, PerceptionMapUpdate::CellState::Occupied},
                          {{1, 0, 0}, PerceptionMapUpdate::CellState::Occupied},
-                         {{2, 0, 0}, PerceptionMapUpdate::CellState::Occupied}});
+                         {{2, 0, 0}, PerceptionMapUpdate::CellState::Occupied}},
+                        source_vehicle_id_, source_session_, map_frame_);
                 if(publish_prepared(producer_.prepare(current_snapshot_))) {
                     ++stage_;
+                    if(continuous_update_period_.count() > 0) {
+                        next_stage_time_ = std::chrono::steady_clock::now()
+                                           + continuous_update_period_;
+                    }
+                }
+                return;
+            }
+            if(stage_ == 3U && continuous_update_period_.count() > 0) {
+                const auto next_revision = current_snapshot_.revision + 1U;
+                const auto tail_state = next_revision % 2U == 0U
+                        ? PerceptionMapUpdate::CellState::Free
+                        : PerceptionMapUpdate::CellState::Occupied;
+                current_snapshot_ = snapshot(
+                        next_revision,
+                        {{{0, 0, 0}, PerceptionMapUpdate::CellState::Occupied},
+                         {{1, 0, 0}, PerceptionMapUpdate::CellState::Occupied},
+                         {{2, 0, 0}, PerceptionMapUpdate::CellState::Occupied},
+                         {{3, 0, 0}, tail_state}},
+                        source_vehicle_id_, source_session_, map_frame_);
+                if(publish_prepared(producer_.prepare(current_snapshot_))) {
+                    next_stage_time_ = std::chrono::steady_clock::now()
+                                       + continuous_update_period_;
                 }
             }
         }
@@ -156,7 +229,7 @@ namespace SwarmDataPlane::Test {
             const auto decoded = Ros::decode_resync_intent(request.intent);
             if(!decoded.success || !decoded.intent.has_value()) {
                 RoutedResyncAck rejected;
-                rejected.target_producer = {"mapper_endpoint", {300U, 11U}};
+                rejected.target_producer = producer_identity_;
                 rejected.current_source = current_snapshot_.source;
                 rejected.current_revision = current_snapshot_.revision;
                 rejected.current_content_identity = current_content_identity;
@@ -165,7 +238,7 @@ namespace SwarmDataPlane::Test {
                 Ros::encode_resync_ack(rejected, response.ack, diagnostic);
                 return;
             }
-            const auto ack = resync_ledger_.accept(
+            const auto ack = resync_ledger_->accept(
                     *decoded.intent,
                     current_snapshot_.source,
                     current_snapshot_.revision,
@@ -190,6 +263,7 @@ namespace SwarmDataPlane::Test {
                 RCLCPP_ERROR(get_logger(), "cannot prepare correlated recovery keyframe");
                 return;
             }
+            message.correlation_id = ack.correlation_id;
             message.header.stamp = now();
             pending_recovery_ = std::move(message);
             recovery_timer_ = create_wall_timer(
@@ -204,10 +278,16 @@ namespace SwarmDataPlane::Test {
 
         PerceptionMapUpdate::MapUpdateProducer producer_;
         PerceptionMapUpdate::CanonicalSnapshot current_snapshot_;
-        RoutedResyncLedger resync_ledger_;
+        ProducerIdentity producer_identity_;
+        std::unique_ptr<RoutedResyncLedger> resync_ledger_;
+        std::string source_vehicle_id_ {"drone_0"};
+        Perception::SessionID source_session_ {100U, 7U};
+        std::string map_frame_ {"drone_0/map"};
         std::uint8_t stage_ = 0U;
         std::chrono::steady_clock::time_point start_time_;
+        std::chrono::milliseconds initial_publish_delay_ {1'000};
         std::chrono::steady_clock::time_point next_stage_time_;
+        std::chrono::milliseconds continuous_update_period_ {0};
         std::optional<perception_interfaces::msg::MapUpdate> pending_recovery_;
         rclcpp::Publisher<perception_interfaces::msg::MapUpdate>::SharedPtr publisher_;
         rclcpp::Service<swarm_data_interfaces::srv::RequestRoutedMapResync>::SharedPtr

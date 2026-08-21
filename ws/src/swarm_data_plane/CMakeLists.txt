@@ -10,6 +10,7 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(geometry_msgs REQUIRED)
 find_package(OpenSSL REQUIRED)
 if(NOT TARGET perception_map_update::core AND
    NOT TARGET perception_map_update::perception_map_update_core)
@@ -43,14 +44,26 @@ if(NOT TARGET swarm_data_interfaces__rosidl_typesupport_cpp)
   find_package(swarm_data_interfaces REQUIRED)
 endif()
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 
 set(SWARM_DATA_PLANE_CORE_HEADERS
   include/swarm_data_plane/AggregateContract.hpp
   include/swarm_data_plane/DataPlaneTypes.hpp
+  include/swarm_data_plane/EdgeAggregator.hpp
   include/swarm_data_plane/MapUpdateIngress.hpp
+  include/swarm_data_plane/PureRelay.hpp
   include/swarm_data_plane/RoutedMapValidator.hpp
   include/swarm_data_plane/RoutedResync.hpp
+  include/swarm_data_plane/RoleRuntimePolicy.hpp
+  include/swarm_data_plane/RoleState.hpp
+  include/swarm_data_plane/RoleTypes.hpp
+  include/swarm_data_plane/RuntimeSnapshotCache.hpp
+  include/swarm_data_plane/RuntimeAuthority.hpp
+  include/swarm_data_plane/TopologyState.hpp
+  include/swarm_data_plane/TopologyTypes.hpp
   include/swarm_data_plane/TrustValidator.hpp
 )
 
@@ -59,14 +72,26 @@ set(SWARM_DATA_PLANE_ROS_HEADERS
   include/swarm_data_plane/ros/QosProfiles.hpp
   include/swarm_data_plane/ros/RoutedMapConversions.hpp
   include/swarm_data_plane/ros/RoutedResyncConversions.hpp
+  include/swarm_data_plane/ros/RoleConversions.hpp
+  include/swarm_data_plane/ros/TopologyConversions.hpp
+  include/swarm_data_plane/ros/VehicleIdentityConversions.hpp
 )
 
 add_library(swarm_data_plane_core STATIC
   src/AggregateContract.cpp
   src/DataPlaneTypes.cpp
+  src/EdgeAggregator.cpp
   src/MapUpdateIngress.cpp
+  src/PureRelay.cpp
   src/RoutedMapValidator.cpp
   src/RoutedResync.cpp
+  src/RoleRuntimePolicy.cpp
+  src/RoleState.cpp
+  src/RoleTypes.cpp
+  src/RuntimeSnapshotCache.cpp
+  src/RuntimeAuthority.cpp
+  src/TopologyState.cpp
+  src/TopologyTypes.cpp
   src/TrustValidator.cpp
 )
 target_sources(swarm_data_plane_core PRIVATE ${SWARM_DATA_PLANE_CORE_HEADERS})
@@ -87,6 +112,8 @@ add_library(swarm_data_plane_ros STATIC
   src/QosProfiles.cpp
   src/RoutedMapConversions.cpp
   src/RoutedResyncConversions.cpp
+  src/RoleConversions.cpp
+  src/TopologyConversions.cpp
 )
 target_sources(swarm_data_plane_ros PRIVATE ${SWARM_DATA_PLANE_ROS_HEADERS})
 add_library(${PROJECT_NAME}::ros ALIAS swarm_data_plane_ros)
@@ -136,6 +163,65 @@ target_link_libraries(map_update_route_receiver_node
 )
 ament_target_dependencies(map_update_route_receiver_node rclcpp)
 
+add_executable(swarm_runtime_authority
+  src/SwarmRuntimeAuthorityNode.cpp
+)
+target_link_libraries(swarm_runtime_authority
+  swarm_data_plane_core
+  swarm_data_plane_ros
+)
+ament_target_dependencies(swarm_runtime_authority rclcpp rclcpp_action std_srvs)
+
+add_executable(map_update_relay
+  src/MapUpdateRelayNode.cpp
+)
+target_link_libraries(map_update_relay
+  swarm_data_plane_core
+  swarm_data_plane_ros
+)
+ament_target_dependencies(map_update_relay rclcpp std_srvs)
+
+add_executable(edge_aggregator
+  src/EdgeAggregatorNode.cpp
+)
+target_link_libraries(edge_aggregator
+  swarm_data_plane_core
+  swarm_data_plane_ros
+)
+ament_target_dependencies(edge_aggregator rclcpp)
+
+add_executable(aggregate_receiver
+  src/AggregateReceiverNode.cpp
+)
+target_link_libraries(aggregate_receiver
+  swarm_data_plane_core
+  swarm_data_plane_ros
+)
+ament_target_dependencies(aggregate_receiver rclcpp)
+
+add_executable(topology_map_route_source
+  src/TopologyMapRouteSourceNode.cpp
+)
+target_link_libraries(topology_map_route_source
+  swarm_data_plane_core
+  swarm_data_plane_ros
+)
+ament_target_dependencies(topology_map_route_source rclcpp)
+
+add_executable(swarm_runtime_visualizer
+  src/SwarmRuntimeVisualizerNode.cpp
+)
+target_link_libraries(swarm_runtime_visualizer
+  swarm_data_plane_core
+  swarm_data_plane_ros
+)
+ament_target_dependencies(swarm_runtime_visualizer
+  geometry_msgs
+  nav_msgs
+  rclcpp
+  visualization_msgs
+)
+
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
@@ -149,14 +235,18 @@ install(TARGETS swarm_data_plane_core swarm_data_plane_ros
 install(TARGETS
   map_update_route_source_node
   map_update_route_receiver_node
+  swarm_runtime_authority
+  map_update_relay
+  edge_aggregator
+  aggregate_receiver
+  topology_map_route_source
+  swarm_runtime_visualizer
   DESTINATION lib/${PROJECT_NAME}
 )
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  find_package(geometry_msgs REQUIRED)
   find_package(launch_testing_ament_cmake REQUIRED)
-  find_package(nav_msgs REQUIRED)
   find_package(octomap_msgs REQUIRED)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   ament_add_gtest(TestDataPlaneCore test/TestDataPlaneCore.cpp)
@@ -166,6 +256,45 @@ if(BUILD_TESTING)
   ament_add_gtest(TestRoutedMapConversions test/TestRoutedMapConversions.cpp)
   if(TARGET TestRoutedMapConversions)
     target_link_libraries(TestRoutedMapConversions
+      swarm_data_plane_core
+      swarm_data_plane_ros
+    )
+  endif()
+  ament_add_gtest(TestTopologyState test/TestTopologyState.cpp)
+  if(TARGET TestTopologyState)
+    target_link_libraries(TestTopologyState swarm_data_plane_core)
+  endif()
+  ament_add_gtest(TestRoleState test/TestRoleState.cpp)
+  if(TARGET TestRoleState)
+    target_link_libraries(TestRoleState swarm_data_plane_core)
+  endif()
+  ament_add_gtest(TestRoleRuntime test/TestRoleRuntime.cpp)
+  if(TARGET TestRoleRuntime)
+    target_link_libraries(TestRoleRuntime swarm_data_plane_core)
+  endif()
+  ament_add_gtest(TestPureRelay test/TestPureRelay.cpp)
+  if(TARGET TestPureRelay)
+    target_link_libraries(TestPureRelay swarm_data_plane_core)
+    target_include_directories(TestPureRelay PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test)
+  endif()
+  ament_add_gtest(TestRuntimeAuthority test/TestRuntimeAuthority.cpp)
+  if(TARGET TestRuntimeAuthority)
+    target_link_libraries(TestRuntimeAuthority swarm_data_plane_core)
+  endif()
+  ament_add_gtest(TestEdgeAggregator test/TestEdgeAggregator.cpp)
+  if(TARGET TestEdgeAggregator)
+    target_link_libraries(TestEdgeAggregator swarm_data_plane_core)
+  endif()
+  ament_add_gtest(TestRoleConversions test/TestRoleConversions.cpp)
+  if(TARGET TestRoleConversions)
+    target_link_libraries(TestRoleConversions
+      swarm_data_plane_core
+      swarm_data_plane_ros
+    )
+  endif()
+  ament_add_gtest(TestTopologyConversions test/TestTopologyConversions.cpp)
+  if(TARGET TestTopologyConversions)
+    target_link_libraries(TestTopologyConversions
       swarm_data_plane_core
       swarm_data_plane_ros
     )
@@ -332,7 +461,7 @@ endif()
 
 ament_export_include_directories(include)
 ament_export_dependencies(
-  perception_map_update perception_interfaces swarm_data_interfaces rclcpp OpenSSL
+  perception_map_update perception_interfaces swarm_data_interfaces rclcpp std_srvs OpenSSL
 )
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_package()

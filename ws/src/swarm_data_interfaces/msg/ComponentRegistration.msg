@@ -1,0 +1,3 @@
+string<=128 component_id
+uint64 session_boot_time_ns
+uint32 session_random_suffix

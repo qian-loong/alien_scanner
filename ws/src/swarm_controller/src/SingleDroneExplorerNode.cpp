@@ -1,11 +1,16 @@
 #include "swarm_controller/SingleDroneExplorerNode.hpp"
+#include "swarm_data_plane/ros/RoleConversions.hpp"
+#include "swarm_data_plane/ros/TopologyConversions.hpp"
+#include "swarm_data_plane/ros/VehicleIdentityConversions.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <functional>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 #include <octomap/AbstractOcTree.h>
@@ -151,6 +156,100 @@ namespace SwarmController {
         diagnostics_publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
                 "exploration_diagnostics", rclcpp::QoS(1).reliable().transient_local());
 
+        runtime_enabled_ = get_parameter("runtime.enabled").as_bool();
+        runtime_hold_linear_speed_max_ =
+                get_parameter("hold.linear_speed_max").as_double();
+        runtime_hold_angular_speed_max_ =
+                get_parameter("hold.angular_speed_max").as_double();
+        if(runtime_enabled_) {
+            const auto boot_time_ns = get_parameter(
+                    "runtime.session_boot_time_ns").as_int();
+            const auto random_suffix = get_parameter(
+                    "runtime.session_random_suffix").as_int();
+            if(boot_time_ns <= 0 || random_suffix <= 0
+               || static_cast<std::uint64_t>(random_suffix)
+                          > std::numeric_limits<std::uint32_t>::max()) {
+                throw std::invalid_argument("runtime identity session is invalid");
+            }
+            runtime_identity_ = {
+                    get_parameter("runtime.fleet_id").as_string(),
+                    get_parameter("runtime.vehicle_id").as_string(),
+                    {static_cast<std::uint64_t>(boot_time_ns),
+                     static_cast<std::uint32_t>(random_suffix)}};
+            runtime_snapshots_ =
+                    std::make_unique<SwarmDataPlane::RuntimeSnapshotCache>(
+                            runtime_identity_);
+            SwarmDataPlane::CapabilityEvidence initial_evidence;
+            initial_evidence.identity = runtime_identity_;
+            initial_evidence.evidence_revision = 1U;
+            initial_evidence.effective_capabilities = {
+                    SwarmDataPlane::CapabilityKind::Exploration};
+            initial_evidence.vehicle_health =
+                    SwarmDataPlane::VehicleHealth::Healthy;
+            initial_evidence.resource_health =
+                    SwarmDataPlane::ResourceHealth::Healthy;
+            const auto seeded = runtime_snapshots_->apply_evidence(
+                    std::move(initial_evidence));
+            if(!seeded) {
+                throw std::runtime_error(
+                        "failed to seed Explorer runtime evidence: "
+                        + seeded.diagnostic);
+            }
+
+            const auto state_qos = rclcpp::QoS(1).reliable().transient_local();
+            runtime_topology_subscription_ = create_subscription<
+                    swarm_data_interfaces::msg::TopologySnapshot>(
+                    get_parameter("runtime.topology_topic").as_string(),
+                    state_qos,
+                    [this](const swarm_data_interfaces::msg::TopologySnapshot::
+                                   ConstSharedPtr message) {
+                        onRuntimeTopology(*message);
+                    },
+                    sensor_options);
+            runtime_role_subscription_ = create_subscription<
+                    swarm_data_interfaces::msg::RoleSnapshot>(
+                    get_parameter("runtime.role_topic").as_string(),
+                    state_qos,
+                    [this](const swarm_data_interfaces::msg::RoleSnapshot::
+                                   ConstSharedPtr message) {
+                        onRuntimeRole(*message);
+                    },
+                    sensor_options);
+            runtime_evidence_subscription_ = create_subscription<
+                    swarm_data_interfaces::msg::CapabilityEvidence>(
+                    get_parameter("runtime.evidence_topic").as_string(),
+                    rclcpp::QoS(32).reliable().durability_volatile(),
+                    [this](const swarm_data_interfaces::msg::CapabilityEvidence::
+                                   ConstSharedPtr message) {
+                        onRuntimeEvidence(*message);
+                    },
+                    sensor_options);
+            runtime_transition_subscription_ = create_subscription<
+                    swarm_data_interfaces::msg::RoleTransitionDescriptor>(
+                    get_parameter("runtime.transition_topic").as_string(),
+                    state_qos,
+                    [this](
+                            const swarm_data_interfaces::msg::
+                                    RoleTransitionDescriptor::ConstSharedPtr message) {
+                        onRuntimeTransition(*message);
+                    },
+                    sensor_options);
+            runtime_transition_server_ =
+                    rclcpp_action::create_server<ApplyRoleTransition>(
+                            this,
+                            get_parameter("runtime.transition_action").as_string(),
+                            std::bind(
+                                    &SingleDroneExplorerNode::onRoleTransitionGoal,
+                                    this, std::placeholders::_1,
+                                    std::placeholders::_2),
+                            std::bind(
+                                    &SingleDroneExplorerNode::onRoleTransitionCancel,
+                                    this, std::placeholders::_1),
+                            std::bind(
+                                    &SingleDroneExplorerNode::onRoleTransitionAccepted,
+                                    this, std::placeholders::_1));
+        }
+
         const auto period = std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::duration<double>(1.0 / control_rate_hz_));
         timer_ = create_wall_timer(
@@ -161,11 +260,33 @@ namespace SwarmController {
                 control_rate_hz_, peers_.size());
     }
 
+    SingleDroneExplorerNode::~SingleDroneExplorerNode()
+    {
+        {
+            std::lock_guard<std::mutex> lock(runtime_mutex_);
+            runtime_shutting_down_ = true;
+            runtime_transition_cv_.notify_all();
+        }
+        if(runtime_transition_thread_.joinable()) {
+            runtime_transition_thread_.join();
+        }
+    }
+
     void SingleDroneExplorerNode::declareParameters()
     {
         declare_parameter("map_frame", "map");
         declare_parameter("control_rate", 5.0);
         declare_parameter("peer_namespaces", std::vector<std::string> {});
+        declare_parameter("runtime.enabled", false);
+        declare_parameter("runtime.fleet_id", "fleet-a");
+        declare_parameter("runtime.vehicle_id", "explorer-0");
+        declare_parameter("runtime.session_boot_time_ns", 100);
+        declare_parameter("runtime.session_random_suffix", 1);
+        declare_parameter("runtime.topology_topic", "/swarm/runtime/topology");
+        declare_parameter("runtime.role_topic", "/swarm/runtime/roles");
+        declare_parameter("runtime.evidence_topic", "/swarm/runtime/evidence");
+        declare_parameter("runtime.transition_topic", "/swarm/runtime/transition");
+        declare_parameter("runtime.transition_action", "apply_role_transition");
 
         declare_parameter("goal.position_tolerance", 0.20);
         declare_parameter("goal.yaw_tolerance", 0.15);
@@ -398,9 +519,266 @@ namespace SwarmController {
         peers_[peer_index].has_goal          = true;
     }
 
+    void SingleDroneExplorerNode::onRuntimeTopology(
+            const swarm_data_interfaces::msg::TopologySnapshot & message)
+    {
+        auto decoded = SwarmDataPlane::Ros::decode_topology_snapshot(message);
+        if(!decoded.success || !decoded.snapshot.has_value()) {
+            RCLCPP_WARN(
+                    get_logger(), "rejected runtime topology: %s",
+                    decoded.diagnostic.c_str());
+            return;
+        }
+        std::lock_guard<std::mutex> lock(runtime_mutex_);
+        const auto result = runtime_snapshots_->apply_topology(
+                std::move(*decoded.snapshot));
+        if(!result) {
+            RCLCPP_WARN(
+                    get_logger(), "runtime topology cache rejected: %s",
+                    result.diagnostic.c_str());
+        }
+    }
+
+    void SingleDroneExplorerNode::onRuntimeRole(
+            const swarm_data_interfaces::msg::RoleSnapshot & message)
+    {
+        auto decoded = SwarmDataPlane::Ros::decode_role_snapshot(message);
+        if(!decoded.success || !decoded.snapshot.has_value()) {
+            RCLCPP_WARN(
+                    get_logger(), "rejected runtime role snapshot: %s",
+                    decoded.diagnostic.c_str());
+            return;
+        }
+        std::lock_guard<std::mutex> lock(runtime_mutex_);
+        const auto result = runtime_snapshots_->apply_role(
+                std::move(*decoded.snapshot));
+        if(!result) {
+            RCLCPP_WARN(
+                    get_logger(), "runtime role cache rejected: %s",
+                    result.diagnostic.c_str());
+        }
+    }
+
+    void SingleDroneExplorerNode::onRuntimeEvidence(
+            const swarm_data_interfaces::msg::CapabilityEvidence & message)
+    {
+        auto decoded = SwarmDataPlane::Ros::decode_capability_evidence(message);
+        if(!decoded.success || !decoded.evidence.has_value()) {
+            RCLCPP_WARN(
+                    get_logger(), "rejected runtime evidence: %s",
+                    decoded.diagnostic.c_str());
+            return;
+        }
+        if(decoded.evidence->identity != runtime_identity_) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(runtime_mutex_);
+        const auto result = runtime_snapshots_->apply_evidence(
+                std::move(*decoded.evidence));
+        if(!result) {
+            RCLCPP_WARN(
+                    get_logger(), "runtime evidence cache rejected: %s",
+                    result.diagnostic.c_str());
+        }
+    }
+
+    void SingleDroneExplorerNode::onRuntimeTransition(
+            const swarm_data_interfaces::msg::RoleTransitionDescriptor & message)
+    {
+        auto decoded = SwarmDataPlane::Ros::decode_role_transition(message);
+        if(!decoded.success || !decoded.transition.has_value()) {
+            RCLCPP_WARN(
+                    get_logger(), "rejected runtime transition: %s",
+                    decoded.diagnostic.c_str());
+            return;
+        }
+        std::lock_guard<std::mutex> lock(runtime_mutex_);
+        const auto result = runtime_snapshots_->apply_transition(
+                std::move(*decoded.transition));
+        if(!result) {
+            RCLCPP_WARN(
+                    get_logger(), "runtime transition cache rejected: %s",
+                    result.diagnostic.c_str());
+        }
+    }
+
+    rclcpp_action::GoalResponse SingleDroneExplorerNode::onRoleTransitionGoal(
+            const rclcpp_action::GoalUUID &,
+            std::shared_ptr<const ApplyRoleTransition::Goal> goal)
+    {
+        if(!runtime_enabled_
+           || goal->protocol_version
+                      != ApplyRoleTransition::Goal::CURRENT_PROTOCOL_VERSION) {
+            return rclcpp_action::GoalResponse::REJECT;
+        }
+        const auto target = SwarmDataPlane::Ros::Detail::decode_vehicle_identity(
+                goal->target);
+        auto decoded = SwarmDataPlane::Ros::decode_role_transition(
+                goal->transition);
+        if(target != runtime_identity_ || !decoded.success
+           || !decoded.transition.has_value()) {
+            return rclcpp_action::GoalResponse::REJECT;
+        }
+        const bool changed = std::find(
+                                     decoded.transition->changed_members.begin(),
+                                     decoded.transition->changed_members.end(),
+                                     runtime_identity_)
+                             != decoded.transition->changed_members.end();
+        if(!changed) {
+            return rclcpp_action::GoalResponse::REJECT;
+        }
+        std::lock_guard<std::mutex> lock(runtime_mutex_);
+        if(runtime_transition_action_active_ || runtime_shutting_down_) {
+            return rclcpp_action::GoalResponse::REJECT;
+        }
+        runtime_transition_action_active_ = true;
+        return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+    }
+
+    rclcpp_action::CancelResponse SingleDroneExplorerNode::onRoleTransitionCancel(
+            const std::shared_ptr<ApplyRoleTransitionGoalHandle>)
+    {
+        runtime_transition_cv_.notify_all();
+        return rclcpp_action::CancelResponse::ACCEPT;
+    }
+
+    void SingleDroneExplorerNode::onRoleTransitionAccepted(
+            const std::shared_ptr<ApplyRoleTransitionGoalHandle> goal_handle)
+    {
+        if(runtime_transition_thread_.joinable()) {
+            runtime_transition_thread_.join();
+        }
+        runtime_transition_thread_ = std::thread(
+                [this, goal_handle]() { executeRoleTransition(goal_handle); });
+    }
+
+    void SingleDroneExplorerNode::executeRoleTransition(
+            const std::shared_ptr<ApplyRoleTransitionGoalHandle> goal_handle)
+    {
+        const auto goal = goal_handle->get_goal();
+        auto transition = SwarmDataPlane::Ros::decode_role_transition(
+                goal->transition);
+        auto result = std::make_shared<ApplyRoleTransition::Result>();
+        auto feedback = std::make_shared<ApplyRoleTransition::Feedback>();
+        if(!transition.success || !transition.transition.has_value()) {
+            result->diagnostic = "role transition decode failed after acceptance";
+            goal_handle->abort(result);
+            finishRoleTransitionAction();
+            return;
+        }
+
+        feedback->stage = ApplyRoleTransition::Feedback::STAGE_PREPARING;
+        feedback->diagnostic = "runtime transition accepted";
+        goal_handle->publish_feedback(feedback);
+        {
+            std::lock_guard<std::mutex> lock(runtime_mutex_);
+            const auto applied = runtime_snapshots_->apply_transition(
+                    *transition.transition);
+            if(!applied) {
+                result->diagnostic = applied.diagnostic;
+                runtime_transition_action_active_ = false;
+                goal_handle->abort(result);
+                return;
+            }
+            runtime_transition_hold_requested_ = true;
+            runtime_transition_hold_observed_ = false;
+        }
+        feedback->stage = ApplyRoleTransition::Feedback::STAGE_HOLDING;
+        feedback->diagnostic = "waiting for safe Hold";
+        goal_handle->publish_feedback(feedback);
+
+        std::unique_lock<std::mutex> lock(runtime_mutex_);
+        const bool stopped = runtime_transition_cv_.wait_for(
+                lock, std::chrono::seconds(5), [this, &goal_handle]() {
+                    return runtime_transition_hold_observed_
+                           || goal_handle->is_canceling()
+                           || runtime_shutting_down_;
+                });
+        if(runtime_shutting_down_) {
+            runtime_transition_action_active_ = false;
+            return;
+        }
+        if(goal_handle->is_canceling()) {
+            auto rolled_back = *transition.transition;
+            rolled_back.state = SwarmDataPlane::RoleTransitionState::RolledBack;
+            runtime_snapshots_->apply_transition(std::move(rolled_back));
+            runtime_transition_hold_requested_ = false;
+            runtime_transition_hold_observed_ = false;
+            runtime_transition_action_active_ = false;
+            lock.unlock();
+            result->diagnostic = "role transition canceled and rolled back";
+            goal_handle->canceled(result);
+            return;
+        }
+        if(!stopped || !runtime_transition_hold_observed_) {
+            auto rolled_back = *transition.transition;
+            rolled_back.state = SwarmDataPlane::RoleTransitionState::RolledBack;
+            runtime_snapshots_->apply_transition(std::move(rolled_back));
+            runtime_transition_hold_requested_ = false;
+            runtime_transition_action_active_ = false;
+            lock.unlock();
+            result->diagnostic = "safe Hold was not observed before timeout";
+            goal_handle->abort(result);
+            return;
+        }
+
+        feedback->stage = ApplyRoleTransition::Feedback::STAGE_QUIESCED;
+        feedback->diagnostic = "Explorer reached safe Hold";
+        goal_handle->publish_feedback(feedback);
+
+        // Ack is an authority-side domain event. Do not advance the local cache
+        // past the committed authority snapshot, otherwise an intermediate
+        // Quiescing snapshot can look like a state regression.
+        runtime_transition_hold_requested_ = false;
+        lock.unlock();
+
+        swarm_data_interfaces::msg::RoleTransitionAck quiesced;
+        quiesced.identity = goal->target;
+        quiesced.kind = swarm_data_interfaces::msg::RoleTransitionAck::ACK_QUIESCED;
+        swarm_data_interfaces::msg::RoleTransitionAck handoff_ready;
+        handoff_ready.identity = goal->target;
+        handoff_ready.kind =
+                swarm_data_interfaces::msg::RoleTransitionAck::ACK_HANDOFF_READY;
+        result->success = true;
+        result->acknowledgements = {quiesced, handoff_ready};
+        result->diagnostic = "Explorer reached Hold and is handoff ready";
+        feedback->stage = ApplyRoleTransition::Feedback::STAGE_HANDOFF_READY;
+        feedback->diagnostic = result->diagnostic;
+        goal_handle->publish_feedback(feedback);
+        goal_handle->succeed(result);
+        finishRoleTransitionAction();
+    }
+
+    void SingleDroneExplorerNode::finishRoleTransitionAction()
+    {
+        std::lock_guard<std::mutex> lock(runtime_mutex_);
+        runtime_transition_action_active_ = false;
+    }
+
+    SwarmDataPlane::WorkAdmissionResult
+    SingleDroneExplorerNode::runtimeAdmission()
+    {
+        if(!runtime_enabled_) {
+            return {SwarmDataPlane::WorkAdmissionStatus::Allowed};
+        }
+        std::lock_guard<std::mutex> lock(runtime_mutex_);
+        const auto admission = runtime_snapshots_->role_admission(
+                SwarmDataPlane::PrimaryRole::Explorer,
+                SwarmDataPlane::TransitionAdmissionMode::ChangedMember);
+        runtime_admission_status_ =
+                SwarmDataPlane::work_admission_status_name(admission.status);
+        return admission;
+    }
+
     void SingleDroneExplorerNode::onExplorationTask(
             const swarm_controller_interfaces::msg::ExplorationTask::SharedPtr msg)
     {
+        const auto runtime_admission = runtimeAdmission();
+        if(!runtime_admission) {
+            std::lock_guard<std::mutex> lock(task_mutex_);
+            task_update_status_ = "RejectedRuntime:" + runtime_admission_status_;
+            return;
+        }
         if(msg->header.frame_id != map_frame_) {
             std::lock_guard<std::mutex> lock(task_mutex_);
             task_update_status_ = "RejectedInvalidFrame";
@@ -709,11 +1087,56 @@ namespace SwarmController {
         return snapshot;
     }
 
+    bool SingleDroneExplorerNode::publishRuntimeHold()
+    {
+        nav_msgs::msg::Odometry odometry;
+        {
+            std::lock_guard<std::mutex> lock(input_mutex_);
+            if(!has_odom_) {
+                return false;
+            }
+            odometry = latest_odom_;
+        }
+        Point3f position;
+        float yaw = 0.0F;
+        if(!transformPoseToMap(
+                   odometry.header.frame_id, odometry.header.stamp,
+                   odometry.pose.pose, position, &yaw)) {
+            return false;
+        }
+        publishMotionGoal({MotionCommandType::Hold, {position, yaw}});
+
+        const auto & linear = odometry.twist.twist.linear;
+        const auto & angular = odometry.twist.twist.angular;
+        const double linear_speed = std::sqrt(
+                linear.x * linear.x + linear.y * linear.y + linear.z * linear.z);
+        const double angular_speed = std::sqrt(
+                angular.x * angular.x + angular.y * angular.y
+                + angular.z * angular.z);
+        {
+            std::lock_guard<std::mutex> lock(runtime_mutex_);
+            if(runtime_transition_hold_requested_
+               && linear_speed <= runtime_hold_linear_speed_max_
+               && angular_speed <= runtime_hold_angular_speed_max_) {
+                runtime_transition_hold_observed_ = true;
+                runtime_transition_cv_.notify_all();
+            }
+        }
+        return true;
+    }
+
     void SingleDroneExplorerNode::onControlTimer()
     {
         tf_pending_count_       = 0U;
         const double now_seconds = monotonicNow();
         refreshPeerState(now_seconds);
+        const auto runtime_admission = runtimeAdmission();
+        if(!runtime_admission) {
+            const bool hold_published = publishRuntimeHold();
+            publishDiagnostics(get_clock()->now(), hold_published);
+            timer_->reset();
+            return;
+        }
         ExplorerInput input;
         std::shared_ptr<octomap::OcTree> map_snapshot;
         const bool input_ready = makeExplorerInput(input, map_snapshot, now_seconds);
@@ -987,6 +1410,8 @@ namespace SwarmController {
         bool  clearance_contract_valid = true;
         float required_vertical_clearance = 0.0F;
         std::uint64_t observation_epoch = 0U;
+        std::string runtime_admission_status;
+        bool runtime_hold_requested = false;
         {
             std::lock_guard<std::mutex> lock(input_mutex_);
             has_odom                    = has_odom_;
@@ -994,9 +1419,18 @@ namespace SwarmController {
             required_vertical_clearance = required_vertical_clearance_;
             observation_epoch           = observation_epoch_;
         }
+        if(runtime_enabled_) {
+            std::lock_guard<std::mutex> lock(runtime_mutex_);
+            runtime_admission_status = runtime_admission_status_;
+            runtime_hold_requested = runtime_transition_hold_requested_;
+        }
         if(!clearance_contract_valid) {
             status.level   = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
             status.message = "ClearanceContractInvalid";
+        } else if(runtime_enabled_
+                  && runtime_admission_status != "Allowed") {
+            status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+            status.message = "RuntimeHold:" + runtime_admission_status;
         } else if(!input_ready) {
             status.level   = diagnostic_msgs::msg::DiagnosticStatus::WARN;
             status.message = has_odom ? "WaitingForTransform" : "WaitingForOdometry";
@@ -1055,6 +1489,9 @@ namespace SwarmController {
         add_value("configured_altitude_clearance", configured_altitude_clearance_);
         add_value("required_vertical_clearance", required_vertical_clearance);
         add_value("clearance_contract_valid", clearance_contract_valid ? 1 : 0);
+        add_value("runtime_enabled", runtime_enabled_ ? 1 : 0);
+        add_text("runtime_admission", runtime_admission_status);
+        add_value("runtime_hold_requested", runtime_hold_requested ? 1 : 0);
         if(exploration.first_blocked_position.has_value()) {
             add_value("first_blocked_x", exploration.first_blocked_position->x);
             add_value("first_blocked_y", exploration.first_blocked_position->y);

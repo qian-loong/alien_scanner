@@ -1,0 +1,5 @@
+uint64 queue_bytes
+uint64 memory_bytes
+uint64 network_bits_per_second
+uint32 max_contributors
+uint32 max_parallel_work

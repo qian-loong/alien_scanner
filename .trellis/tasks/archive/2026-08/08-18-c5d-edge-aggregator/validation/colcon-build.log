@@ -1,0 +1,9 @@
+﻿Starting >>> perception_map_update
+Finished <<< perception_map_update [0.19s]
+Starting >>> swarm_data_plane
+[Processing: swarm_data_plane]
+Finished <<< swarm_data_plane [42.4s]
+Starting >>> swarm_controller
+Finished <<< swarm_controller [0.28s]
+
+Summary: 3 packages finished [43.2s]

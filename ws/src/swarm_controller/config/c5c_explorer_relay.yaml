@@ -1,0 +1,158 @@
+/swarm_runtime_authority:
+  ros__parameters:
+    heartbeat_timeout_ms: 3000
+    tick_rate_hz: 20.0
+
+/drone_0/single_drone_explorer:
+  ros__parameters:
+    map_frame: map
+    peer_namespaces: [drone_1]
+    runtime.enabled: true
+    runtime.fleet_id: fleet-a
+    runtime.vehicle_id: explorer-0
+    runtime.session_boot_time_ns: 100
+    runtime.session_random_suffix: 1
+
+/drone_1/single_drone_explorer:
+  ros__parameters:
+    map_frame: map
+    peer_namespaces: [drone_0]
+    runtime.enabled: true
+    runtime.fleet_id: fleet-a
+    runtime.vehicle_id: explorer-1
+    runtime.session_boot_time_ns: 110
+    runtime.session_random_suffix: 1
+
+/map_producer_0:
+  ros__parameters:
+    output_topic: /c5c/source_0/raw
+    resync_service: /c5c/source_0/resync
+    source_vehicle_id: explorer-0
+    source_session_boot_time_ns: 500
+    source_session_random_suffix: 7
+    map_frame: map
+    producer_id: mapper-endpoint-0
+    producer_session_boot_time_ns: 1000
+    producer_session_random_suffix: 1
+    resync_route_epoch: 2
+    initial_publish_delay_ms: 2500
+    continuous_update_period_ms: 500
+
+/map_producer_1:
+  ros__parameters:
+    output_topic: /c5c/source_1/raw
+    resync_service: /c5c/source_1/resync
+    source_vehicle_id: explorer-1
+    source_session_boot_time_ns: 510
+    source_session_random_suffix: 7
+    map_frame: map
+    producer_id: mapper-endpoint-1
+    producer_session_boot_time_ns: 1100
+    producer_session_random_suffix: 1
+    resync_route_epoch: 2
+    initial_publish_delay_ms: 2500
+    continuous_update_period_ms: 500
+
+/route_source_0:
+  ros__parameters:
+    input_topic: /c5c/source_0/raw
+    route_id: route-map-0
+    fleet_id: fleet-a
+    vehicle_id: explorer-0
+    vehicle_session_boot_time_ns: 100
+    vehicle_session_random_suffix: 1
+    producer_id: mapper-endpoint-0
+    producer_session_boot_time_ns: 1000
+    producer_session_random_suffix: 1
+    origin_clock_session_boot_time_ns: 2000
+    origin_clock_session_random_suffix: 1
+    active_output_topic: /c5c/relay_0/route_map_0/input
+    standby_output_topic: /c5c/relay_1/route_map_0/input
+
+/route_source_1:
+  ros__parameters:
+    input_topic: /c5c/source_1/raw
+    route_id: route-map-1
+    fleet_id: fleet-a
+    vehicle_id: explorer-1
+    vehicle_session_boot_time_ns: 110
+    vehicle_session_random_suffix: 1
+    producer_id: mapper-endpoint-1
+    producer_session_boot_time_ns: 1100
+    producer_session_random_suffix: 1
+    origin_clock_session_boot_time_ns: 2100
+    origin_clock_session_random_suffix: 1
+    active_output_topic: /c5c/relay_0/route_map_1/input
+    standby_output_topic: /c5c/relay_1/route_map_1/input
+
+/relay_0:
+  ros__parameters:
+    fleet_id: fleet-a
+    vehicle_id: relay-0
+    session_boot_time_ns: 200
+    session_random_suffix: 1
+    route_ids: [route-map-0, route-map-1]
+    input_topics:
+      - /c5c/relay_0/route_map_0/input
+      - /c5c/relay_0/route_map_1/input
+    output_topics:
+      - /c5c/receiver_0/input
+      - /c5c/receiver_1/input
+    heartbeat_rate_hz: 10.0
+    fault_service: /c5c/relay_0/set_faulted
+
+/relay_1:
+  ros__parameters:
+    fleet_id: fleet-a
+    vehicle_id: relay-1
+    session_boot_time_ns: 210
+    session_random_suffix: 1
+    route_ids: [route-map-0, route-map-1]
+    input_topics:
+      - /c5c/relay_1/route_map_0/input
+      - /c5c/relay_1/route_map_1/input
+    output_topics:
+      - /c5c/receiver_0/input
+      - /c5c/receiver_1/input
+    heartbeat_rate_hz: 10.0
+    fault_service: /c5c/relay_1/set_faulted
+
+/receiver_0:
+  ros__parameters:
+    input_topic: /c5c/receiver_0/input
+    accepted_topic: /c5c/receiver_0/accepted
+    ack_topic: /c5c/receiver_0/acks
+    resync_service: /c5c/source_0/resync
+    requester_id: c5c-receiver-0
+    requester_session_boot_time_ns: 3000
+    requester_session_random_suffix: 1
+    expected_producer_id: mapper-endpoint-0
+    expected_producer_session_boot_time_ns: 1000
+    expected_producer_session_random_suffix: 1
+    expected_vehicle_id: explorer-0
+    expected_mapper_session_boot_time_ns: 500
+    expected_mapper_session_random_suffix: 7
+    expected_map_epoch: 1
+
+/receiver_1:
+  ros__parameters:
+    input_topic: /c5c/receiver_1/input
+    accepted_topic: /c5c/receiver_1/accepted
+    ack_topic: /c5c/receiver_1/acks
+    resync_service: /c5c/source_1/resync
+    requester_id: c5c-receiver-1
+    requester_session_boot_time_ns: 3100
+    requester_session_random_suffix: 1
+    expected_producer_id: mapper-endpoint-1
+    expected_producer_session_boot_time_ns: 1100
+    expected_producer_session_random_suffix: 1
+    expected_vehicle_id: explorer-1
+    expected_mapper_session_boot_time_ns: 510
+    expected_mapper_session_random_suffix: 7
+    expected_map_epoch: 1
+
+/swarm_runtime_visualizer:
+  ros__parameters:
+    frame_id: map
+    explorer_vehicle_ids: [explorer-0, explorer-1]
+    explorer_odom_topics: [/drone_0/odom, /drone_1/odom]

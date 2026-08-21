@@ -1,0 +1,72 @@
+﻿Starting >>> perception_map_update
+Finished <<< perception_map_update [0.18s]
+Starting >>> swarm_data_plane
+Finished <<< swarm_data_plane [3.67s]
+Starting >>> swarm_controller
+Finished <<< swarm_controller [0.23s]
+
+Summary: 3 packages finished [4.42s]
+Starting >>> swarm_data_plane
+UpdateCTestConfiguration  from :/workspaces/alien-scanner/ws/build/swarm_data_plane/CTestConfiguration.ini
+Parse Config file:/workspaces/alien-scanner/ws/build/swarm_data_plane/CTestConfiguration.ini
+   Site: 86b3d7b7a515
+   Build name: (empty)
+ Add coverage exclude regular expressions.
+Create new tag: 20260820-0507 - Experimental
+UpdateCTestConfiguration  from :/workspaces/alien-scanner/ws/build/swarm_data_plane/CTestConfiguration.ini
+Parse Config file:/workspaces/alien-scanner/ws/build/swarm_data_plane/CTestConfiguration.ini
+Test project /workspaces/alien-scanner/ws/build/swarm_data_plane
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 8
+    Start 8: TestEdgeAggregator
+
+8: Test command: /usr/bin/python3 "-u" "/opt/ros/jazzy/share/ament_cmake_test/cmake/run_test.py" "/workspaces/alien-scanner/ws/build/swarm_data_plane/test_results/swarm_data_plane/TestEdgeAggregator.gtest.xml" "--package-name" "swarm_data_plane" "--output-file" "/workspaces/alien-scanner/ws/build/swarm_data_plane/ament_cmake_gtest/TestEdgeAggregator.txt" "--command" "/workspaces/alien-scanner/ws/build/swarm_data_plane/TestEdgeAggregator" "--gtest_output=xml:/workspaces/alien-scanner/ws/build/swarm_data_plane/test_results/swarm_data_plane/TestEdgeAggregator.gtest.xml"
+8: Working Directory: /workspaces/alien-scanner/ws/build/swarm_data_plane
+8: Test timeout computed to be: 60
+8: -- run_test.py: invoking following command in '/workspaces/alien-scanner/ws/build/swarm_data_plane':
+8:  - /workspaces/alien-scanner/ws/build/swarm_data_plane/TestEdgeAggregator --gtest_output=xml:/workspaces/alien-scanner/ws/build/swarm_data_plane/test_results/swarm_data_plane/TestEdgeAggregator.gtest.xml
+8: Running main() from /opt/ros/jazzy/src/gtest_vendor/src/gtest_main.cc
+8: [==========] Running 7 tests from 1 test suite.
+8: [----------] Global test environment set-up.
+8: [----------] 7 tests from EdgeAggregatorTest
+8: [ RUN      ] EdgeAggregatorTest.MergesContributorsAndPublishesSortedManifest
+8: [       OK ] EdgeAggregatorTest.MergesContributorsAndPublishesSortedManifest (1 ms)
+8: [ RUN      ] EdgeAggregatorTest.OccupiedWinsDeterministicallyOnVoxelConflict
+8: [       OK ] EdgeAggregatorTest.OccupiedWinsDeterministicallyOnVoxelConflict (0 ms)
+8: [ RUN      ] EdgeAggregatorTest.GeometryMismatchDoesNotAdvanceAggregate
+8: [       OK ] EdgeAggregatorTest.GeometryMismatchDoesNotAdvanceAggregate (0 ms)
+8: [ RUN      ] EdgeAggregatorTest.RemoveCreatesInactiveContributorManifestEntry
+8: [       OK ] EdgeAggregatorTest.RemoveCreatesInactiveContributorManifestEntry (0 ms)
+8: [ RUN      ] EdgeAggregatorTest.DuplicateAndStaleSessionAreRejectedWithoutOutput
+8: [       OK ] EdgeAggregatorTest.DuplicateAndStaleSessionAreRejectedWithoutOutput (0 ms)
+8: [ RUN      ] EdgeAggregatorTest.AggregateLimitRejectsWithoutMutatingContributorOrOutput
+8: [       OK ] EdgeAggregatorTest.AggregateLimitRejectsWithoutMutatingContributorOrOutput (0 ms)
+8: [ RUN      ] EdgeAggregatorTest.RouteEpochBarrierRecoversWithCorrelatedKeyframe
+8: [       OK ] EdgeAggregatorTest.RouteEpochBarrierRecoversWithCorrelatedKeyframe (0 ms)
+8: [----------] 7 tests from EdgeAggregatorTest (1 ms total)
+8: 
+8: [----------] Global test environment tear-down
+8: [==========] 7 tests from 1 test suite ran. (2 ms total)
+8: [  PASSED  ] 7 tests.
+8: -- run_test.py: return code 0
+8: -- run_test.py: inject classname prefix into gtest result file '/workspaces/alien-scanner/ws/build/swarm_data_plane/test_results/swarm_data_plane/TestEdgeAggregator.gtest.xml'
+8: -- run_test.py: verify result file '/workspaces/alien-scanner/ws/build/swarm_data_plane/test_results/swarm_data_plane/TestEdgeAggregator.gtest.xml'
+1/1 Test #8: TestEdgeAggregator ...............   Passed    0.06 sec
+
+The following tests passed:
+	TestEdgeAggregator
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+gtest    =   0.06 sec*proc (1 test)
+
+Total Test time (real) =   0.06 sec
+Finished <<< swarm_data_plane [0.11s]
+
+Summary: 1 package finished [0.47s]

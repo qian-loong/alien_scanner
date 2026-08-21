@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
-- **Last Active**: 2026-08-17
+- **Total Sessions**: 12
+- **Last Active**: 2026-08-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~382 | Active |
+| `journal-1.md` | ~484 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,9 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-08-21 | 完成 C5 拓扑与运行期收尾 | `7036e5e`, `047f852`, `c22eda5`, `e1eae39` | `phase/5d-edge-aggregator` |
+| 11 | 2026-08-17 | 完成 C5b 角色与能力契约 | `047f852` | `phase/5b-role-contract` |
+| 10 | 2026-08-17 | 完成 C5a 拓扑基础 | `7036e5e` | `phase/5a-topology-foundation` |
 | 9 | 2026-08-17 | 完成 C4.1 与 C4.3 收尾归档 | `5875a41`, `4033bd1`, `6c742cb`, `0ef09ee` | `phase/4-merkle-v2-production-integration` |
 | 8 | 2026-08-15 | Complete incremental Merkle hash v2 evaluation | `6865c08` | `phase/4-incremental-merkle-hash-v2` |
 | 7 | 2026-08-13 | Relocate C3 profiling evidence | `26636e4` | `chore/profiling-evidence-layout` |

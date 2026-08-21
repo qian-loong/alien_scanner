@@ -67,7 +67,11 @@
 | C4.1 接收地图分块与 COW | 已完成（no-go） | edge 16 为三档折中研究候选；R5 与短 A/B 未过门，默认仍为 Vector，保留 storage-independent view 与可选 COW 实现 |
 | C4.2 增量 Merkle 内容身份 v2 | 已完成（算法 go / 生产 no-go） | 固定 4 个 touched chunks 时相对 chunk+flat 改善 20.5x/189x/858x；PSS 增加 1.7%/5.2%/6.9%，默认仍为 Vector/v1，生产迁移另立任务 |
 | C4.3 Merkle v2 生产集成 | 已完成（GO，含已知第三方 runtime 例外） | v2-only descriptor、本地 root 重算、资源 admission、3 x 300 秒矩阵和 rollback 已完成；原始 Memcheck 严格 gate 保留第三方 768 B finding，business memory Gate 通过 |
-| C5-C8 | C5 可进入 | C5a-C5c 可独立于内容身份内部结构推进；C5d 前置 Gate 已解除，后续多 Region、执行恢复和总集成按依赖推进 |
+| C5a 拓扑基础 | 已完成 | N=4 stable identity/session、三图、membership lifecycle、route epoch 与 topology conversion 已通过回归并归档 |
+| C5b 角色与能力契约 | 已完成 | primary role、service capability、health gate、role epoch 与 transition barrier 已通过回归并归档 |
+| C5c Explorer + 纯 Relay 运行期 | 已完成（N=4） | 2 Explorer + 2 Relay 真实进程链、Relay failover、旧 route 拒绝、correlated resync、Explorer Hold/transition、runtime MarkerArray 已通过；证据见 C5c validation.md |
+| C5d EdgeAggregator | 已完成 | 2 Explorer + 2 Relay + 1 EdgeAggregator 的 N=5 聚合链、bounded contributor manifest、Relay failover、correlated resync、aggregate receiver 和 RViz Marker 验收已通过；证据见 C5d validation.md |
+| C6-C8 | 后续 | C5d 完成后再进入 Region/task lifecycle、执行恢复和 N=5 总集成 |
 | C9a/C9b | 后续扩展 | HA 扩展不阻塞 C1-C8 核心路径 |
 
 ## 3. 后续子任务顺序
@@ -115,6 +119,8 @@
 回滚点：中央直接链路仍可作为参考部署，不写入逻辑契约。
 
 ### C6 多 Region 与任务生命周期
+
+前置：C5a-C5d 已完成，TopologySnapshot、RoleSnapshot、EdgeAggregator aggregate view 和 N=5 route/failover 契约可用。
 
 前置：shared/global map view 和 topology snapshot 可用。
 

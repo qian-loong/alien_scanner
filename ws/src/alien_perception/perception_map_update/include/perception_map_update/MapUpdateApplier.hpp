@@ -58,6 +58,13 @@ namespace PerceptionMapUpdate {
     public:
         explicit MapUpdateApplier(MapUpdateLimits limits = {});
 
+        // The applier owns immutable/shared candidate state, so copying is a
+        // transaction snapshot rather than an alias to mutable receiver state.
+        MapUpdateApplier(const MapUpdateApplier &) = default;
+        MapUpdateApplier & operator=(const MapUpdateApplier &) = default;
+        MapUpdateApplier(MapUpdateApplier &&) noexcept = default;
+        MapUpdateApplier & operator=(MapUpdateApplier &&) noexcept = default;
+
         bool admit_source(const SourceIdentity & source);
         bool require_resync() noexcept;
         ApplyUpdateResult apply(const MapUpdate & update);

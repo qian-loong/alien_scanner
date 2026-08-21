@@ -1,0 +1,162 @@
+/swarm_runtime_authority:
+  ros__parameters:
+    heartbeat_timeout_ms: 3000
+    tick_rate_hz: 20.0
+    enable_edge_aggregator: true
+    edge_aggregator.vehicle_id: edge-aggregator
+    edge_aggregator.session_boot_time_ns: 300
+    edge_aggregator.session_random_suffix: 1
+
+/drone_0/single_drone_explorer:
+  ros__parameters:
+    map_frame: map
+    peer_namespaces: [drone_1]
+    runtime.enabled: true
+    runtime.fleet_id: fleet-a
+    runtime.vehicle_id: explorer-0
+    runtime.session_boot_time_ns: 100
+    runtime.session_random_suffix: 1
+
+/drone_1/single_drone_explorer:
+  ros__parameters:
+    map_frame: map
+    peer_namespaces: [drone_0]
+    runtime.enabled: true
+    runtime.fleet_id: fleet-a
+    runtime.vehicle_id: explorer-1
+    runtime.session_boot_time_ns: 110
+    runtime.session_random_suffix: 1
+
+/map_producer_0:
+  ros__parameters:
+    output_topic: /c5d/source_0/raw
+    resync_service: /c5d/source_0/resync
+    source_vehicle_id: explorer-0
+    source_session_boot_time_ns: 500
+    source_session_random_suffix: 7
+    map_frame: map
+    producer_id: mapper-endpoint-0
+    producer_session_boot_time_ns: 1000
+    producer_session_random_suffix: 1
+    resync_route_epoch: 2
+    initial_publish_delay_ms: 2500
+    continuous_update_period_ms: 500
+
+/map_producer_1:
+  ros__parameters:
+    output_topic: /c5d/source_1/raw
+    resync_service: /c5d/source_1/resync
+    source_vehicle_id: explorer-1
+    source_session_boot_time_ns: 510
+    source_session_random_suffix: 7
+    map_frame: map
+    producer_id: mapper-endpoint-1
+    producer_session_boot_time_ns: 1100
+    producer_session_random_suffix: 1
+    resync_route_epoch: 2
+    initial_publish_delay_ms: 2500
+    continuous_update_period_ms: 500
+
+/route_source_0:
+  ros__parameters:
+    input_topic: /c5d/source_0/raw
+    route_id: route-map-0
+    fleet_id: fleet-a
+    vehicle_id: explorer-0
+    vehicle_session_boot_time_ns: 100
+    vehicle_session_random_suffix: 1
+    producer_id: mapper-endpoint-0
+    producer_session_boot_time_ns: 1000
+    producer_session_random_suffix: 1
+    origin_clock_session_boot_time_ns: 2000
+    origin_clock_session_random_suffix: 1
+    active_relay_vehicle_id: relay-0
+    standby_relay_vehicle_id: relay-1
+    active_output_topic: /c5d/relay_0/route_map_0/input
+    standby_output_topic: /c5d/relay_1/route_map_0/input
+
+/route_source_1:
+  ros__parameters:
+    input_topic: /c5d/source_1/raw
+    route_id: route-map-1
+    fleet_id: fleet-a
+    vehicle_id: explorer-1
+    vehicle_session_boot_time_ns: 110
+    vehicle_session_random_suffix: 1
+    producer_id: mapper-endpoint-1
+    producer_session_boot_time_ns: 1100
+    producer_session_random_suffix: 1
+    origin_clock_session_boot_time_ns: 2100
+    origin_clock_session_random_suffix: 1
+    active_relay_vehicle_id: relay-0
+    standby_relay_vehicle_id: relay-1
+    active_output_topic: /c5d/relay_0/route_map_1/input
+    standby_output_topic: /c5d/relay_1/route_map_1/input
+
+/relay_0:
+  ros__parameters:
+    fleet_id: fleet-a
+    vehicle_id: relay-0
+    session_boot_time_ns: 200
+    session_random_suffix: 1
+    route_ids: [route-map-0, route-map-1]
+    input_topics: [/c5d/relay_0/route_map_0/input, /c5d/relay_0/route_map_1/input]
+    output_topics: [/c5d/edge/input_0, /c5d/edge/input_1]
+    terminal_output: false
+    heartbeat_rate_hz: 10.0
+    fault_service: /c5d/relay_0/set_faulted
+
+/relay_1:
+  ros__parameters:
+    fleet_id: fleet-a
+    vehicle_id: relay-1
+    session_boot_time_ns: 210
+    session_random_suffix: 1
+    route_ids: [route-map-0, route-map-1]
+    input_topics: [/c5d/relay_1/route_map_0/input, /c5d/relay_1/route_map_1/input]
+    output_topics: [/c5d/edge/input_0, /c5d/edge/input_1]
+    terminal_output: false
+    heartbeat_rate_hz: 10.0
+    fault_service: /c5d/relay_1/set_faulted
+
+/edge_aggregator:
+  ros__parameters:
+    fleet_id: fleet-a
+    vehicle_id: edge-aggregator
+    session_boot_time_ns: 300
+    session_random_suffix: 1
+    input_topics: [/c5d/edge/input_0, /c5d/edge/input_1]
+    resync_services: [/c5d/source_0/resync, /c5d/source_1/resync]
+    output_topic: /c5d/aggregate/output
+    diagnostic_topic: /swarm/runtime/aggregate_diagnostics
+    runtime_gate_required: true
+    aggregate_mapper_session_boot_time_ns: 301
+    aggregate_mapper_session_random_suffix: 1
+    aggregate_map_epoch: 1
+    aggregate_producer_session_boot_time_ns: 302
+    aggregate_producer_session_random_suffix: 1
+    route_epoch: 1
+    ttl_hops: 8
+    validity_budget_ns: 5000000000
+    origin_clock_session_boot_time_ns: 303
+    origin_clock_session_random_suffix: 1
+    aggregate_sensor_session_boot_time_ns: 304
+    aggregate_sensor_session_random_suffix: 1
+
+/aggregate_receiver:
+  ros__parameters:
+    input_topic: /c5d/aggregate/output
+    accepted_topic: /c5d/aggregate/accepted
+    diagnostic_topic: /swarm/runtime/aggregate_receiver_diagnostics
+    aggregate_id: edge-aggregator
+    aggregate_mapper_session_boot_time_ns: 301
+    aggregate_mapper_session_random_suffix: 1
+    aggregate_map_epoch: 1
+    aggregate_producer_session_boot_time_ns: 302
+    aggregate_producer_session_random_suffix: 1
+
+/swarm_runtime_visualizer:
+  ros__parameters:
+    frame_id: map
+    explorer_vehicle_ids: [explorer-0, explorer-1]
+    explorer_odom_topics: [/drone_0/odom, /drone_1/odom]

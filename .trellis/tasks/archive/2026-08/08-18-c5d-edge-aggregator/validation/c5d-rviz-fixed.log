@@ -1,0 +1,141 @@
+[INFO] [launch]: All log files can be found below /root/.ros/log/2026-08-20-08-37-16-807538-86b3d7b7a515-25089
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [fake_odom-2]: process started with pid [25093]
+[INFO] [fake_lidar-3]: process started with pid [25094]
+[INFO] [octomap_builder-5]: process started with pid [25096]
+[INFO] [fake_odom-7]: process started with pid [25098]
+[INFO] [fake_lidar-8]: process started with pid [25099]
+[INFO] [octomap_builder-10]: process started with pid [25101]
+[INFO] [static_transform_publisher-1]: process started with pid [25092]
+[INFO] [static_transform_publisher-4]: process started with pid [25095]
+[INFO] [static_transform_publisher-6]: process started with pid [25097]
+[INFO] [static_transform_publisher-9]: process started with pid [25100]
+[INFO] [single_drone_explorer-11]: process started with pid [25170]
+[INFO] [single_drone_explorer-12]: process started with pid [25176]
+[INFO] [swarm_runtime_authority-13]: process started with pid [25184]
+[INFO] [map_update_route_producer_fixture-14]: process started with pid [25210]
+[INFO] [map_update_route_producer_fixture-15]: process started with pid [25213]
+[INFO] [topology_map_route_source-16]: process started with pid [25218]
+[INFO] [topology_map_route_source-17]: process started with pid [25222]
+[INFO] [map_update_relay-18]: process started with pid [25228]
+[INFO] [map_update_relay-19]: process started with pid [25229]
+[INFO] [edge_aggregator-20]: process started with pid [25230]
+[INFO] [aggregate_receiver-21]: process started with pid [25231]
+[INFO] [swarm_runtime_visualizer-22]: process started with pid [25240]
+[INFO] [rviz2-23]: process started with pid [25245]
+[static_transform_publisher-1] [WARN] [1787215036.957962719] []: Old-style arguments are deprecated; see --help for new-style arguments
+[static_transform_publisher-1] [INFO] [1787215036.984254845] [drone_0.base_to_lidar]: Spinning until stopped - publishing transform
+[static_transform_publisher-1] translation: ('0.000000', '0.000000', '0.000000')
+[static_transform_publisher-1] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+[static_transform_publisher-1] from 'drone_0/base_link' to 'drone_0/lidar_link'
+[static_transform_publisher-4] [WARN] [1787215036.959542931] []: Old-style arguments are deprecated; see --help for new-style arguments
+[static_transform_publisher-4] [INFO] [1787215036.983323473] [drone_0.map_to_odom]: Spinning until stopped - publishing transform
+[static_transform_publisher-4] translation: ('0.000000', '0.000000', '0.000000')
+[static_transform_publisher-4] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+[static_transform_publisher-4] from 'map' to 'drone_0/odom'
+[static_transform_publisher-6] [WARN] [1787215036.962283877] []: Old-style arguments are deprecated; see --help for new-style arguments
+[static_transform_publisher-9] [WARN] [1787215036.965363422] []: Old-style arguments are deprecated; see --help for new-style arguments
+[fake_lidar-8] [0m[INFO] [1787215036.992526859] [drone_1.fake_lidar]: fake_lidar: map -> drone_1/lidar_link, 10.0 Hz, 360 beams, ring_pitch=0.350 rad, frame 'drone_1/lidar_link'[0m
+[octomap_builder-10] [0m[INFO] [1787215036.991606400] [drone_1.octomap_builder]: octomap_builder: scan_returns -> octomap, frame 'map', publish 2.0 Hz[0m
+[fake_lidar-3] [0m[INFO] [1787215037.003017597] [drone_0.fake_lidar]: fake_lidar: map -> drone_0/lidar_link, 10.0 Hz, 360 beams, ring_pitch=0.350 rad, frame 'drone_0/lidar_link'[0m
+[static_transform_publisher-6] [INFO] [1787215037.010089572] [drone_1.base_to_lidar]: Spinning until stopped - publishing transform
+[static_transform_publisher-6] translation: ('0.000000', '0.000000', '0.000000')
+[static_transform_publisher-6] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+[static_transform_publisher-6] from 'drone_1/base_link' to 'drone_1/lidar_link'
+[octomap_builder-5] [0m[INFO] [1787215037.011595197] [drone_0.octomap_builder]: octomap_builder: scan_returns -> octomap, frame 'map', publish 2.0 Hz[0m
+[fake_odom-2] [0m[INFO] [1787215037.014266738] [drone_0.fake_odom]: fake_odom: goal mode at (0.00,0.00,1.50), 0.40 m/s, 0.50 rad/s, altitude_adapt=on[0m
+[fake_odom-7] [0m[INFO] [1787215037.016317113] [drone_1.fake_odom]: fake_odom: goal mode at (0.00,1.00,1.50), 0.40 m/s, 0.50 rad/s, altitude_adapt=on[0m
+[static_transform_publisher-9] [INFO] [1787215037.020625335] [drone_1.map_to_odom]: Spinning until stopped - publishing transform
+[static_transform_publisher-9] translation: ('0.000000', '0.000000', '0.000000')
+[static_transform_publisher-9] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+[static_transform_publisher-9] from 'map' to 'drone_1/odom'
+[fake_lidar-8] [33m[WARN] [1787215037.093904658] [drone_1.fake_lidar]: TF map -> drone_1/lidar_link: "map" passed to lookupTransform argument target_frame does not exist. [0m
+[fake_lidar-3] [33m[WARN] [1787215037.103870232] [drone_0.fake_lidar]: TF map -> drone_0/lidar_link: "map" passed to lookupTransform argument target_frame does not exist. [0m
+[rviz2-23] QStandardPaths: XDG_RUNTIME_DIR not set, defaulting to '/tmp/runtime-root'
+[single_drone_explorer-12] [INFO] [1787215037.177269567] [drone_1.single_drone_explorer]: single_drone_explorer: odom + octomap -> motion_goal at 5.0 Hz (1 peers)
+[single_drone_explorer-11] [INFO] [1787215037.195644584] [drone_0.single_drone_explorer]: single_drone_explorer: odom + octomap -> motion_goal at 5.0 Hz (1 peers)
+[rviz2-23] [INFO] [1787215037.393852888] [rviz2]: Stereo is NOT SUPPORTED
+[rviz2-23] [INFO] [1787215037.393965631] [rviz2]: OpenGl version: 4.5 (GLSL 4.5)
+[rviz2-23] [INFO] [1787215037.421601788] [rviz2]: Stereo is NOT SUPPORTED
+[WARNING] [launch]: user interrupted with ctrl-c (SIGINT)
+[WARNING] [launch]: user interrupted with ctrl-c (SIGINT) again, ignoring...
+[INFO] [rviz2-23]: sending signal 'SIGINT' to process[rviz2-23]
+[INFO] [swarm_runtime_visualizer-22]: sending signal 'SIGINT' to process[swarm_runtime_visualizer-22]
+[INFO] [aggregate_receiver-21]: sending signal 'SIGINT' to process[aggregate_receiver-21]
+[INFO] [edge_aggregator-20]: sending signal 'SIGINT' to process[edge_aggregator-20]
+[INFO] [map_update_relay-19]: sending signal 'SIGINT' to process[map_update_relay-19]
+[INFO] [map_update_relay-18]: sending signal 'SIGINT' to process[map_update_relay-18]
+[INFO] [topology_map_route_source-17]: sending signal 'SIGINT' to process[topology_map_route_source-17]
+[INFO] [topology_map_route_source-16]: sending signal 'SIGINT' to process[topology_map_route_source-16]
+[INFO] [map_update_route_producer_fixture-15]: sending signal 'SIGINT' to process[map_update_route_producer_fixture-15]
+[INFO] [map_update_route_producer_fixture-14]: sending signal 'SIGINT' to process[map_update_route_producer_fixture-14]
+[ERROR] [map_update_relay-18]: process has died [pid 25228, exit code -2, cmd '/workspaces/alien-scanner/ws/install/swarm_data_plane/lib/swarm_data_plane/map_update_relay --ros-args -r __node:=relay_0 --params-file /workspaces/alien-scanner/ws/install/swarm_controller/share/swarm_controller/config/c5d_edge_aggregator.yaml'].
+[INFO] [swarm_runtime_authority-13]: sending signal 'SIGINT' to process[swarm_runtime_authority-13]
+[INFO] [single_drone_explorer-12]: sending signal 'SIGINT' to process[single_drone_explorer-12]
+[INFO] [single_drone_explorer-11]: sending signal 'SIGINT' to process[single_drone_explorer-11]
+[ERROR] [map_update_route_producer_fixture-15]: process has died [pid 25213, exit code -2, cmd '/workspaces/alien-scanner/ws/install/swarm_data_plane/lib/swarm_data_plane/map_update_route_producer_fixture --ros-args -r __node:=map_producer_1 --params-file /workspaces/alien-scanner/ws/install/swarm_controller/share/swarm_controller/config/c5d_edge_aggregator.yaml'].
+[INFO] [octomap_builder-10]: sending signal 'SIGINT' to process[octomap_builder-10]
+[INFO] [static_transform_publisher-9]: sending signal 'SIGINT' to process[static_transform_publisher-9]
+[INFO] [fake_lidar-8]: sending signal 'SIGINT' to process[fake_lidar-8]
+[ERROR] [single_drone_explorer-12]: process has died [pid 25176, exit code -2, cmd '/workspaces/alien-scanner/ws/install/swarm_controller/lib/swarm_controller/single_drone_explorer --ros-args -r __node:=single_drone_explorer -r __ns:=/drone_1 --params-file /workspaces/alien-scanner/ws/install/swarm_controller/share/swarm_controller/config/c5d_edge_aggregator.yaml'].
+[INFO] [fake_odom-7]: sending signal 'SIGINT' to process[fake_odom-7]
+[ERROR] [single_drone_explorer-11]: process has died [pid 25170, exit code -2, cmd '/workspaces/alien-scanner/ws/install/swarm_controller/lib/swarm_controller/single_drone_explorer --ros-args -r __node:=single_drone_explorer -r __ns:=/drone_0 --params-file /workspaces/alien-scanner/ws/install/swarm_controller/share/swarm_controller/config/c5d_edge_aggregator.yaml'].
+[ERROR] [static_transform_publisher-9]: process has died [pid 25100, exit code -2, cmd '/opt/ros/jazzy/lib/tf2_ros/static_transform_publisher 0 0 0 0 0 0 map drone_1/odom --ros-args -r __node:=map_to_odom -r __ns:=/drone_1'].
+[INFO] [static_transform_publisher-6]: sending signal 'SIGINT' to process[static_transform_publisher-6]
+[ERROR] [fake_lidar-8]: process has died [pid 25099, exit code -2, cmd '/workspaces/alien-scanner/ws/install/drone_scanner/lib/drone_scanner/fake_lidar --ros-args -r __node:=fake_lidar -r __ns:=/drone_1 --params-file /tmp/launch_params_2v8w_e2j'].
+[INFO] [octomap_builder-5]: sending signal 'SIGINT' to process[octomap_builder-5]
+[ERROR] [fake_odom-7]: process has died [pid 25098, exit code -2, cmd '/workspaces/alien-scanner/ws/install/drone_scanner/lib/drone_scanner/fake_odom --ros-args -r __node:=fake_odom -r __ns:=/drone_1 --params-file /tmp/launch_params_urfh_3et'].
+[INFO] [static_transform_publisher-4]: sending signal 'SIGINT' to process[static_transform_publisher-4]
+[ERROR] [static_transform_publisher-6]: process has died [pid 25097, exit code -2, cmd '/opt/ros/jazzy/lib/tf2_ros/static_transform_publisher 0 0 0 0 0 0 drone_1/base_link drone_1/lidar_link --ros-args -r __node:=base_to_lidar -r __ns:=/drone_1'].
+[INFO] [fake_lidar-3]: sending signal 'SIGINT' to process[fake_lidar-3]
+[INFO] [fake_odom-2]: sending signal 'SIGINT' to process[fake_odom-2]
+[ERROR] [static_transform_publisher-4]: process has died [pid 25095, exit code -2, cmd '/opt/ros/jazzy/lib/tf2_ros/static_transform_publisher 0 0 0 0 0 0 map drone_0/odom --ros-args -r __node:=map_to_odom -r __ns:=/drone_0'].
+[INFO] [static_transform_publisher-1]: sending signal 'SIGINT' to process[static_transform_publisher-1]
+[ERROR] [fake_lidar-3]: process has died [pid 25094, exit code -2, cmd '/workspaces/alien-scanner/ws/install/drone_scanner/lib/drone_scanner/fake_lidar --ros-args -r __node:=fake_lidar -r __ns:=/drone_0 --params-file /tmp/launch_params_kl2ubawh'].
+[rviz2-23] [INFO] [1787215044.641892575] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[ERROR] [fake_odom-2]: process has died [pid 25093, exit code -2, cmd '/workspaces/alien-scanner/ws/install/drone_scanner/lib/drone_scanner/fake_odom --ros-args -r __node:=fake_odom -r __ns:=/drone_0 --params-file /tmp/launch_params_ynloukiw'].
+[edge_aggregator-20] [INFO] [1787215044.641902877] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[swarm_runtime_visualizer-22] [INFO] [1787215044.641891795] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[aggregate_receiver-21] [INFO] [1787215044.641907302] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[topology_map_route_source-16] [INFO] [1787215044.641944684] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[map_update_relay-18] [INFO] [1787215044.641940780] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[topology_map_route_source-17] [INFO] [1787215044.641961778] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[map_update_route_producer_fixture-14] [INFO] [1787215044.642011668] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[single_drone_explorer-11] [INFO] [1787215044.642051441] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[static_transform_publisher-1] [INFO] [1787215044.642160117] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[static_transform_publisher-4] [INFO] [1787215044.642162720] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[ERROR] [static_transform_publisher-1]: process has died [pid 25092, exit code -2, cmd '/opt/ros/jazzy/lib/tf2_ros/static_transform_publisher 0 0 0 0 0 0 drone_0/base_link drone_0/lidar_link --ros-args -r __node:=base_to_lidar -r __ns:=/drone_0'].
+[fake_lidar-8] [0m[INFO] [1787215044.642157481] [rclcpp]: signal_handler(SIGINT/SIGTERM)[0m
+[octomap_builder-5] [0m[INFO] [1787215044.642869799] [rclcpp]: signal_handler(SIGINT/SIGTERM)[0m
+[fake_odom-2] [0m[INFO] [1787215044.644146101] [rclcpp]: signal_handler(SIGINT/SIGTERM)[0m
+[fake_lidar-3] [0m[INFO] [1787215044.644385116] [rclcpp]: signal_handler(SIGINT/SIGTERM)[0m
+[fake_odom-7] [0m[INFO] [1787215044.644664288] [rclcpp]: signal_handler(SIGINT/SIGTERM)[0m
+[swarm_runtime_authority-13] [INFO] [1787215044.643492091] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[single_drone_explorer-12] [INFO] [1787215044.643718807] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[static_transform_publisher-6] [INFO] [1787215044.643718439] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[static_transform_publisher-9] [INFO] [1787215044.643905689] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[map_update_relay-19] [INFO] [1787215044.644597722] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[map_update_route_producer_fixture-15] [INFO] [1787215044.645294069] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[octomap_builder-10] [0m[INFO] [1787215044.646307088] [rclcpp]: signal_handler(SIGINT/SIGTERM)[0m
+[rviz2-23] [INFO] [1787215044.657430291] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[swarm_runtime_visualizer-22] [INFO] [1787215044.660221211] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[aggregate_receiver-21] [INFO] [1787215044.664514609] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[edge_aggregator-20] [INFO] [1787215044.664581483] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[map_update_relay-19] [INFO] [1787215044.667386856] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[topology_map_route_source-17] [INFO] [1787215044.677815189] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[topology_map_route_source-16] [INFO] [1787215044.680064676] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[map_update_route_producer_fixture-14] [INFO] [1787215044.683076590] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[swarm_runtime_authority-13] [INFO] [1787215044.685385243] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+[octomap_builder-10] [0m[INFO] [1787215044.693764768] [rclcpp]: signal_handler(SIGINT/SIGTERM)[0m
+[octomap_builder-5] [0m[INFO] [1787215044.709319761] [rclcpp]: signal_handler(SIGINT/SIGTERM)[0m
+[INFO] [aggregate_receiver-21]: process has finished cleanly [pid 25231]
+[INFO] [swarm_runtime_visualizer-22]: process has finished cleanly [pid 25240]
+[INFO] [topology_map_route_source-17]: process has finished cleanly [pid 25222]
+[INFO] [topology_map_route_source-16]: process has finished cleanly [pid 25218]
+[INFO] [map_update_route_producer_fixture-14]: process has finished cleanly [pid 25210]
+[INFO] [map_update_relay-19]: process has finished cleanly [pid 25229]
+[INFO] [edge_aggregator-20]: process has finished cleanly [pid 25230]
+[INFO] [swarm_runtime_authority-13]: process has finished cleanly [pid 25184]
+[INFO] [octomap_builder-10]: process has finished cleanly [pid 25101]
+[INFO] [octomap_builder-5]: process has finished cleanly [pid 25096]
+[INFO] [rviz2-23]: process has finished cleanly [pid 25245]

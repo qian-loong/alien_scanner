@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/swarm-data-plane-contract.md","reason":"C4 routed/aggregate envelope、原子 ingress 和 bounded state 约束"}
+{"file":".trellis/spec/backend/swarm-role-contract.md","reason":"AggregationService 角色组合、健康门和 transition 约束"}
+{"file":".trellis/spec/backend/swarm-runtime-contract.md","reason":"C5c Relay/runtime snapshot 门控和恢复语义"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"核心、ROS adapter、launch、RViz 跨层数据流"}
+

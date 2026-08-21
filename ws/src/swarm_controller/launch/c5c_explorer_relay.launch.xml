@@ -1,0 +1,101 @@
+<launch>
+  <arg name="show_rviz" default="true"/>
+  <arg name="show_cave_truth" default="false"/>
+  <arg name="enable_explorers" default="true"/>
+  <let name="runtime_config"
+       value="$(find-pkg-share swarm_controller)/config/c5c_explorer_relay.yaml"/>
+
+  <include if="$(var enable_explorers)"
+           file="$(find-pkg-share swarm_controller)/launch/multi_drone_sensing.launch.py">
+    <arg name="num_drones" value="2"/>
+    <arg name="show_rviz" value="false"/>
+    <arg name="show_cave_truth" value="$(var show_cave_truth)"/>
+    <arg name="motion.mode" value="goal"/>
+    <arg name="enable_scan_accumulator" value="false"/>
+  </include>
+
+  <node if="$(var enable_explorers)"
+        pkg="swarm_controller"
+        exec="single_drone_explorer"
+        name="single_drone_explorer"
+        namespace="drone_0"
+        output="screen">
+    <param from="$(var runtime_config)"/>
+  </node>
+  <node if="$(var enable_explorers)"
+        pkg="swarm_controller"
+        exec="single_drone_explorer"
+        name="single_drone_explorer"
+        namespace="drone_1"
+        output="screen">
+    <param from="$(var runtime_config)"/>
+  </node>
+
+  <node pkg="swarm_data_plane"
+        exec="swarm_runtime_authority"
+        name="swarm_runtime_authority"
+        output="screen">
+    <param from="$(var runtime_config)"/>
+  </node>
+  <node pkg="swarm_data_plane"
+        exec="map_update_route_producer_fixture"
+        name="map_producer_0"
+        output="screen">
+    <param from="$(var runtime_config)"/>
+  </node>
+  <node pkg="swarm_data_plane"
+        exec="map_update_route_producer_fixture"
+        name="map_producer_1"
+        output="screen">
+    <param from="$(var runtime_config)"/>
+  </node>
+  <node pkg="swarm_data_plane"
+        exec="topology_map_route_source"
+        name="route_source_0"
+        output="screen">
+    <param from="$(var runtime_config)"/>
+  </node>
+  <node pkg="swarm_data_plane"
+        exec="topology_map_route_source"
+        name="route_source_1"
+        output="screen">
+    <param from="$(var runtime_config)"/>
+  </node>
+  <node pkg="swarm_data_plane"
+        exec="map_update_relay"
+        name="relay_0"
+        output="screen">
+    <param from="$(var runtime_config)"/>
+  </node>
+  <node pkg="swarm_data_plane"
+        exec="map_update_relay"
+        name="relay_1"
+        output="screen">
+    <param from="$(var runtime_config)"/>
+  </node>
+  <node pkg="swarm_data_plane"
+        exec="map_update_route_receiver_node"
+        name="receiver_0"
+        output="screen">
+    <param from="$(var runtime_config)"/>
+  </node>
+  <node pkg="swarm_data_plane"
+        exec="map_update_route_receiver_node"
+        name="receiver_1"
+        output="screen">
+    <param from="$(var runtime_config)"/>
+  </node>
+  <node pkg="swarm_data_plane"
+        exec="swarm_runtime_visualizer"
+        name="swarm_runtime_visualizer"
+        output="screen">
+    <param from="$(var runtime_config)"/>
+  </node>
+
+  <node if="$(var show_rviz)"
+        pkg="rviz2"
+        exec="rviz2"
+        name="c5c_runtime_rviz"
+        args="-d $(find-pkg-share swarm_controller)/config/c5c_explorer_relay.rviz"
+        output="screen"/>
+</launch>

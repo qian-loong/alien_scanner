@@ -380,3 +380,105 @@ C4.1 分块 COW Gate B no-go 与 C4.3 Merkle v2 production Gate GO 的状态、�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: 完成 C5a 拓扑基础
+
+**Date**: 2026-08-17
+**Task**: 完成 C5a 拓扑基础
+**Branch**: `phase/5a-topology-foundation`
+
+### Summary
+
+实现稳定身份、成员生命周期、三逻辑图、link/route epoch 高水位与 ROS 转换；受影响包构建通过，411 项测试全部通过。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7036e5e` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 11: 完成 C5b 角色与能力契约
+
+**Date**: 2026-08-17
+**Task**: 完成 C5b 角色与能力契约
+**Branch**: `phase/5b-role-contract`
+
+### Summary
+
+实现 declared/effective capability、主角色与组合服务、全局 role_epoch、健康与预算门、quiesce/handoff/commit/rollback 状态机及 bounded ROS 转换；新增 15 项角色/转换测试，全量 428 tests 通过，并同步 backend spec 与 validation。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `047f852` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 12: 完成 C5 拓扑与运行期收尾
+
+**Date**: 2026-08-21
+**Task**: 完成 C5 拓扑与运行期收尾
+**Branch**: `phase/5d-edge-aggregator`
+
+### Summary
+
+完成并验证 C5a 拓扑基础、C5b 角色与能力契约、C5c Explorer 与纯 Relay 运行期、C5d EdgeAggregator 聚合运行期；归档 C5a-C5d 任务及证据，父任务进度更新为 C5 完成并转入 C6 多 Region 与任务生命周期。C5d 构建与全量 718 测试通过，N=5 聚合链、Relay failover、resync、aggregate receiver 和 RViz Marker 验收通过。保留既有无关 profiling/build 未跟踪产物。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7036e5e` | (see git log) |
+| `047f852` | (see git log) |
+| `c22eda5` | (see git log) |
+| `e1eae39` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

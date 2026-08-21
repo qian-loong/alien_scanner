@@ -1,0 +1,30 @@
+{
+  "id": "c5c-explorer-relay-runtime",
+  "name": "c5c-explorer-relay-runtime",
+  "title": "C5c Explorer 与纯 Relay 运行期",
+  "description": "在 C5b role/capability contract 之上实现真实 Explorer 与纯 RelayService 运行期链路，验证 Explorer -> Relay -> 中央接收端、route failover、role transition adapter 和角色可视化；不实现 EdgeAggregator 聚合或 C6 任务分配。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "loong",
+  "assignee": "loong",
+  "createdAt": "2026-08-17",
+  "completedAt": "2026-08-21",
+  "branch": "phase/5c-explorer-relay-runtime",
+  "base_branch": "phase/5c-explorer-relay-runtime",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "07-21-perception-swarm-architecture-refactor",
+  "relatedFiles": [
+    ".trellis/spec/backend/swarm-runtime-contract.md",
+    "ws/src/swarm_controller/launch/c5c_explorer_relay.launch.xml",
+    "ws/src/swarm_controller/test/test_c5c_explorer_relay_runtime.py"
+  ],
+  "notes": "C5c build、705 项全量回归、N=4 failover/resync/transition launch test 和 runtime MarkerArray 验证已通过；validation.md 已记录。任务保持 in_progress，等待用户明确提交与归档授权。",
+  "meta": {}
+}

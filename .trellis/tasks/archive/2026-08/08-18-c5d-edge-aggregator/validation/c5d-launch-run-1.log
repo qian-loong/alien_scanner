@@ -1,0 +1,174 @@
+﻿Starting >>> swarm_controller
+UpdateCTestConfiguration  from :/workspaces/alien-scanner/ws/build/swarm_controller/CTestConfiguration.ini
+Parse Config file:/workspaces/alien-scanner/ws/build/swarm_controller/CTestConfiguration.ini
+   Site: f2003577e284
+   Build name: (empty)
+ Add coverage exclude regular expressions.
+Create new tag: 20260820-0511 - Experimental
+UpdateCTestConfiguration  from :/workspaces/alien-scanner/ws/build/swarm_controller/CTestConfiguration.ini
+Parse Config file:/workspaces/alien-scanner/ws/build/swarm_controller/CTestConfiguration.ini
+Test project /workspaces/alien-scanner/ws/build/swarm_controller
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 32
+    Start 32: test_test_c5d_edge_aggregator_runtime.py
+
+32: Test command: /usr/bin/python3 "-u" "/opt/ros/jazzy/share/ament_cmake_ros/cmake/run_test_isolated.py" "/workspaces/alien-scanner/ws/build/swarm_controller/test_results/swarm_controller/test_test_c5d_edge_aggregator_runtime.py.xunit.xml" "--package-name" "swarm_controller" "--output-file" "/workspaces/alien-scanner/ws/build/swarm_controller/launch_test/test_test_c5d_edge_aggregator_runtime.py.txt" "--command" "/usr/bin/python3" "-m" "launch_testing.launch_test" "/workspaces/alien-scanner/ws/src/swarm_controller/test/test_c5d_edge_aggregator_runtime.py" "--junit-xml=/workspaces/alien-scanner/ws/build/swarm_controller/test_results/swarm_controller/test_test_c5d_edge_aggregator_runtime.py.xunit.xml" "--package-name=swarm_controller"
+32: Working Directory: /workspaces/alien-scanner/ws/build/swarm_controller
+32: Test timeout computed to be: 180
+32: -- run_test.py: invoking following command in '/workspaces/alien-scanner/ws/build/swarm_controller':
+32:  - /usr/bin/python3 -m launch_testing.launch_test /workspaces/alien-scanner/ws/src/swarm_controller/test/test_c5d_edge_aggregator_runtime.py --junit-xml=/workspaces/alien-scanner/ws/build/swarm_controller/test_results/swarm_controller/test_test_c5d_edge_aggregator_runtime.py.xunit.xml --package-name=swarm_controller
+32: [INFO] [launch]: All log files can be found below /root/.ros/log/2026-08-20-05-11-13-163420-86b3d7b7a515-17820
+32: [INFO] [launch]: Default logging verbosity is set to INFO
+32: [INFO] [fake_odom-2]: process started with pid [17827]
+32: [INFO] [fake_lidar-3]: process started with pid [17828]
+32: [INFO] [octomap_builder-5]: process started with pid [17830]
+32: [INFO] [fake_odom-7]: process started with pid [17832]
+32: [INFO] [fake_lidar-8]: process started with pid [17833]
+32: [INFO] [octomap_builder-10]: process started with pid [17845]
+32: [INFO] [static_transform_publisher-1]: process started with pid [17826]
+32: [INFO] [static_transform_publisher-4]: process started with pid [17829]
+32: [INFO] [static_transform_publisher-6]: process started with pid [17831]
+32: [INFO] [static_transform_publisher-9]: process started with pid [17842]
+32: [INFO] [single_drone_explorer-11]: process started with pid [17989]
+32: [INFO] [single_drone_explorer-12]: process started with pid [17990]
+32: [INFO] [swarm_runtime_authority-13]: process started with pid [17991]
+32: [INFO] [map_update_route_producer_fixture-14]: process started with pid [17992]
+32: [INFO] [map_update_route_producer_fixture-15]: process started with pid [17993]
+32: [INFO] [topology_map_route_source-16]: process started with pid [18000]
+32: [INFO] [topology_map_route_source-17]: process started with pid [18001]
+32: [INFO] [map_update_relay-18]: process started with pid [18002]
+32: [INFO] [map_update_relay-19]: process started with pid [18003]
+32: [INFO] [edge_aggregator-20]: process started with pid [18004]
+32: [INFO] [aggregate_receiver-21]: process started with pid [18006]
+32: [INFO] [swarm_runtime_visualizer-22]: process started with pid [18007]
+32: [static_transform_publisher-1] [WARN] [1787202673.419627409] []: Old-style arguments are deprecated; see --help for new-style arguments
+32: [static_transform_publisher-1] [INFO] [1787202673.435310406] [drone_0.base_to_lidar]: Spinning until stopped - publishing transform
+32: [static_transform_publisher-1] translation: ('0.000000', '0.000000', '0.000000')
+32: [static_transform_publisher-1] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+32: [static_transform_publisher-1] from 'drone_0/base_link' to 'drone_0/lidar_link'
+32: [static_transform_publisher-4] [WARN] [1787202673.450598643] []: Old-style arguments are deprecated; see --help for new-style arguments
+32: [static_transform_publisher-4] [INFO] [1787202673.478189336] [drone_0.map_to_odom]: Spinning until stopped - publishing transform
+32: [static_transform_publisher-4] translation: ('0.000000', '0.000000', '0.000000')
+32: [static_transform_publisher-4] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+32: [static_transform_publisher-4] from 'map' to 'drone_0/odom'
+32: [static_transform_publisher-6] [WARN] [1787202673.435609495] []: Old-style arguments are deprecated; see --help for new-style arguments
+32: [static_transform_publisher-6] [INFO] [1787202673.456798553] [drone_1.base_to_lidar]: Spinning until stopped - publishing transform
+32: [static_transform_publisher-6] translation: ('0.000000', '0.000000', '0.000000')
+32: [static_transform_publisher-6] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+32: [static_transform_publisher-6] from 'drone_1/base_link' to 'drone_1/lidar_link'
+32: [static_transform_publisher-9] [WARN] [1787202673.428383740] []: Old-style arguments are deprecated; see --help for new-style arguments
+32: [static_transform_publisher-9] [INFO] [1787202673.447907239] [drone_1.map_to_odom]: Spinning until stopped - publishing transform
+32: [static_transform_publisher-9] translation: ('0.000000', '0.000000', '0.000000')
+32: [static_transform_publisher-9] rotation: ('0.000000', '0.000000', '0.000000', '1.000000')
+32: [static_transform_publisher-9] from 'map' to 'drone_1/odom'
+32: [fake_odom-2] [0m[INFO] [1787202673.447515183] [drone_0.fake_odom]: fake_odom: goal mode at (0.00,0.00,1.50), 0.40 m/s, 0.50 rad/s, altitude_adapt=on[0m
+32: [fake_lidar-3] [0m[INFO] [1787202673.441029708] [drone_0.fake_lidar]: fake_lidar: map -> drone_0/lidar_link, 10.0 Hz, 360 beams, ring_pitch=0.350 rad, frame 'drone_0/lidar_link'[0m
+32: [fake_lidar-3] [33m[WARN] [1787202673.541670269] [drone_0.fake_lidar]: TF map -> drone_0/lidar_link: "map" passed to lookupTransform argument target_frame does not exist. [0m
+32: [octomap_builder-5] [0m[INFO] [1787202673.440976548] [drone_0.octomap_builder]: octomap_builder: scan_returns -> octomap, frame 'map', publish 2.0 Hz[0m
+32: [fake_odom-7] [0m[INFO] [1787202673.474112465] [drone_1.fake_odom]: fake_odom: goal mode at (0.00,1.00,1.50), 0.40 m/s, 0.50 rad/s, altitude_adapt=on[0m
+32: [fake_lidar-8] [0m[INFO] [1787202673.462477901] [drone_1.fake_lidar]: fake_lidar: map -> drone_1/lidar_link, 10.0 Hz, 360 beams, ring_pitch=0.350 rad, frame 'drone_1/lidar_link'[0m
+32: [fake_lidar-8] [33m[WARN] [1787202673.566737975] [drone_1.fake_lidar]: TF map -> drone_1/lidar_link: "map" passed to lookupTransform argument target_frame does not exist. [0m
+32: [octomap_builder-10] [0m[INFO] [1787202673.490690686] [drone_1.octomap_builder]: octomap_builder: scan_returns -> octomap, frame 'map', publish 2.0 Hz[0m
+32: test_01_two_sources_converge_to_one_aggregate_source (swarm_controller.TestC5dEdgeAggregatorRuntime.test_01_two_sources_converge_to_one_aggregate_source) ... [single_drone_explorer-11] [INFO] [1787202673.778219152] [drone_0.single_drone_explorer]: single_drone_explorer: odom + octomap -> motion_goal at 5.0 Hz (1 peers)
+32: [single_drone_explorer-12] [INFO] [1787202674.052352871] [drone_1.single_drone_explorer]: single_drone_explorer: odom + octomap -> motion_goal at 5.0 Hz (1 peers)
+32: ok
+32: test_02_relay_failover_rejects_old_route_and_recovers_contributors (swarm_controller.TestC5dEdgeAggregatorRuntime.test_02_relay_failover_rejects_old_route_and_recovers_contributors) ... [swarm_runtime_authority-13] [WARN] [1787202679.114091040] [swarm_runtime_authority]: Relay heartbeat timeout committed topology/role failover
+32: ok
+32: 
+32: ----------------------------------------------------------------------
+32: Ran 2 tests in 6.302s
+32: 
+32: OK
+32: [INFO] [swarm_runtime_visualizer-22]: sending signal 'SIGINT' to process[swarm_runtime_visualizer-22]
+32: [INFO] [aggregate_receiver-21]: sending signal 'SIGINT' to process[aggregate_receiver-21]
+32: [INFO] [edge_aggregator-20]: sending signal 'SIGINT' to process[edge_aggregator-20]
+32: [INFO] [map_update_relay-19]: sending signal 'SIGINT' to process[map_update_relay-19]
+32: [INFO] [map_update_relay-18]: sending signal 'SIGINT' to process[map_update_relay-18]
+32: [INFO] [topology_map_route_source-17]: sending signal 'SIGINT' to process[topology_map_route_source-17]
+32: [INFO] [topology_map_route_source-16]: sending signal 'SIGINT' to process[topology_map_route_source-16]
+32: [INFO] [map_update_route_producer_fixture-15]: sending signal 'SIGINT' to process[map_update_route_producer_fixture-15]
+32: [INFO] [map_update_route_producer_fixture-14]: sending signal 'SIGINT' to process[map_update_route_producer_fixture-14]
+32: [INFO] [swarm_runtime_authority-13]: sending signal 'SIGINT' to process[swarm_runtime_authority-13]
+32: [INFO] [single_drone_explorer-12]: sending signal 'SIGINT' to process[single_drone_explorer-12]
+32: [INFO] [single_drone_explorer-11]: sending signal 'SIGINT' to process[single_drone_explorer-11]
+32: [INFO] [octomap_builder-10]: sending signal 'SIGINT' to process[octomap_builder-10]
+32: [INFO] [static_transform_publisher-9]: sending signal 'SIGINT' to process[static_transform_publisher-9]
+32: [INFO] [fake_lidar-8]: sending signal 'SIGINT' to process[fake_lidar-8]
+32: [INFO] [fake_odom-7]: sending signal 'SIGINT' to process[fake_odom-7]
+32: [INFO] [static_transform_publisher-6]: sending signal 'SIGINT' to process[static_transform_publisher-6]
+32: [INFO] [octomap_builder-5]: sending signal 'SIGINT' to process[octomap_builder-5]
+32: [INFO] [static_transform_publisher-4]: sending signal 'SIGINT' to process[static_transform_publisher-4]
+32: [INFO] [fake_lidar-3]: sending signal 'SIGINT' to process[fake_lidar-3]
+32: [INFO] [fake_odom-2]: sending signal 'SIGINT' to process[fake_odom-2]
+32: [INFO] [static_transform_publisher-1]: sending signal 'SIGINT' to process[static_transform_publisher-1]
+32: [swarm_runtime_visualizer-22] [INFO] [1787202679.705120974] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+32: [aggregate_receiver-21] [INFO] [1787202679.710704035] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+32: [edge_aggregator-20] [INFO] [1787202679.717117305] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+32: [map_update_relay-19] [INFO] [1787202679.719062434] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+32: [map_update_relay-18] [INFO] [1787202679.722929015] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+32: [topology_map_route_source-17] [INFO] [1787202679.723628264] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+32: [topology_map_route_source-16] [INFO] [1787202679.726004403] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+32: [map_update_route_producer_fixture-15] [INFO] [1787202679.727238259] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+32: [swarm_runtime_authority-13] [INFO] [1787202679.735479302] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+32: [map_update_route_producer_fixture-14] [INFO] [1787202679.737171218] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+32: [single_drone_explorer-12] [INFO] [1787202679.740434838] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+32: [single_drone_explorer-11] [INFO] [1787202679.743229217] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+32: [static_transform_publisher-9] [INFO] [1787202679.743889383] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+32: [fake_lidar-8] [0m[INFO] [1787202679.747413119] [rclcpp]: signal_handler(SIGINT/SIGTERM)[0m
+32: [octomap_builder-10] [0m[INFO] [1787202679.749197578] [rclcpp]: signal_handler(SIGINT/SIGTERM)[0m
+32: [octomap_builder-5] [0m[INFO] [1787202679.755626387] [rclcpp]: signal_handler(SIGINT/SIGTERM)[0m
+32: [fake_odom-7] [0m[INFO] [1787202679.758980308] [rclcpp]: signal_handler(SIGINT/SIGTERM)[0m
+32: [static_transform_publisher-4] [INFO] [1787202679.759293481] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+32: [fake_lidar-3] [0m[INFO] [1787202679.759872039] [rclcpp]: signal_handler(SIGINT/SIGTERM)[0m
+32: [fake_odom-2] [0m[INFO] [1787202679.767716846] [rclcpp]: signal_handler(SIGINT/SIGTERM)[0m
+32: [static_transform_publisher-6] [INFO] [1787202679.767814210] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+32: [static_transform_publisher-1] [INFO] [1787202679.770084307] [rclcpp]: signal_handler(SIGINT/SIGTERM)
+32: [INFO] [aggregate_receiver-21]: process has finished cleanly [pid 18006]
+32: [INFO] [topology_map_route_source-16]: process has finished cleanly [pid 18000]
+32: [INFO] [map_update_relay-19]: process has finished cleanly [pid 18003]
+32: [INFO] [edge_aggregator-20]: process has finished cleanly [pid 18004]
+32: [INFO] [swarm_runtime_visualizer-22]: process has finished cleanly [pid 18007]
+32: [INFO] [map_update_relay-18]: process has finished cleanly [pid 18002]
+32: [INFO] [topology_map_route_source-17]: process has finished cleanly [pid 18001]
+32: [INFO] [map_update_route_producer_fixture-14]: process has finished cleanly [pid 17992]
+32: [INFO] [static_transform_publisher-9]: process has finished cleanly [pid 17842]
+32: [INFO] [map_update_route_producer_fixture-15]: process has finished cleanly [pid 17993]
+32: [INFO] [static_transform_publisher-4]: process has finished cleanly [pid 17829]
+32: [INFO] [static_transform_publisher-6]: process has finished cleanly [pid 17831]
+32: [INFO] [static_transform_publisher-1]: process has finished cleanly [pid 17826]
+32: [INFO] [fake_odom-2]: process has finished cleanly [pid 17827]
+32: [INFO] [swarm_runtime_authority-13]: process has finished cleanly [pid 17991]
+32: [INFO] [fake_lidar-8]: process has finished cleanly [pid 17833]
+32: [INFO] [fake_lidar-3]: process has finished cleanly [pid 17828]
+32: [INFO] [octomap_builder-5]: process has finished cleanly [pid 17830]
+32: [INFO] [octomap_builder-10]: process has finished cleanly [pid 17845]
+32: [INFO] [fake_odom-7]: process has finished cleanly [pid 17832]
+32: [INFO] [single_drone_explorer-11]: process has finished cleanly [pid 17989]
+32: [INFO] [single_drone_explorer-12]: process has finished cleanly [pid 17990]
+32: test_processes_exit_cleanly (swarm_controller.TestC5dShutdown.test_processes_exit_cleanly) ... ok
+32: 
+32: ----------------------------------------------------------------------
+32: Ran 1 test in 0.000s
+32: 
+32: OK
+32: -- run_test.py: return code 0
+32: -- run_test.py: verify result file '/workspaces/alien-scanner/ws/build/swarm_controller/test_results/swarm_controller/test_test_c5d_edge_aggregator_runtime.py.xunit.xml'
+1/1 Test #32: test_test_c5d_edge_aggregator_runtime.py ...   Passed    7.22 sec
+
+The following tests passed:
+	test_test_c5d_edge_aggregator_runtime.py
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+launch_test    =   7.22 sec*proc (1 test)
+
+Total Test time (real) =   7.22 sec
+Finished <<< swarm_controller [7.27s]
+
+Summary: 1 package finished [7.67s]

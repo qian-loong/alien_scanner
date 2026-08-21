@@ -1,0 +1,18 @@
+uint16 CURRENT_PROTOCOL_VERSION = 1
+
+uint16 protocol_version
+swarm_data_interfaces/RoleTransitionDescriptor transition
+swarm_data_interfaces/VehicleIdentity target
+---
+bool success
+swarm_data_interfaces/RoleTransitionAck[<=2] acknowledgements
+string<=256 diagnostic
+---
+uint8 STAGE_PREPARING = 1
+uint8 STAGE_HOLDING = 2
+uint8 STAGE_QUIESCED = 3
+uint8 STAGE_HANDOFF_READY = 4
+uint8 STAGE_REJECTED = 5
+
+uint8 stage
+string<=256 diagnostic

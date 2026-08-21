@@ -11,12 +11,34 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 if(NOT TARGET swarm_controller_interfaces__rosidl_typesupport_cpp)
     find_package(swarm_controller_interfaces REQUIRED)
+endif()
+if(NOT TARGET swarm_data_interfaces__rosidl_typesupport_cpp)
+    find_package(swarm_data_interfaces REQUIRED)
+endif()
+if(NOT TARGET swarm_data_plane::core AND
+   NOT TARGET swarm_data_plane::swarm_data_plane_core)
+    find_package(swarm_data_plane REQUIRED)
+endif()
+if(TARGET swarm_data_plane::core)
+    set(SWARM_DATA_PLANE_CORE_TARGET swarm_data_plane::core)
+else()
+    set(SWARM_DATA_PLANE_CORE_TARGET
+        swarm_data_plane::swarm_data_plane_core
+    )
+endif()
+if(TARGET swarm_data_plane::ros)
+    set(SWARM_DATA_PLANE_ROS_TARGET swarm_data_plane::ros)
+else()
+    set(SWARM_DATA_PLANE_ROS_TARGET
+        swarm_data_plane::swarm_data_plane_ros
+    )
 endif()
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
@@ -144,12 +166,22 @@ target_include_directories(single_drone_explorer PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(single_drone_explorer swarm_exploration)
+target_link_libraries(single_drone_explorer
+        swarm_exploration
+        ${SWARM_DATA_PLANE_CORE_TARGET}
+        ${SWARM_DATA_PLANE_ROS_TARGET}
+)
 ament_target_dependencies(
         single_drone_explorer
-        rclcpp diagnostic_msgs geometry_msgs nav_msgs octomap_msgs tf2 tf2_geometry_msgs tf2_ros
-        visualization_msgs
+        rclcpp rclcpp_action diagnostic_msgs geometry_msgs nav_msgs octomap_msgs tf2
+        tf2_geometry_msgs tf2_ros visualization_msgs
 )
+if(TARGET swarm_data_interfaces__rosidl_typesupport_cpp)
+    target_link_libraries(single_drone_explorer
+            swarm_data_interfaces__rosidl_typesupport_cpp)
+else()
+    ament_target_dependencies(single_drone_explorer swarm_data_interfaces)
+endif()
 if(TARGET swarm_controller_interfaces__rosidl_typesupport_cpp)
     target_link_libraries(single_drone_explorer swarm_controller_interfaces__rosidl_typesupport_cpp)
 else()
@@ -485,10 +517,22 @@ if(BUILD_TESTING)
             RUNNER "${RUNNER}"
             TIMEOUT 120
     )
+    add_launch_test(
+            test/test_c5c_explorer_relay_runtime.py
+            RUNNER "${RUNNER}"
+            TIMEOUT 180
+    )
+    add_launch_test(
+            test/test_c5d_edge_aggregator_runtime.py
+            RUNNER "${RUNNER}"
+            TIMEOUT 180
+    )
 endif()
 
 ament_export_include_directories(include)
-ament_export_dependencies(octomap diagnostic_msgs drone_scanner cave_world)
+ament_export_dependencies(
+        octomap diagnostic_msgs drone_scanner cave_world swarm_data_plane
+        swarm_data_interfaces rclcpp_action)
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 
 ament_package()

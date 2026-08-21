@@ -6,12 +6,15 @@
 #include "swarm_controller/PlanningSnapshotGuard.hpp"
 #include "swarm_controller/SingleDroneExplorer.hpp"
 #include "swarm_controller/TaskLeaseTracker.hpp"
+#include "swarm_data_plane/RuntimeSnapshotCache.hpp"
 
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
@@ -19,6 +22,12 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <octomap_msgs/msg/octomap.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp_action/rclcpp_action.hpp>
+#include <swarm_data_interfaces/action/apply_role_transition.hpp>
+#include <swarm_data_interfaces/msg/capability_evidence.hpp>
+#include <swarm_data_interfaces/msg/role_snapshot.hpp>
+#include <swarm_data_interfaces/msg/role_transition_descriptor.hpp>
+#include <swarm_data_interfaces/msg/topology_snapshot.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <visualization_msgs/msg/marker_array.hpp>
@@ -30,8 +39,14 @@ namespace SwarmController {
     {
     public:
         SingleDroneExplorerNode();
+        ~SingleDroneExplorerNode() override;
 
     private:
+        using ApplyRoleTransition =
+                swarm_data_interfaces::action::ApplyRoleTransition;
+        using ApplyRoleTransitionGoalHandle =
+                rclcpp_action::ServerGoalHandle<ApplyRoleTransition>;
+
         struct PeerTrack {
             std::string ns;
             nav_msgs::msg::Odometry odom;
@@ -56,7 +71,27 @@ namespace SwarmController {
                 std::size_t peer_index, const geometry_msgs::msg::PoseStamped::SharedPtr msg);
         void onExplorationTask(
                 const swarm_controller_interfaces::msg::ExplorationTask::SharedPtr msg);
+        void onRuntimeTopology(
+                const swarm_data_interfaces::msg::TopologySnapshot & message);
+        void onRuntimeRole(
+                const swarm_data_interfaces::msg::RoleSnapshot & message);
+        void onRuntimeEvidence(
+                const swarm_data_interfaces::msg::CapabilityEvidence & message);
+        void onRuntimeTransition(
+                const swarm_data_interfaces::msg::RoleTransitionDescriptor & message);
+        rclcpp_action::GoalResponse onRoleTransitionGoal(
+                const rclcpp_action::GoalUUID & uuid,
+                std::shared_ptr<const ApplyRoleTransition::Goal> goal);
+        rclcpp_action::CancelResponse onRoleTransitionCancel(
+                const std::shared_ptr<ApplyRoleTransitionGoalHandle> goal_handle);
+        void onRoleTransitionAccepted(
+                const std::shared_ptr<ApplyRoleTransitionGoalHandle> goal_handle);
+        void executeRoleTransition(
+                const std::shared_ptr<ApplyRoleTransitionGoalHandle> goal_handle);
+        void finishRoleTransitionAction();
         void onControlTimer();
+        SwarmDataPlane::WorkAdmissionResult runtimeAdmission();
+        bool publishRuntimeHold();
         bool makeExplorerInput(
                 ExplorerInput & input, std::shared_ptr<octomap::OcTree> & map_snapshot,
                 double now_seconds);
@@ -105,6 +140,20 @@ namespace SwarmController {
         bool                            planning_snapshot_changed_ {false};
         float                           required_vertical_clearance_ {};
         bool                            clearance_contract_valid_ {true};
+        bool                            runtime_enabled_ {false};
+        SwarmDataPlane::VehicleIdentity runtime_identity_ {};
+        std::unique_ptr<SwarmDataPlane::RuntimeSnapshotCache>
+                runtime_snapshots_;
+        std::mutex runtime_mutex_;
+        std::condition_variable runtime_transition_cv_;
+        bool runtime_transition_hold_requested_ {false};
+        bool runtime_transition_hold_observed_ {false};
+        bool runtime_transition_action_active_ {false};
+        bool runtime_shutting_down_ {false};
+        std::thread runtime_transition_thread_;
+        std::string runtime_admission_status_ {"Disabled"};
+        double runtime_hold_linear_speed_max_ {0.02};
+        double runtime_hold_angular_speed_max_ {0.03};
         std::vector<rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr> peer_odom_subs_;
         std::vector<rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr>
                 peer_goal_subs_;
@@ -113,6 +162,17 @@ namespace SwarmController {
         rclcpp::Subscription<octomap_msgs::msg::Octomap>::SharedPtr map_subscription_;
         rclcpp::Subscription<swarm_controller_interfaces::msg::ExplorationTask>::SharedPtr
                 task_subscription_;
+        rclcpp::Subscription<swarm_data_interfaces::msg::TopologySnapshot>::SharedPtr
+                runtime_topology_subscription_;
+        rclcpp::Subscription<swarm_data_interfaces::msg::RoleSnapshot>::SharedPtr
+                runtime_role_subscription_;
+        rclcpp::Subscription<swarm_data_interfaces::msg::CapabilityEvidence>::SharedPtr
+                runtime_evidence_subscription_;
+        rclcpp::Subscription<
+                swarm_data_interfaces::msg::RoleTransitionDescriptor>::SharedPtr
+                runtime_transition_subscription_;
+        rclcpp_action::Server<ApplyRoleTransition>::SharedPtr
+                runtime_transition_server_;
         rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr goal_publisher_;
         rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_publisher_;
         rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr

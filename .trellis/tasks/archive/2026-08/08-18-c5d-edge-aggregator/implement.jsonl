@@ -1,0 +1,5 @@
+{"step":"task-artifacts","status":"completed","note":"C5d PRD/design/implement/task/check 已建立并同步验收边界"}
+{"step":"edge-aggregator-core","status":"completed","note":"ROS-free contributor ingress、确定性合并、候选事务提交、限额失败原子保持和 resync barrier"}
+{"step":"ros-adapter","status":"completed","note":"薄 ROS edge aggregator、中央 receiver、按来源 resync service 适配"}
+{"step":"n5-runtime","status":"completed","note":"可选 N=5 authority、双 Relay、launch/config/RViz 和 runtime 验收脚本"}
+{"step":"validation","status":"completed","note":"Docker 重建、swarm_data_plane/swarm_controller 全量测试和 C5d launch test 已通过；原始日志见 validation/"}

@@ -42,6 +42,11 @@ namespace SwarmDataPlane {
                 DataPlaneLimits data_plane_limits = {},
                 PerceptionMapUpdate::MapUpdateLimits map_update_limits = {});
 
+        MapUpdateIngress(const MapUpdateIngress &) = default;
+        MapUpdateIngress & operator=(const MapUpdateIngress &) = default;
+        MapUpdateIngress(MapUpdateIngress &&) noexcept = default;
+        MapUpdateIngress & operator=(MapUpdateIngress &&) noexcept = default;
+
         bool admit_producer(const ProducerIdentity & producer);
         bool admit_source(const PerceptionMapUpdate::SourceIdentity & source);
         bool require_resync();

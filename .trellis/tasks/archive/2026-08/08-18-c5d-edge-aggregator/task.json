@@ -1,0 +1,24 @@
+{
+  "id": "c5d-edge-aggregator",
+  "name": "c5d-edge-aggregator",
+  "title": "C5d EdgeAggregator 聚合运行期",
+  "description": "实现 2 Explorer -> 2 Relay -> EdgeAggregator -> 中央接收端的 N=5 聚合链，复用 C4 aggregate 契约并保持 contributor 状态有界。",
+  "status": "completed",
+  "priority": "P1",
+  "creator": "loong",
+  "assignee": "loong",
+  "createdAt": "2026-08-18",
+  "completedAt": "2026-08-21",
+  "branch": "phase/5d-edge-aggregator",
+  "base_branch": "phase/5c-explorer-relay-runtime",
+  "commit": null,
+  "parent": "07-21-perception-swarm-architecture-refactor",
+  "relatedFiles": [
+    ".trellis/spec/backend/swarm-data-plane-contract.md",
+    ".trellis/spec/backend/swarm-topology-contract.md",
+    ".trellis/spec/backend/swarm-role-contract.md",
+    ".trellis/spec/backend/swarm-runtime-contract.md",
+    "ws/src/swarm_data_plane/include/swarm_data_plane/AggregateContract.hpp"
+  ],
+  "notes": "C5d 分支从已提交的 C5c 基线创建；不合并 main，未获明确授权前不提交。"
+}

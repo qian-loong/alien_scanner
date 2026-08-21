@@ -23,6 +23,9 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Local Observation Map Contract](./local-observation-map-contract.md) | C2 pose/health gates, epoch/revision semantics, and revision-locked reads | Active |
 | [Map State Update Contract](./map-state-update-contract.md) | C3 canonical keyframe/delta chains, atomic apply, bounded async production, and resync | Active |
 | [Swarm Data Plane Contract](./swarm-data-plane-contract.md) | C4 routed envelope, RMW/DDS boundary, admission, resync barrier, aggregate atomicity, and trust rejection | Active |
+| [Swarm Topology Contract](./swarm-topology-contract.md) | C5a stable identity, membership lifecycle, three logical graphs, and versioned routes | Active |
+| [Swarm Role Contract](./swarm-role-contract.md) | C5b declared/effective capability, primary roles, services, global role epoch, and transition barriers | Active |
+| [Swarm Runtime Contract](./swarm-runtime-contract.md) | C5c Explorer runtime gates, pure Relay forwarding, failover, resync correlation, and runtime visualization | Active |
 | [Performance Measurement Boundaries](./performance-measurement-boundaries.md) | 本机（WSL2/LinuxKit）可测与不可测的性能指标、分辨率下限与措辞纪律 | Active |
 
 ---
